@@ -1,0 +1,3 @@
+C:/Users/Natal/Downloads/voxel-engine1/build/CMakeFiles/voxel-engine.dir
+C:/Users/Natal/Downloads/voxel-engine1/build/CMakeFiles/ALL_BUILD.dir
+C:/Users/Natal/Downloads/voxel-engine1/build/CMakeFiles/ZERO_CHECK.dir
