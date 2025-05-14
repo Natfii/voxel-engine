@@ -163,3 +163,4 @@ build/x64/Release/ALL_BUILD/ALL_BUILD.recipe
 build/x64/Release/ALL_BUILD/ALL_BUILD.tlog/CustomBuild.read.1.tlog
 build/x64/Release/ZERO_CHECK/ZERO_CHECK.tlog/CustomBuild.read.1.tlog
 build/x64/Release/ZERO_CHECK/ZERO_CHECK.tlog/CustomBuild.write.1.tlog
+build
