@@ -43,6 +43,7 @@ add_executable(voxel-engine
     src/chunk.cpp
     src/block_system.cpp
     src/world.cpp
+    src/player.cpp
 )
 
 # - VS Debugger - 
