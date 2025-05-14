@@ -27,32 +27,34 @@ void Player::update(GLFWwindow* window, float deltaTime) {
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
         Position -= WorldUp * velocity;
 
-    double xpos, ypos;
-    glfwGetCursorPos(window, &xpos, &ypos);
+    if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED) {
+        double xpos, ypos;
+        glfwGetCursorPos(window, &xpos, &ypos);
 
-    if (FirstMouse) {
+        if (FirstMouse) {
+            LastX = float(xpos);
+            LastY = float(ypos);
+            FirstMouse = false;
+        }
+
+        float xoffset = float(xpos - LastX);
+        float yoffset = float(LastY - ypos); // reversed
         LastX = float(xpos);
         LastY = float(ypos);
-        FirstMouse = false;
+
+        xoffset *= MouseSensitivity;
+        yoffset *= MouseSensitivity;
+
+        Yaw   += xoffset;
+        Pitch += yoffset;
+
+        if (Pitch > 89.0f)
+            Pitch = 89.0f;
+        if (Pitch < -89.0f)
+            Pitch = -89.0f;
+
+        updateVectors();
     }
-
-    float xoffset = float(xpos - LastX);
-    float yoffset = float(LastY - ypos); // reversed since y-coordinates range from bottom to top
-    LastX = float(xpos);
-    LastY = float(ypos);
-
-    xoffset *= MouseSensitivity;
-    yoffset *= MouseSensitivity;
-
-    Yaw   += xoffset;
-    Pitch += yoffset;
-
-    if (Pitch > 89.0f)
-        Pitch = 89.0f;
-    if (Pitch < -89.0f)
-        Pitch = -89.0f;
-
-    updateVectors();
 }
 
 glm::mat4 Player::getViewMatrix() const {
@@ -68,4 +70,8 @@ void Player::updateVectors() {
 
     Right = glm::normalize(glm::cross(Front, WorldUp));
     Up    = glm::normalize(glm::cross(Right, Front));
+}
+
+void Player::resetMouse() {
+    FirstMouse = true;
 }

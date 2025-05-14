@@ -11,9 +11,11 @@ A Classicube inspired project.
 
 Change how blocks are handled. ✅ 
 
-Create a dedicated Player class to handle user input.
+Create a dedicated Player class to handle user input. ✅
 
 Main Menu.
+
+Pause Menu. ✅
 
 ### 🛠️ Build Instructions 🛠️
 
@@ -32,7 +34,7 @@ Main Menu.
 
 4. Build
   
-      cmake --build . --config
+      cmake --build . --config Release
 
 5. This builds the voxel-engine.exe and places it in "build/Release/voxel-engine.exe". 
 

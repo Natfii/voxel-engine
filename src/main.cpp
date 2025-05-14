@@ -7,12 +7,17 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include "chunk.h"  // Chunk class
-#include "world.h"  // World 
-#include "block_system.h" // Blocks
-#include "player.h" // Player class
+// ImGui headers
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+// Project headers
+#include "chunk.h"
+#include "world.h"
+#include "block_system.h"
+#include "player.h"
+#include "pause_menu.h"
 
-// Callback for window resize
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
 }
@@ -42,6 +47,12 @@ int main() {
         return -1;
     }
     glEnable(GL_DEPTH_TEST);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 330 core");
 
     const char* vertexShaderSource = R"(
         #version 330 core
@@ -101,6 +112,10 @@ int main() {
     world.generateWorld();
 
     Player player(glm::vec3(0.0f, 8.0f, 12.0f), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
+    PauseMenu pauseMenu(window);
+    bool isPaused = false;
+    bool escPressed = false;
+    bool requestMouseReset = false;
 
     glUseProgram(shaderProgram);
     GLint modelLoc      = glGetUniformLocation(shaderProgram, "uModel");
@@ -113,7 +128,37 @@ int main() {
         lastFrame = currentFrame;
 
         glfwPollEvents();
-        player.update(window, deltaTime);
+
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+            if (!escPressed) {
+                escPressed = true;
+                isPaused = !isPaused;
+                if (isPaused) {
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                }
+            }
+        } else {
+            escPressed = false;
+        }
+
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        if (!isPaused) {
+            player.update(window, deltaTime);
+        } else {
+            if (pauseMenu.render()) {
+                isPaused = false;
+                requestMouseReset = true;
+            }
+        }
+
+        if (requestMouseReset) {
+            player.resetMouse();
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            requestMouseReset = false;
+        }
 
         glm::mat4 model = glm::mat4(1.0f);
         glm::mat4 view = player.getViewMatrix();
@@ -132,8 +177,15 @@ int main() {
 
         world.renderWorld();
 
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
         glfwSwapBuffers(window);
     }
+
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
 
     glfwTerminate();
     return 0;

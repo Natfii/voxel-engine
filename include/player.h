@@ -8,6 +8,7 @@ class Player {
 public:
     Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch);
 
+    void resetMouse();
     void update(GLFWwindow* window, float deltaTime);
     glm::mat4 getViewMatrix() const;
 
