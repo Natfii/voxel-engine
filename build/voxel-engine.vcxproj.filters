@@ -7,6 +7,12 @@
     <ClCompile Include="C:\Users\Natal\Downloads\voxel-engine1\src\chunk.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\Natal\Downloads\voxel-engine1\src\block_system.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Natal\Downloads\voxel-engine1\src\world.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="C:\Users\Natal\Downloads\voxel-engine1\CMakeLists.txt" />

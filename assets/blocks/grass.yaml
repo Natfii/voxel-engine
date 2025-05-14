@@ -1,0 +1,6 @@
+name: "Grass"
+texture: "#3cb043"  # green color
+durability: 3
+affected_by_gravity: false
+flammability: 0
+transparency: 0.0

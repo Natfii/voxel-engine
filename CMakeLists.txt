@@ -14,11 +14,15 @@ set(GLFW_INCLUDE_DIR "${GLFW_DIR}/include")
 set(GLFW_LIBRARY     "${GLFW_DIR}/lib-vc2019/glfw3.lib")
 
 # — GLEW (static) —
-set(GLEW_ROOT    "${CMAKE_SOURCE_DIR}/external/glew-2.1.0")
-set(GLEW_INCLUDE_DIR "${GLEW_ROOT}/include")
-set(GLEW_LIBRARY     "${GLEW_ROOT}/lib/Release/x64/glew32s.lib") 
+set(GLEW_DIR    "${CMAKE_SOURCE_DIR}/external/glew-2.1.0")
+set(GLEW_INCLUDE_DIR "${GLEW_DIR}/include")
+set(GLEW_LIBRARY     "${GLEW_DIR}/lib/Release/x64/glew32s.lib") 
 add_definitions(-DGLEW_STATIC)                                  
 
+# - yaml-cpp - 
+set(YAML_DIR "${CMAKE_SOURCE_DIR}/external/yaml-cpp")
+set(YAML_INCLUDE_DIR "${YAML_DIR}/include")
+add_subdirectory("${YAML_DIR}")
 
 # — OpenGL system library —
 find_package(OpenGL REQUIRED)
@@ -29,6 +33,7 @@ include_directories(
     "${GLEW_INCLUDE_DIR}"
     "${GLFW_INCLUDE_DIR}"
     "${CMAKE_SOURCE_DIR}/external/glm"
+    "${YAML_INCLUDE_DIR}/yaml-cpp"
 )
 
 # — Build target —
@@ -36,6 +41,13 @@ file(GLOB VOXEL_SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp")
 add_executable(voxel-engine
     src/main.cpp
     src/chunk.cpp
+    src/block_system.cpp
+    src/world.cpp
+)
+
+# - VS Debugger - 
+set_target_properties(voxel-engine PROPERTIES
+    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
 # — Link dependencies —
@@ -48,4 +60,12 @@ target_link_libraries(voxel-engine
     user32
     gdi32
     shell32
+    yaml-cpp
+)
+
+# - Assets -
+add_custom_command(TARGET voxel-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_SOURCE_DIR}/assets"
+    "$<TARGET_FILE_DIR:voxel-engine>/assets"
 )

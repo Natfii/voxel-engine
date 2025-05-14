@@ -8,6 +8,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "chunk.h"  // Chunk class
+#include "world.h"  // World 
+#include "block_system.h"
+
 
 // Callback for window resize: adjust viewport
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
@@ -169,15 +172,13 @@ int main() {
     glDeleteShader(vertShader);
     glDeleteShader(fragShader);
 
-    // Define colors for block types (unused here; coloring done in chunk.generate())
-    glm::vec3 colorStone(0.6f, 0.6f, 0.6f);
-    glm::vec3 colorGrass(0.3f, 0.8f, 0.3f);
-    glm::vec3 colorDirt(0.59f, 0.29f, 0.0f);
-
     // Create and initialize a chunk at (0,0,0)
-    Chunk chunk(0, 0, 0);
+    // Chunk chunk(0, 0, 0); old
+    BlockRegistry::instance().loadBlocks("assets/blocks");
+    World world (2,1,2);
+    world.generateWorld();
     // Fill chunk blocks and generate mesh geometry
-    chunk.generate();
+    //chunk.generate(); old
     // (Inside Chunk::generate, m_blocks is filled and the vertex buffer is created)
     // After generation, the mesh for all block faces is ready in chunk.m_vao.
 
@@ -225,7 +226,8 @@ int main() {
         glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
         // Draw the chunk mesh using our shader
-        chunk.render();
+        //chunk.render();
+        world.renderWorld();
 
         // Swap buffers and poll events
         glfwSwapBuffers(window);

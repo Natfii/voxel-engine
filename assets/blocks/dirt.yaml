@@ -1,0 +1,6 @@
+name: "Dirt"
+texture: "#7B4A12"  # gray color
+durability: 5
+affected_by_gravity: false
+flammability: 0
+transparency: 0.0

@@ -8,6 +8,15 @@
       <FullPath>C:\Users\Natal\Downloads\voxel-engine1\build\Release\voxel-engine.exe</FullPath>
     </ProjectOutput>
     <ProjectOutput>
+      <FullPath>C:\Users\Natal\Downloads\voxel-engine1\build\external\yaml-cpp\util\Release\parse.exe</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
+      <FullPath>C:\Users\Natal\Downloads\voxel-engine1\build\external\yaml-cpp\util\Release\read.exe</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
+      <FullPath>C:\Users\Natal\Downloads\voxel-engine1\build\external\yaml-cpp\util\Release\sandbox.exe</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
       <FullPath>C:\Users\Natal\Downloads\voxel-engine1\build\x64\Release\ALL_BUILD</FullPath>
     </ProjectOutput>
   </ProjectOutputs>
