@@ -15,24 +15,24 @@ Create a dedicated Player class to handle user input.
 
 Main Menu.
 
-🛠️ Build Instructions 🛠️
+### 🛠️ Build Instructions 🛠️
 
 🧪 One-Time Setup
 1. Open Terminal / Developer Command Prompt and navigate to the project root (voxel-engine1/).
 
 2. Create a build folder
    
-mkdir build
+      mkdir build
   
-cd build
+      cd build
 
 3. Run CMake configuration
    
-cmake ..
+      cmake ..
 
 4. Build
   
-cmake --build . --config
+      cmake --build . --config
 
 5. This builds the voxel-engine.exe and places it in "build/Release/voxel-engine.exe". 
 
