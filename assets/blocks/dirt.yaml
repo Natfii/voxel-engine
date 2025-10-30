@@ -1,0 +1,7 @@
+name: "Dirt"
+texture: "#7B4A12"  # brown color
+durability: 5
+liquid: false
+affected_by_gravity: false
+flammability: 0
+transparency: 0.0

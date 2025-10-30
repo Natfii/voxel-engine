@@ -1,0 +1,7 @@
+name: "Stone"
+texture: "#7f7f7f"  # gray color
+durability: 5
+liquid: false
+affected_by_gravity: false
+flammability: 0
+transparency: 0.0

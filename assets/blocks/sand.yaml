@@ -1,0 +1,7 @@
+name: "Sand"
+texture: "#c2b280"  # sandy beige
+durability: 2
+liquid: false
+affected_by_gravity: true
+flammability: 0
+transparency: 0.0

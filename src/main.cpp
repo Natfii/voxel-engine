@@ -1,0 +1,203 @@
+#include <iostream>
+#include <cmath>
+#include <stdexcept>
+// GLFW header
+#include <GLFW/glfw3.h>
+// GLM for matrix transformations
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+// ImGui headers
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_vulkan.h"
+// Project headers
+#include "vulkan_renderer.h"
+#include "chunk.h"
+#include "world.h"
+#include "block_system.h"
+#include "player.h"
+#include "pause_menu.h"
+#include "crosshair.h"
+#include "config.h"
+
+// Global variables
+VulkanRenderer* g_renderer = nullptr;
+
+void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+    if (g_renderer) {
+        g_renderer->framebufferResized();
+    }
+}
+
+float deltaTime = 0.0f;
+float lastFrame = 0.0f;
+
+// ImGui Vulkan init helper
+static void check_vk_result(VkResult err) {
+    if (err == 0) return;
+    std::cerr << "[vulkan] Error: VkResult = " << err << std::endl;
+    if (err < 0)
+        abort();
+}
+
+int main() {
+    try {
+        glfwInit();
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // No OpenGL context
+        GLFWwindow* window = glfwCreateWindow(800, 600, "Voxel Engine - Vulkan", nullptr, nullptr);
+        if (!window) {
+            std::cerr << "Failed to create GLFW window\n";
+            glfwTerminate();
+            return -1;
+        }
+        glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+        // Initialize Vulkan renderer
+        std::cout << "Initializing Vulkan renderer..." << std::endl;
+        VulkanRenderer renderer(window);
+        g_renderer = &renderer;
+
+        // Setup ImGui context
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+
+        // Setup ImGui for GLFW + Vulkan
+        ImGui_ImplGlfw_InitForVulkan(window, true);
+
+        // Note: ImGui Vulkan initialization is temporarily disabled
+        // TODO: Implement proper ImGui Vulkan integration with separate descriptor pool
+        /*
+        ImGui_ImplVulkan_InitInfo init_info = {};
+        init_info.Instance = renderer.getInstance();
+        init_info.PhysicalDevice = renderer.getPhysicalDevice();
+        init_info.Device = renderer.getDevice();
+        init_info.Queue = renderer.getGraphicsQueue();
+        init_info.DescriptorPool = VK_NULL_HANDLE;  // TODO: Create separate descriptor pool
+        init_info.MinImageCount = 2;
+        init_info.ImageCount = 2;
+        init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        init_info.CheckVkResultFn = check_vk_result;
+
+        ImGui_ImplVulkan_Init(&init_info, renderer.getRenderPass());
+        */
+
+        // Load configuration
+        Config& config = Config::instance();
+        if (!config.loadFromFile("config.ini")) {
+            std::cerr << "Warning: Failed to load config.ini, using default values" << std::endl;
+        }
+
+        // Get world configuration from config file
+        int seed = config.getInt("World", "seed", 1124345);
+        int worldWidth = config.getInt("World", "world_width", 12);
+        int worldHeight = config.getInt("World", "world_height", 3);
+        int worldDepth = config.getInt("World", "world_depth", 12);
+
+        std::cout << "Loading block registry..." << std::endl;
+        BlockRegistry::instance().loadBlocks("assets/blocks");
+
+        std::cout << "Initializing world generation..." << std::endl;
+        Chunk::initNoise(seed);
+        World world(worldWidth, worldHeight, worldDepth);
+
+        std::cout << "Generating world..." << std::endl;
+        world.generateWorld();
+
+        std::cout << "Creating GPU buffers..." << std::endl;
+        world.createBuffers(&renderer);
+
+        // Spawn player at origin (0, 0) with appropriate height based on terrain
+        float spawnX = 0.0f;
+        float spawnZ = 0.0f;
+        int terrainHeight = Chunk::getTerrainHeightAt(spawnX, spawnZ);
+        float spawnY = (terrainHeight + 2) * 0.5f;  // +2 blocks above terrain, scaled to 0.5 units
+        Player player(glm::vec3(spawnX, spawnY, spawnZ), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
+
+        PauseMenu pauseMenu(window);
+        Crosshair crosshair;
+        bool isPaused = false;
+        bool escPressed = false;
+        bool requestMouseReset = false;
+
+        std::cout << "Entering main loop..." << std::endl;
+
+        while (!glfwWindowShouldClose(window)) {
+            float currentFrame = glfwGetTime();
+            deltaTime = currentFrame - lastFrame;
+            lastFrame = currentFrame;
+
+            glfwPollEvents();
+
+            // Handle ESC key for pause menu
+            if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+                if (!escPressed) {
+                    escPressed = true;
+                    isPaused = !isPaused;
+                    if (isPaused) {
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                    } else {
+                        requestMouseReset = true;
+                    }
+                }
+            } else {
+                escPressed = false;
+            }
+
+            // Update player if not paused
+            if (!isPaused) {
+                player.update(window, deltaTime);
+            }
+
+            if (requestMouseReset) {
+                player.resetMouse();
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                requestMouseReset = false;
+            }
+
+            // Calculate matrices
+            glm::mat4 model = glm::mat4(1.0f);
+            glm::mat4 view = player.getViewMatrix();
+            int width, height;
+            glfwGetFramebufferSize(window, &width, &height);
+            float aspect = float(width) / float(height);
+            glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+
+            // Update uniform buffer
+            renderer.updateUniformBuffer(renderer.getCurrentFrame(), model, view, projection);
+
+            // Begin rendering
+            renderer.beginFrame();
+
+            // Render world
+            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, 250.0f);
+
+            // Note: ImGui rendering skipped for initial version
+            // TODO: Re-enable ImGui with proper Vulkan setup
+
+            // End rendering
+            renderer.endFrame();
+        }
+
+        // Wait for device to finish before cleanup
+        vkDeviceWaitIdle(renderer.getDevice());
+
+        // Cleanup
+        // ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        Chunk::cleanupNoise();
+
+        std::cout << "Shutdown complete." << std::endl;
+        return 0;
+
+    } catch (const std::exception& e) {
+        std::cerr << "Fatal error: " << e.what() << std::endl;
+        return -1;
+    }
+}
