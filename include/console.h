@@ -58,6 +58,7 @@ private:
 
     // Autocomplete
     std::vector<std::string> m_suggestions;
+    int m_suggestionIndex;
 
     // Scroll control
     bool m_scrollToBottom;
@@ -67,4 +68,5 @@ private:
     void renderSuggestions();
 
     void navigateHistory(int direction);
+    void autoComplete();
 };

@@ -214,3 +214,57 @@ void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID) {
     // Note: We don't call createBuffer here - that needs a renderer which we don't have access to
     // We'll mark the chunk as needing a buffer update elsewhere
 }
+
+void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer* renderer) {
+    // Break the block (set to air = 0)
+    setBlockAt(worldX, worldY, worldZ, 0);
+
+    // Update the affected chunk and all adjacent chunks
+    // Must regenerate MESH (not just vertex buffer) because face culling needs updating
+    Chunk* affectedChunk = getChunkAtWorldPos(worldX, worldY, worldZ);
+    if (affectedChunk) {
+        affectedChunk->generateMesh(this);
+        affectedChunk->createVertexBuffer(renderer);
+    }
+
+    // Always update all 6 adjacent chunks (not just on boundaries)
+    // This handles cases like breaking grass revealing stone below
+    Chunk* neighbors[6] = {
+        getChunkAtWorldPos(worldX - 0.5f, worldY, worldZ),  // -X
+        getChunkAtWorldPos(worldX + 0.5f, worldY, worldZ),  // +X
+        getChunkAtWorldPos(worldX, worldY - 0.5f, worldZ),  // -Y (below)
+        getChunkAtWorldPos(worldX, worldY + 0.5f, worldZ),  // +Y (above)
+        getChunkAtWorldPos(worldX, worldY, worldZ - 0.5f),  // -Z
+        getChunkAtWorldPos(worldX, worldY, worldZ + 0.5f)   // +Z
+    };
+
+    // Regenerate mesh and buffer for each unique neighbor chunk
+    for (int i = 0; i < 6; i++) {
+        if (neighbors[i] && neighbors[i] != affectedChunk) {
+            // Skip if already updated (same chunk)
+            bool alreadyUpdated = false;
+            for (int j = 0; j < i; j++) {
+                if (neighbors[j] == neighbors[i]) {
+                    alreadyUpdated = true;
+                    break;
+                }
+            }
+            if (!alreadyUpdated) {
+                neighbors[i]->generateMesh(this);
+                neighbors[i]->createVertexBuffer(renderer);
+            }
+        }
+    }
+}
+
+void World::breakBlock(const glm::vec3& position, VulkanRenderer* renderer) {
+    breakBlock(position.x, position.y, position.z, renderer);
+}
+
+void World::breakBlock(const glm::ivec3& coords, VulkanRenderer* renderer) {
+    // Convert block coordinates to world coordinates
+    float worldX = coords.x * 0.5f;
+    float worldY = coords.y * 0.5f;
+    float worldZ = coords.z * 0.5f;
+    breakBlock(worldX, worldY, worldZ, renderer);
+}

@@ -75,6 +75,11 @@ public:
     VkSampler getAtlasSampler() const { return m_atlasSampler; }
     int getAtlasGridSize() const { return m_atlasGridSize; }
 
+    // Query methods for target info
+    std::string getBlockName(int blockID) const;
+    std::string getBlockType(int blockID) const;
+    bool isBreakable(int blockID) const;
+
 private:
     BlockRegistry();                        // private constructor (singleton)
     BlockRegistry(const BlockRegistry&) = delete;

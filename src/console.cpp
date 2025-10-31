@@ -7,7 +7,7 @@
 #include <sstream>
 
 Console::Console(GLFWwindow* window)
-    : m_window(window), m_isVisible(false), m_focusInput(false), m_historyIndex(-1), m_scrollToBottom(false) {
+    : m_window(window), m_isVisible(false), m_focusInput(false), m_historyIndex(-1), m_scrollToBottom(false), m_suggestionIndex(0) {
     memset(m_inputBuffer, 0, sizeof(m_inputBuffer));
 
     addMessage("Voxel Engine Console", ConsoleMessageType::INFO);
@@ -45,13 +45,13 @@ void Console::render() {
 
         ImGui::Separator();
 
-        // Input area
-        renderInput();
-
-        // Autocomplete suggestions
+        // Autocomplete suggestions (render above input so they don't get cut off)
         if (!m_suggestions.empty()) {
             renderSuggestions();
         }
+
+        // Input area
+        renderInput();
     }
 
     ImGui::End();
@@ -102,7 +102,9 @@ void Console::renderInput() {
 
     // Input text field
     ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags_EnterReturnsTrue |
-                                    ImGuiInputTextFlags_CallbackHistory;
+                                    ImGuiInputTextFlags_CallbackHistory |
+                                    ImGuiInputTextFlags_CallbackCompletion |
+                                    ImGuiInputTextFlags_CallbackEdit;
 
     bool executeNow = ImGui::InputText("##ConsoleInput", m_inputBuffer, sizeof(m_inputBuffer),
         inputFlags, [](ImGuiInputTextCallbackData* data) -> int {
@@ -117,6 +119,15 @@ void Console::renderInput() {
                     data->DeleteChars(0, data->BufTextLen);
                     data->InsertChars(0, console->m_inputBuffer);
                 }
+            } else if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
+                // Tab key pressed
+                console->autoComplete();
+                data->DeleteChars(0, data->BufTextLen);
+                data->InsertChars(0, console->m_inputBuffer);
+                data->SelectAll();
+            } else if (data->EventFlag == ImGuiInputTextFlags_CallbackEdit) {
+                // Input changed, reset suggestion index
+                console->m_suggestionIndex = 0;
             }
             return 0;
         }, this);
@@ -242,5 +253,23 @@ void Console::navigateHistory(int direction) {
         size_t historySize = m_commandHistory.size();
         const std::string& cmd = m_commandHistory[historySize - 1 - m_historyIndex];
         strncpy_s(m_inputBuffer, cmd.c_str(), sizeof(m_inputBuffer) - 1);
+    }
+}
+
+void Console::autoComplete() {
+    if (m_suggestions.empty()) {
+        return;
+    }
+
+    // Get current suggestion (cycle through with repeated Tab presses)
+    const std::string& suggestion = m_suggestions[m_suggestionIndex % m_suggestions.size()];
+
+    // Copy suggestion to input buffer
+    strncpy_s(m_inputBuffer, suggestion.c_str(), sizeof(m_inputBuffer) - 1);
+
+    // Move to next suggestion for next Tab press
+    m_suggestionIndex++;
+    if (m_suggestionIndex >= (int)m_suggestions.size()) {
+        m_suggestionIndex = 0;
     }
 }

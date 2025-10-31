@@ -27,10 +27,10 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
     registry.registerCommand("noclip", "Toggle noclip mode",
                            "noclip", cmdNoclip);
 
-    registry.registerCommand("debug", "Toggle debug rendering modes (render, drawfps)",
-                           "debug <render|drawfps>", [](const std::vector<std::string>& args) {
+    registry.registerCommand("debug", "Toggle debug rendering modes (render, drawfps, targetinfo)",
+                           "debug <render|drawfps|targetinfo>", [](const std::vector<std::string>& args) {
         if (args.size() < 2) {
-            s_console->addMessage("Usage: debug <render|drawfps>", ConsoleMessageType::WARNING);
+            s_console->addMessage("Usage: debug <render|drawfps|targetinfo>", ConsoleMessageType::WARNING);
             return;
         }
 
@@ -38,9 +38,11 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
             cmdDebugRender(args);
         } else if (args[1] == "drawfps") {
             cmdDebugDrawFPS(args);
+        } else if (args[1] == "targetinfo") {
+            cmdDebugTargetInfo(args);
         } else {
             s_console->addMessage("Unknown debug option: " + args[1], ConsoleMessageType::ERROR);
-            s_console->addMessage("Available options: render, drawfps", ConsoleMessageType::INFO);
+            s_console->addMessage("Available options: render, drawfps, targetinfo", ConsoleMessageType::INFO);
         }
     });
 
@@ -116,6 +118,13 @@ void ConsoleCommands::cmdDebugDrawFPS(const std::vector<std::string>& args) {
     DebugState& debug = DebugState::instance();
     debug.drawFPS.setValue(!debug.drawFPS.getValue());
     s_console->addMessage("FPS counter: " + std::string(debug.drawFPS.getValue() ? "ON" : "OFF"),
+                         ConsoleMessageType::INFO);
+}
+
+void ConsoleCommands::cmdDebugTargetInfo(const std::vector<std::string>& args) {
+    DebugState& debug = DebugState::instance();
+    debug.showTargetInfo.setValue(!debug.showTargetInfo.getValue());
+    s_console->addMessage("Target info: " + std::string(debug.showTargetInfo.getValue() ? "ON" : "OFF"),
                          ConsoleMessageType::INFO);
 }
 

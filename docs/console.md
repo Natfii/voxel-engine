@@ -11,6 +11,8 @@ Press **ESC** to close the console.
 
 Simply type a command and press Enter. Use Up/Down arrow keys to navigate command history.
 
+Press **Tab** to autocomplete commands from suggestions. Press Tab multiple times to cycle through available suggestions.
+
 ## Available Commands
 
 ### help [command]
@@ -29,6 +31,10 @@ Toggle chunk rendering debug information.
 ### debug drawfps
 Toggle FPS counter in the corner.
 - Example: `debug drawfps`
+
+### debug targetinfo
+Toggle target information display (shows details about the block you're looking at).
+- Example: `debug targetinfo`
 
 ### tp <x> <y> <z>
 Teleport to specific coordinates.

@@ -314,3 +314,45 @@ int BlockRegistry::getID(const std::string& name) const {
     auto it = m_nameToID.find(name);
     return (it == m_nameToID.end() ? -1 : it->second);
 }
+
+std::string BlockRegistry::getBlockName(int blockID) const {
+    if (blockID < 0 || blockID >= (int)m_defs.size()) {
+        return "Unknown";
+    }
+    return m_defs[blockID].name;
+}
+
+std::string BlockRegistry::getBlockType(int blockID) const {
+    if (blockID < 0 || blockID >= (int)m_defs.size()) {
+        return "unknown";
+    }
+
+    const BlockDefinition& def = m_defs[blockID];
+
+    // Classify block type based on properties
+    if (blockID == BlockID::AIR) {
+        return "air";
+    }
+    if (def.transparency > 0.5f) {
+        return "transparent";
+    }
+    // Future: Add liquid detection when liquids are implemented
+    // if (def.isLiquid) return "liquid";
+
+    return "solid";
+}
+
+bool BlockRegistry::isBreakable(int blockID) const {
+    if (blockID < 0 || blockID >= (int)m_defs.size()) {
+        return false;
+    }
+
+    // Air is not breakable
+    if (blockID == BlockID::AIR) {
+        return false;
+    }
+
+    // All non-air blocks are breakable for now
+    // Future: Check durability or special flags
+    return true;
+}

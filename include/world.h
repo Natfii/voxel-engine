@@ -22,6 +22,11 @@ public:
     int getBlockAt(float worldX, float worldY, float worldZ);
     void setBlockAt(float worldX, float worldY, float worldZ, int blockID);  // Set block (0 = air/remove)
 
+    // Higher-level block operations
+    void breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer* renderer);  // Break block and update meshes
+    void breakBlock(const glm::vec3& position, VulkanRenderer* renderer);  // Convenience overload
+    void breakBlock(const glm::ivec3& coords, VulkanRenderer* renderer);   // Break by block coords
+
 private:
     int m_width, m_height, m_depth;
     std::vector<Chunk*> m_chunks;

@@ -10,6 +10,7 @@ public:
     // Debug rendering flags
     ConVar<bool> renderDebug;
     ConVar<bool> drawFPS;
+    ConVar<bool> showTargetInfo;
     ConVar<bool> noclip;
 
     // FPS tracking

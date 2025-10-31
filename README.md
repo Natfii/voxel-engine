@@ -26,14 +26,20 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 
 🎨 **User Interface**
 - ImGui integration
-- Crosshair overlay
+- Dynamic crosshair with targeting system
 - Pause menu with Resume/Quit options
+
+🎯 **Targeting System**
+- Unified block targeting and outline rendering
+- Rich target information (block name, type, position, distance)
+- Context-aware input management
+- Debug overlay for target details
 
 🖥️ **Developer Console**
 - Source engine-style console (F9)
-- Command system with autocomplete
-- Console variables (ConVars)
-- Debug overlays (FPS, position)
+- Command system with Tab autocomplete
+- Console variables (ConVars) with persistence
+- Debug overlays (FPS, position, target info)
 - Markdown documentation viewer
 
 ## Quick Start
@@ -165,6 +171,9 @@ voxel-engine/
 - ✅ Added ConVar system for settings
 - ✅ Physics-based player movement
 - ✅ Block breaking and texture system
+- ✅ Unified targeting system with rich block info
+- ✅ Input manager for context-aware controls
+- ✅ Tab completion for console commands
 
 ## Troubleshooting
 

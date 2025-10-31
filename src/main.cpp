@@ -18,13 +18,12 @@
 #include "block_system.h"
 #include "player.h"
 #include "pause_menu.h"
-#include "crosshair.h"
 #include "config.h"
-#include "raycast.h"
-#include "block_outline.h"
 #include "console.h"
 #include "console_commands.h"
 #include "debug_state.h"
+#include "targeting_system.h"
+#include "input_manager.h"
 
 // Global variables
 VulkanRenderer* g_renderer = nullptr;
@@ -161,9 +160,10 @@ int main() {
         Player player(glm::vec3(spawnX, spawnY, spawnZ), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
 
         PauseMenu pauseMenu(window);
-        Crosshair crosshair;
-        BlockOutline blockOutline;
-        blockOutline.init(&renderer);
+
+        // Create targeting system (replaces crosshair + block_outline)
+        TargetingSystem targetingSystem;
+        targetingSystem.init(&renderer);
 
         // Create console and register commands
         Console console(window);
@@ -227,11 +227,20 @@ int main() {
                 escPressed = false;
             }
 
+            // Update input context based on menu/console state
+            if (isPaused) {
+                InputManager::instance().setContext(InputManager::Context::PAUSED);
+            } else if (console.isVisible()) {
+                InputManager::instance().setContext(InputManager::Context::CONSOLE);
+            } else {
+                InputManager::instance().setContext(InputManager::Context::GAMEPLAY);
+            }
+
             // Sync player noclip with debug state
             player.NoclipMode = DebugState::instance().noclip.getValue();
 
-            // Update player if not paused and console is closed
-            if (!isPaused && !console.isVisible()) {
+            // Update player only during gameplay
+            if (InputManager::instance().canMove()) {
                 player.update(window, deltaTime, &world);
             }
 
@@ -264,65 +273,26 @@ int main() {
             const float renderDistance = 80.0f;
             renderer.updateUniformBuffer(renderer.getCurrentFrame(), model, view, projection, player.Position, renderDistance);
 
-            // Raycast to find targeted block (5 blocks = 2.5 world units since blocks are 0.5 units)
-            RaycastHit hit = Raycast::castRay(&world, player.Position, player.Front, 2.5f);
+            // Update targeting system (single raycast per frame!)
+            targetingSystem.setEnabled(InputManager::instance().isGameplayEnabled());
+            targetingSystem.update(&world, player.Position, player.Front);
+
+            // Update block outline buffer if target changed
+            const TargetInfo& target = targetingSystem.getTarget();
+            if (target.hasTarget) {
+                targetingSystem.updateOutlineBuffer(&renderer);
+            }
 
             // Handle block breaking on left mouse click
             static bool leftMousePressed = false;
-            if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-                if (!leftMousePressed && hit.hit) {
+            if (InputManager::instance().canBreakBlocks() &&
+                glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+                if (!leftMousePressed && target.isValid() && target.isBreakable) {
                     leftMousePressed = true;
-                    // Break the block (set to air = 0)
-                    world.setBlockAt(hit.position.x, hit.position.y, hit.position.z, 0);
-                    // TODO: Add block break animation here later
-
-                    // Update the affected chunk and all adjacent chunks
-                    // Must regenerate MESH (not just vertex buffer) because face culling needs updating
-                    Chunk* affectedChunk = world.getChunkAtWorldPos(hit.position.x, hit.position.y, hit.position.z);
-                    if (affectedChunk) {
-                        affectedChunk->generateMesh(&world);
-                        affectedChunk->createVertexBuffer(&renderer);
-                    }
-
-                    // Always update all 6 adjacent chunks (not just on boundaries)
-                    // This handles cases like breaking grass revealing stone below
-                    Chunk* neighbors[6] = {
-                        world.getChunkAtWorldPos(hit.position.x - 0.5f, hit.position.y, hit.position.z),  // -X
-                        world.getChunkAtWorldPos(hit.position.x + 0.5f, hit.position.y, hit.position.z),  // +X
-                        world.getChunkAtWorldPos(hit.position.x, hit.position.y - 0.5f, hit.position.z),  // -Y (below)
-                        world.getChunkAtWorldPos(hit.position.x, hit.position.y + 0.5f, hit.position.z),  // +Y (above)
-                        world.getChunkAtWorldPos(hit.position.x, hit.position.y, hit.position.z - 0.5f),  // -Z
-                        world.getChunkAtWorldPos(hit.position.x, hit.position.y, hit.position.z + 0.5f)   // +Z
-                    };
-
-                    // Regenerate mesh and buffer for each unique neighbor chunk
-                    for (int i = 0; i < 6; i++) {
-                        if (neighbors[i] && neighbors[i] != affectedChunk) {
-                            // Skip if already updated (same chunk)
-                            bool alreadyUpdated = false;
-                            for (int j = 0; j < i; j++) {
-                                if (neighbors[j] == neighbors[i]) {
-                                    alreadyUpdated = true;
-                                    break;
-                                }
-                            }
-                            if (!alreadyUpdated) {
-                                neighbors[i]->generateMesh(&world);
-                                neighbors[i]->createVertexBuffer(&renderer);
-                            }
-                        }
-                    }
+                    world.breakBlock(target.blockPosition, &renderer);
                 }
             } else {
                 leftMousePressed = false;
-            }
-
-            // Update block outline if we're looking at a block
-            if (hit.hit) {
-                blockOutline.setPosition(hit.position.x, hit.position.y, hit.position.z);
-                blockOutline.updateBuffer(&renderer);
-            } else {
-                blockOutline.setVisible(false);
             }
 
             // Begin rendering
@@ -341,11 +311,11 @@ int main() {
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, 80.0f);
 
             // Render block outline with line pipeline
-            if (hit.hit) {
+            if (target.hasTarget) {
                 vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getLinePipeline());
                 vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                        renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
-                blockOutline.render(renderer.getCurrentCommandBuffer());
+                targetingSystem.renderBlockOutline(renderer.getCurrentCommandBuffer());
             }
 
             // Render ImGui (crosshair when playing, menu when paused, console overlay)
@@ -359,7 +329,7 @@ int main() {
                     requestMouseReset = true;
                 }
             } else if (!console.isVisible()) {
-                crosshair.render();
+                targetingSystem.renderCrosshair();
             }
 
             // Render console (overlays on top of everything)
@@ -383,6 +353,28 @@ int main() {
                             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
                 ImGui::Text("Position: (%.1f, %.1f, %.1f)", player.Position.x, player.Position.y, player.Position.z);
                 ImGui::Text("Noclip: %s", player.NoclipMode ? "ON" : "OFF");
+                ImGui::End();
+            }
+
+            // Render target info if enabled (opposite corner from FPS)
+            if (DebugState::instance().showTargetInfo.getValue()) {
+                ImGuiIO& io = ImGui::GetIO();
+                ImVec2 displaySize = io.DisplaySize;
+                ImGui::SetNextWindowPos(ImVec2(displaySize.x - 200, 10), ImGuiCond_Always);
+                ImGui::SetNextWindowBgAlpha(0.5f);
+                ImGui::Begin("Target Info", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+                if (target.hasTarget) {
+                    ImGui::Text("=== Target Info ===");
+                    ImGui::Text("Block: %s", target.blockName.c_str());
+                    ImGui::Text("Type: %s", target.blockType.c_str());
+                    ImGui::Text("Position: (%d, %d, %d)", target.blockCoords.x, target.blockCoords.y, target.blockCoords.z);
+                    ImGui::Text("Distance: %.1fm", target.distance);
+                    ImGui::Text("Breakable: %s", target.isBreakable ? "Yes" : "No");
+                } else {
+                    ImGui::Text("=== Target Info ===");
+                    ImGui::Text("No target");
+                }
                 ImGui::End();
             }
 
