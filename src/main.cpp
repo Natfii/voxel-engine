@@ -191,6 +191,8 @@ int main() {
             glfwGetFramebufferSize(window, &width, &height);
             float aspect = float(width) / float(height);
             glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+            // Flip Y axis for Vulkan (Vulkan's Y axis points down in NDC, OpenGL's points up)
+            projection[1][1] *= -1;
 
             // Update uniform buffer
             renderer.updateUniformBuffer(renderer.getCurrentFrame(), model, view, projection);
