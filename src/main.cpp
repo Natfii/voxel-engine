@@ -218,17 +218,20 @@ int main() {
             // Begin rendering
             renderer.beginFrame();
 
+            // Get current descriptor set (need to store it to take address)
+            VkDescriptorSet currentDescriptorSet = renderer.getCurrentDescriptorSet();
+
             // Render world with normal pipeline
             vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getGraphicsPipeline());
             vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                   renderer.getPipelineLayout(), 0, 1, &renderer.getCurrentDescriptorSet(), 0, nullptr);
+                                   renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, 250.0f);
 
             // Render block outline with line pipeline
             if (hit.hit) {
                 vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getLinePipeline());
                 vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                       renderer.getPipelineLayout(), 0, 1, &renderer.getCurrentDescriptorSet(), 0, nullptr);
+                                       renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
                 blockOutline.render(renderer.getCurrentCommandBuffer());
             }
 
