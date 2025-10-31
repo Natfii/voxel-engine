@@ -50,8 +50,9 @@ public:
     // Get vertex count (useful for skipping empty chunks)
     uint32_t getVertexCount() const { return m_vertexCount; }
 
-    // Get block ID at local chunk coordinates (returns -1 if out of bounds)
+    // Get/Set block ID at local chunk coordinates (returns -1 if out of bounds for get)
     int getBlock(int x, int y, int z) const;
+    void setBlock(int x, int y, int z, int blockID);  // Set block and mark for remeshing
 
     // Get chunk coordinates
     int getChunkX() const { return m_x; }

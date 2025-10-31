@@ -1,5 +1,6 @@
 name: "Stone"
-texture: "#7f7f7f"  # gray color
+texture: "stone.png"
+texture_variation: 1.5  # Zoom factor for random texture sampling (1.0 = no variation, higher = more variation)
 durability: 5
 liquid: false
 affected_by_gravity: false

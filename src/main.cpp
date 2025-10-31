@@ -150,7 +150,9 @@ int main() {
         float spawnX = 0.0f;
         float spawnZ = 0.0f;
         int terrainHeight = Chunk::getTerrainHeightAt(spawnX, spawnZ);
-        float spawnY = (terrainHeight + 2) * 0.5f;  // +2 blocks above terrain, scaled to 0.5 units
+        // Convert terrain height (in blocks) to world units, add 3 blocks clearance, then add eye height
+        // Player position is at eye level, not feet level
+        float spawnY = (terrainHeight + 3) * 0.5f + 0.8f;  // terrain + 3 blocks + eye height from feet
 
         std::cout << "Spawning player at world center (" << spawnX << ", " << spawnY << ", " << spawnZ << ")" << std::endl;
         Player player(glm::vec3(spawnX, spawnY, spawnZ), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
@@ -189,7 +191,7 @@ int main() {
 
             // Update player if not paused
             if (!isPaused) {
-                player.update(window, deltaTime);
+                player.update(window, deltaTime, &world);
             }
 
             if (requestMouseReset) {
@@ -204,7 +206,8 @@ int main() {
             int width, height;
             glfwGetFramebufferSize(window, &width, &height);
             float aspect = float(width) / float(height);
-            glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 300.0f);
+            // Near plane at 0.01 allows getting very close to blocks without clipping
+            glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.01f, 300.0f);
             // Flip Y axis for Vulkan (Vulkan's Y axis points down in NDC, OpenGL's points up)
             projection[1][1] *= -1;
 
@@ -215,6 +218,56 @@ int main() {
             // Raycast to find targeted block (5 blocks = 2.5 world units since blocks are 0.5 units)
             RaycastHit hit = Raycast::castRay(&world, player.Position, player.Front, 2.5f);
 
+            // Handle block breaking on left mouse click
+            static bool leftMousePressed = false;
+            if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+                if (!leftMousePressed && hit.hit) {
+                    leftMousePressed = true;
+                    // Break the block (set to air = 0)
+                    world.setBlockAt(hit.position.x, hit.position.y, hit.position.z, 0);
+                    // TODO: Add block break animation here later
+
+                    // Update the affected chunk and all adjacent chunks
+                    // Must regenerate MESH (not just vertex buffer) because face culling needs updating
+                    Chunk* affectedChunk = world.getChunkAtWorldPos(hit.position.x, hit.position.y, hit.position.z);
+                    if (affectedChunk) {
+                        affectedChunk->generateMesh(&world);
+                        affectedChunk->createVertexBuffer(&renderer);
+                    }
+
+                    // Always update all 6 adjacent chunks (not just on boundaries)
+                    // This handles cases like breaking grass revealing stone below
+                    Chunk* neighbors[6] = {
+                        world.getChunkAtWorldPos(hit.position.x - 0.5f, hit.position.y, hit.position.z),  // -X
+                        world.getChunkAtWorldPos(hit.position.x + 0.5f, hit.position.y, hit.position.z),  // +X
+                        world.getChunkAtWorldPos(hit.position.x, hit.position.y - 0.5f, hit.position.z),  // -Y (below)
+                        world.getChunkAtWorldPos(hit.position.x, hit.position.y + 0.5f, hit.position.z),  // +Y (above)
+                        world.getChunkAtWorldPos(hit.position.x, hit.position.y, hit.position.z - 0.5f),  // -Z
+                        world.getChunkAtWorldPos(hit.position.x, hit.position.y, hit.position.z + 0.5f)   // +Z
+                    };
+
+                    // Regenerate mesh and buffer for each unique neighbor chunk
+                    for (int i = 0; i < 6; i++) {
+                        if (neighbors[i] && neighbors[i] != affectedChunk) {
+                            // Skip if already updated (same chunk)
+                            bool alreadyUpdated = false;
+                            for (int j = 0; j < i; j++) {
+                                if (neighbors[j] == neighbors[i]) {
+                                    alreadyUpdated = true;
+                                    break;
+                                }
+                            }
+                            if (!alreadyUpdated) {
+                                neighbors[i]->generateMesh(&world);
+                                neighbors[i]->createVertexBuffer(&renderer);
+                            }
+                        }
+                    }
+                }
+            } else {
+                leftMousePressed = false;
+            }
+
             // Update block outline if we're looking at a block
             if (hit.hit) {
                 blockOutline.setPosition(hit.position.x, hit.position.y, hit.position.z);
@@ -224,7 +277,10 @@ int main() {
             }
 
             // Begin rendering
-            renderer.beginFrame();
+            if (!renderer.beginFrame()) {
+                // Skip this frame (swap chain recreation in progress)
+                continue;
+            }
 
             // Get current descriptor set (need to store it to take address)
             VkDescriptorSet currentDescriptorSet = renderer.getCurrentDescriptorSet();

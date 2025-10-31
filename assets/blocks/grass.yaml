@@ -1,5 +1,6 @@
 name: "Grass"
-texture: "#3cb043"  # green color
+texture: "grass.png"
+texture_variation: 1.5  # Zoom factor for random texture sampling (1.0 = no variation, higher = more variation)
 durability: 3
 liquid: false
 affected_by_gravity: false

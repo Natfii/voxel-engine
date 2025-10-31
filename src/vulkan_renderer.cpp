@@ -824,19 +824,20 @@ void VulkanRenderer::createSyncObjects() {
 }
 
 // Begin frame
-void VulkanRenderer::beginFrame() {
-    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
-
+bool VulkanRenderer::beginFrame() {
+    // First try to acquire an image to see if swap chain is valid
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
                                             m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_imageIndex);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         recreateSwapChain();
-        return;
+        return false;  // Skip this frame
     } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("failed to acquire swap chain image!");
     }
 
+    // Now that we have an image, wait for the previous frame to finish
+    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
     vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
 
     vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
@@ -868,6 +869,8 @@ void VulkanRenderer::beginFrame() {
 
     vkCmdBindDescriptorSets(m_commandBuffers[m_currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout,
                             0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
+
+    return true;  // Frame started successfully
 }
 
 // End frame

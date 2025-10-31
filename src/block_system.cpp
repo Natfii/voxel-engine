@@ -120,6 +120,10 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         if (doc["transparency"]) {
             def.transparency = doc["transparency"].as<float>();
         }
+        // Texture variation (zoom factor for random sampling)
+        if (doc["texture_variation"]) {
+            def.textureVariation = doc["texture_variation"].as<float>();
+        }
         // Store metadata node if exists
         if (doc["metadata"]) {
             def.metadata = doc["metadata"];

@@ -1,5 +1,6 @@
 name: "Dirt"
-texture: "#7B4A12"  # brown color
+texture: "dirt.png"
+texture_variation: 1.5  # Zoom factor for random texture sampling (1.0 = no variation, higher = more variation)
 durability: 5
 liquid: false
 affected_by_gravity: false

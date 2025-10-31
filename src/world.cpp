@@ -158,3 +158,59 @@ int World::getBlockAt(float worldX, float worldY, float worldZ) {
 
     return chunk->getBlock(localX, localY, localZ);
 }
+
+Chunk* World::getChunkAtWorldPos(float worldX, float worldY, float worldZ) {
+    // Convert world coordinates to chunk coordinates (same logic as getBlockAt)
+    int blockX = static_cast<int>(std::floor(worldX / 0.5f));
+    int blockY = static_cast<int>(std::floor(worldY / 0.5f));
+    int blockZ = static_cast<int>(std::floor(worldZ / 0.5f));
+
+    int chunkX = blockX / Chunk::WIDTH;
+    int chunkY = blockY / Chunk::HEIGHT;
+    int chunkZ = blockZ / Chunk::DEPTH;
+
+    int localX = blockX - (chunkX * Chunk::WIDTH);
+    int localY = blockY - (chunkY * Chunk::HEIGHT);
+    int localZ = blockZ - (chunkZ * Chunk::DEPTH);
+
+    // Handle negative coordinates properly
+    if (localX < 0) { localX += Chunk::WIDTH; chunkX--; }
+    if (localY < 0) { localY += Chunk::HEIGHT; chunkY--; }
+    if (localZ < 0) { localZ += Chunk::DEPTH; chunkZ--; }
+
+    return getChunkAt(chunkX, chunkY, chunkZ);
+}
+
+void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID) {
+    // Convert world coordinates to chunk coordinates (same logic as getBlockAt)
+    int blockX = static_cast<int>(std::floor(worldX / 0.5f));
+    int blockY = static_cast<int>(std::floor(worldY / 0.5f));
+    int blockZ = static_cast<int>(std::floor(worldZ / 0.5f));
+
+    int chunkX = blockX / Chunk::WIDTH;
+    int chunkY = blockY / Chunk::HEIGHT;
+    int chunkZ = blockZ / Chunk::DEPTH;
+
+    int localX = blockX - (chunkX * Chunk::WIDTH);
+    int localY = blockY - (chunkY * Chunk::HEIGHT);
+    int localZ = blockZ - (chunkZ * Chunk::DEPTH);
+
+    // Handle negative coordinates properly
+    if (localX < 0) { localX += Chunk::WIDTH; chunkX--; }
+    if (localY < 0) { localY += Chunk::HEIGHT; chunkY--; }
+    if (localZ < 0) { localZ += Chunk::DEPTH; chunkZ--; }
+
+    Chunk* chunk = getChunkAt(chunkX, chunkY, chunkZ);
+    if (chunk == nullptr) {
+        return; // Outside world bounds, do nothing
+    }
+
+    // Set the block
+    chunk->setBlock(localX, localY, localZ, blockID);
+
+    // TODO: For block break animation, we can add a callback here later
+    // For now, immediately update the mesh
+    chunk->generateMesh(this);
+    // Note: We don't call createBuffer here - that needs a renderer which we don't have access to
+    // We'll mark the chunk as needing a buffer update elsewhere
+}

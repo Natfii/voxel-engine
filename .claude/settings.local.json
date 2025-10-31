@@ -4,7 +4,12 @@
       "WebSearch",
       "Bash(dir /b \"C:\\Users\\Natal\\Documents\\voxel-engine\\external\")",
       "Bash(curl:*)",
-      "Bash(cmake --build:*)"
+      "Bash(cmake --build:*)",
+      "Bash(.run.bat)",
+      "Bash(./voxel-engine.exe)",
+      "WebFetch(domain:sites.google.com)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:gamedev.stackexchange.com)"
     ],
     "deny": [],
     "ask": []

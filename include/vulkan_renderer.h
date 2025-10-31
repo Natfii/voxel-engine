@@ -46,7 +46,7 @@ public:
     VulkanRenderer& operator=(const VulkanRenderer&) = delete;
 
     // Core rendering
-    void beginFrame();
+    bool beginFrame();  // Returns false if frame should be skipped (e.g., during swap chain recreation)
     void endFrame();
     void updateUniformBuffer(uint32_t currentImage, const glm::mat4& model, const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos, float renderDistance);
 
