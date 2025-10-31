@@ -45,6 +45,14 @@ Toggle FPS counter in the corner.
 Toggle target information display (shows details about the block you're looking at).
 - Example: `debug targetinfo`
 
+### debug culling
+Toggle frustum culling statistics display (shows chunks rendered/culled).
+- Example: `debug culling`
+
+### debug collision
+Toggle collision detection debug output in console (shows player position, block checks).
+- Example: `debug collision`
+
 ### tp <x> <y> <z>
 Teleport to specific coordinates.
 - Example: `tp 0 50 0`

@@ -1,5 +1,6 @@
 #include "player.h"
 #include "world.h"
+#include "debug_state.h"
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -141,10 +142,11 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
         }
     }
 
-    // Apply gravity (not in liquid)
-    if (!InLiquid) {
+    // Apply gravity (only when not on ground or in liquid)
+    // This prevents slow sinking when standing still
+    if (!InLiquid && !OnGround) {
         Velocity.y -= GRAVITY * deltaTime;
-    } else {
+    } else if (InLiquid) {
         // In liquid, apply gentle downward drift (only if not processing input, or no keys pressed)
         if (!processInput || (glfwGetKey(window, GLFW_KEY_SPACE) != GLFW_PRESS &&
             glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) != GLFW_PRESS)) {
@@ -239,11 +241,57 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     // This prevents edge clipping by settling vertical position before horizontal movement
     // Axis resolution order: Y → X → Z
 
+    // DEBUG: Print position and movement (only if debug_collision is enabled)
+    static int debugCounter = 0;
+    bool shouldDebug = DebugState::instance().debugCollision.getValue();
+    if (shouldDebug && debugCounter++ % 60 == 0 && std::abs(Velocity.y) > 0.1f) {
+        glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+        std::cout << "DEBUG: Player pos=" << Position.y << " feet=" << feetPos.y
+                  << " movement.y=" << movement.y << " velocity.y=" << Velocity.y << std::endl;
+    }
+
+    // CRITICAL FIX: If player is ALREADY stuck inside a block, push them out
+    // But only if they're SIGNIFICANTLY stuck (not just barely touching)
+    const float STUCK_THRESHOLD = 0.02f; // Only unstick if > 0.02 units inside
+
+    if (checkCollision(Position, world)) {
+        // Player is currently inside a block - calculate correction
+        glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+        float blockGridY = std::ceil(feetPos.y / 0.5f) * 0.5f;
+        float correctionY = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
+
+        // Only apply correction if it's significant (player is really stuck, not just touching edge)
+        if (std::abs(correctionY) > STUCK_THRESHOLD) {
+            Position.y += correctionY;
+            Velocity.y = 0.0f; // Stop vertical velocity when unsticking
+
+            if (shouldDebug && debugCounter % 60 == 0) {
+                std::cout << "DEBUG: Player stuck in block! Pushing up by " << correctionY << std::endl;
+            }
+        }
+    }
+
     // ===== Test Y axis FIRST (vertical movement) =====
     glm::vec3 testPos = Position + glm::vec3(0.0f, movement.y, 0.0f);
-    if (checkCollision(testPos, world)) {
-        // Collision detected - stop vertical movement completely
-        movement.y = 0.0f;
+    bool yCollision = checkCollision(testPos, world);
+
+    if (shouldDebug && debugCounter % 60 == 0 && std::abs(Velocity.y) > 0.1f) {
+        std::cout << "DEBUG: Y collision check at testPos.y=" << testPos.y << " result=" << yCollision << std::endl;
+    }
+
+    if (yCollision) {
+        // Collision detected!
+        if (movement.y < 0.0f) {
+            // Falling downward - snap feet to top of block grid
+            glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+            // Round feet position UP to next 0.5 block boundary
+            float blockGridY = std::ceil(feetPos.y / 0.5f) * 0.5f;
+            // Set movement to place feet exactly on block grid
+            movement.y = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
+        } else {
+            // Moving upward (hitting ceiling) - just stop
+            movement.y = 0.0f;
+        }
         Velocity.y = 0.0f;
     }
 
@@ -286,6 +334,15 @@ bool Player::checkCollision(const glm::vec3& position, World* world) {
     int maxY = (int)std::floor(maxBound.y / 0.5f);
     int maxZ = (int)std::floor(maxBound.z / 0.5f);
 
+    // DEBUG: Print what we're checking (only if debug_collision is enabled)
+    static int checkCounter = 0;
+    bool shouldDebugCollision = DebugState::instance().debugCollision.getValue() && (checkCounter++ % 120 == 0);
+    if (shouldDebugCollision) {
+        std::cout << "DEBUG checkCollision: feet=" << feetPos.y
+                  << " minY=" << minY << " maxY=" << maxY
+                  << " (blocks " << minY << " to " << maxY << ")" << std::endl;
+    }
+
     // Check each block in the range
     for (int x = minX; x <= maxX; x++) {
         for (int y = minY; y <= maxY; y++) {
@@ -296,8 +353,17 @@ bool Player::checkCollision(const glm::vec3& position, World* world) {
                 float worldZ = z * 0.5f;
 
                 int blockID = world->getBlockAt(worldX, worldY, worldZ);
+
+                if (shouldDebugCollision && y == minY) {
+                    std::cout << "  Checking block (" << x << "," << y << "," << z
+                              << ") world(" << worldX << "," << worldY << "," << worldZ
+                              << ") = " << blockID << std::endl;
+                }
+
                 if (blockID > 0) {  // Solid block (not air)
-                    // TODO: Check if block is liquid and handle differently
+                    if (shouldDebugCollision) {
+                        std::cout << "  COLLISION at block (" << x << "," << y << "," << z << ")!" << std::endl;
+                    }
                     return true;  // Collision detected
                 }
             }

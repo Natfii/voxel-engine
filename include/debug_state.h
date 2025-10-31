@@ -12,6 +12,7 @@ public:
     ConVar<bool> drawFPS;
     ConVar<bool> showTargetInfo;
     ConVar<bool> showCullingStats;
+    ConVar<bool> debugCollision;
     ConVar<bool> noclip;
 
     // FPS tracking
