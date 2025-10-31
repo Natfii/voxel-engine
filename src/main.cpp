@@ -201,8 +201,9 @@ int main() {
             // Flip Y axis for Vulkan (Vulkan's Y axis points down in NDC, OpenGL's points up)
             projection[1][1] *= -1;
 
-            // Update uniform buffer
-            renderer.updateUniformBuffer(renderer.getCurrentFrame(), model, view, projection);
+            // Update uniform buffer with camera position and render distance for fog
+            const float renderDistance = 80.0f;
+            renderer.updateUniformBuffer(renderer.getCurrentFrame(), model, view, projection, player.Position, renderDistance);
 
             // Raycast to find targeted block (5 blocks = 2.5 world units since blocks are 0.5 units)
             RaycastHit hit = Raycast::castRay(&world, player.Position, player.Front, 2.5f);

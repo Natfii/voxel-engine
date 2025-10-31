@@ -10,11 +10,13 @@
 // Forward declare Vertex (defined in chunk.h)
 struct Vertex;
 
-// Uniform buffer object for MVP matrices
+// Uniform buffer object for MVP matrices and fog parameters
 struct UniformBufferObject {
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 projection;
+    alignas(16) glm::vec3 cameraPos;
+    alignas(4) float renderDistance;
 };
 
 // Queue family indices
@@ -46,7 +48,7 @@ public:
     // Core rendering
     void beginFrame();
     void endFrame();
-    void updateUniformBuffer(uint32_t currentImage, const glm::mat4& model, const glm::mat4& view, const glm::mat4& projection);
+    void updateUniformBuffer(uint32_t currentImage, const glm::mat4& model, const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos, float renderDistance);
 
     // Getters
     VkInstance getInstance() const { return m_instance; }
