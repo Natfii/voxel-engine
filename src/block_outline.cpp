@@ -69,13 +69,69 @@ std::vector<float> BlockOutline::createOutlineVertices(float x, float y, float z
 }
 
 void BlockOutline::init(VulkanRenderer* renderer) {
-    // Initial buffer will be created when position is first set
+    // Create initial buffer with dummy data
+    std::vector<float> dummyVerts = createOutlineVertices(0, 0, 0);
+
+    VkDeviceSize bufferSize = sizeof(float) * dummyVerts.size();
+
+    // Create staging buffer
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    renderer->createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                          stagingBuffer, stagingBufferMemory);
+
+    // Copy vertex data to staging buffer
+    void* data;
+    vkMapMemory(renderer->getDevice(), stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, dummyVerts.data(), (size_t)bufferSize);
+    vkUnmapMemory(renderer->getDevice(), stagingBufferMemory);
+
+    // Create vertex buffer on device
+    renderer->createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                          m_vertexBuffer, m_vertexBufferMemory);
+
+    // Copy from staging to device
+    renderer->copyBuffer(stagingBuffer, m_vertexBuffer, bufferSize);
+
+    // Cleanup staging buffer
+    vkDestroyBuffer(renderer->getDevice(), stagingBuffer, nullptr);
+    vkFreeMemory(renderer->getDevice(), stagingBufferMemory, nullptr);
+
+    m_vertexCount = dummyVerts.size() / 6; // 6 floats per vertex (xyz rgb)
 }
 
 void BlockOutline::setPosition(float x, float y, float z) {
     m_position = glm::vec3(x, y, z);
     m_visible = true;
-    // Buffer update will happen in render()
+}
+
+void BlockOutline::updateBuffer(VulkanRenderer* renderer) {
+    // Create new vertex data
+    std::vector<float> verts = createOutlineVertices(m_position.x, m_position.y, m_position.z);
+
+    VkDeviceSize bufferSize = sizeof(float) * verts.size();
+
+    // Create staging buffer
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    renderer->createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                          stagingBuffer, stagingBufferMemory);
+
+    // Copy vertex data to staging buffer
+    void* data;
+    vkMapMemory(renderer->getDevice(), stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, verts.data(), (size_t)bufferSize);
+    vkUnmapMemory(renderer->getDevice(), stagingBufferMemory);
+
+    // Copy from staging to device buffer
+    renderer->copyBuffer(stagingBuffer, m_vertexBuffer, bufferSize);
+
+    // Cleanup staging buffer
+    vkDestroyBuffer(renderer->getDevice(), stagingBuffer, nullptr);
+    vkFreeMemory(renderer->getDevice(), stagingBufferMemory, nullptr);
 }
 
 void BlockOutline::render(VkCommandBuffer commandBuffer) {

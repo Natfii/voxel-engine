@@ -19,6 +19,9 @@ public:
     void setPosition(float x, float y, float z);
     void setVisible(bool visible) { m_visible = visible; }
 
+    // Update the vertex buffer with new position
+    void updateBuffer(VulkanRenderer* renderer);
+
     // Render the outline
     void render(VkCommandBuffer commandBuffer);
 

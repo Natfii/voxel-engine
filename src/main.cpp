@@ -21,6 +21,7 @@
 #include "crosshair.h"
 #include "config.h"
 #include "raycast.h"
+#include "block_outline.h"
 
 // Global variables
 VulkanRenderer* g_renderer = nullptr;
@@ -149,6 +150,8 @@ int main() {
 
         PauseMenu pauseMenu(window);
         Crosshair crosshair;
+        BlockOutline blockOutline;
+        blockOutline.init(&renderer);
         bool isPaused = false;
         bool escPressed = false;
         bool requestMouseReset = false;
@@ -204,15 +207,30 @@ int main() {
             // Raycast to find targeted block
             RaycastHit hit = Raycast::castRay(&world, player.Position, player.Front, 5.0f);
 
+            // Update block outline if we're looking at a block
+            if (hit.hit) {
+                blockOutline.setPosition(hit.position.x, hit.position.y, hit.position.z);
+                blockOutline.updateBuffer(&renderer);
+            } else {
+                blockOutline.setVisible(false);
+            }
+
             // Begin rendering
             renderer.beginFrame();
 
-            // Render world
+            // Render world with normal pipeline
+            vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getGraphicsPipeline());
+            vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                   renderer.getPipelineLayout(), 0, 1, &renderer.getCurrentDescriptorSet(), 0, nullptr);
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, 250.0f);
 
-            // TODO: Render block outline for targeted block
-            // For now, this will require adding a line rendering pipeline to the Vulkan renderer
-            // The hit information is available in the 'hit' variable above
+            // Render block outline with line pipeline
+            if (hit.hit) {
+                vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getLinePipeline());
+                vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                       renderer.getPipelineLayout(), 0, 1, &renderer.getCurrentDescriptorSet(), 0, nullptr);
+                blockOutline.render(renderer.getCurrentCommandBuffer());
+            }
 
             // Render ImGui (crosshair when playing, menu when paused)
             ImGui_ImplVulkan_NewFrame();
