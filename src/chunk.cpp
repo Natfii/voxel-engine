@@ -74,17 +74,22 @@ Chunk::Chunk(int x, int y, int z) : m_x(x), m_y(y), m_z(z), m_vertexBuffer(VK_NU
 
             // Fill blocks based on height
             for (int Y = 0; Y < HEIGHT; ++Y) {
-                if (Y < height - 4)      m_blocks[X][Y][Z] = stoneID;
-                else if (Y < height)     m_blocks[X][Y][Z] = dirtID;
-                else if (Y == height) {
-                    // Only place grass if air is above (Y+1 is air or out of bounds)
-                    if (Y + 1 >= HEIGHT || (Y + 1 < HEIGHT)) {
-                        // Check if block above would be air
-                        bool airAbove = (Y + 1 >= HEIGHT) || (Y + 1 > height);
-                        m_blocks[X][Y][Z] = airAbove ? grassID : dirtID;
-                    }
+                if (Y < height - 4) {
+                    m_blocks[X][Y][Z] = stoneID;
                 }
-                else                     m_blocks[X][Y][Z] = 0; // Air
+                else if (Y < height) {
+                    m_blocks[X][Y][Z] = dirtID;
+                }
+                else if (Y == height) {
+                    // Only place grass if air is above
+                    // Check if the block directly above would be air
+                    // This handles chunk boundaries and surface blocks correctly
+                    bool airAbove = (Y + 1 >= HEIGHT) || (Y + 1 > height);
+                    m_blocks[X][Y][Z] = airAbove ? grassID : dirtID;
+                }
+                else {
+                    m_blocks[X][Y][Z] = 0; // Air
+                }
             }
         }
     }

@@ -204,8 +204,8 @@ int main() {
             // Update uniform buffer
             renderer.updateUniformBuffer(renderer.getCurrentFrame(), model, view, projection);
 
-            // Raycast to find targeted block
-            RaycastHit hit = Raycast::castRay(&world, player.Position, player.Front, 5.0f);
+            // Raycast to find targeted block (5 blocks = 2.5 world units since blocks are 0.5 units)
+            RaycastHit hit = Raycast::castRay(&world, player.Position, player.Front, 2.5f);
 
             // Update block outline if we're looking at a block
             if (hit.hit) {
