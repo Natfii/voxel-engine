@@ -4,12 +4,17 @@
 #include <thread>
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 World::World(int width, int height, int depth)
     : m_width(width), m_height(height), m_depth(depth) {
     // Center world generation around origin (0, 0, 0)
     int halfWidth = width / 2;
     int halfDepth = depth / 2;
+
+    std::cout << "Creating world with " << width << "x" << height << "x" << depth << " chunks" << std::endl;
+    std::cout << "Chunk coordinates range: X[" << -halfWidth << " to " << (width - halfWidth - 1)
+              << "], Y[0 to " << (height - 1) << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]" << std::endl;
 
     for (int x = -halfWidth; x < width - halfWidth; ++x) {
         for (int y = 0; y < height; ++y) {
@@ -18,6 +23,8 @@ World::World(int width, int height, int depth)
             }
         }
     }
+
+    std::cout << "Total chunks created: " << m_chunks.size() << std::endl;
 }
 
 World::~World() {
@@ -72,14 +79,13 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
         return; // Skip rendering if camera position is invalid
     }
 
-    // Hysteresis thresholds to prevent flashing at boundary
-    // Show chunks at 106% of render distance
-    // Hide chunks at 110% of render distance
-    // This creates a 4% hysteresis band (10 units for renderDistance=250)
-    const float showDistance = renderDistance * 1.06f;
-    const float hideDistance = renderDistance * 1.10f;
-    const float showDistanceSquared = showDistance * showDistance;
-    const float hideDistanceSquared = hideDistance * hideDistance;
+    // Simple distance-based culling with fixed threshold
+    // Add small margin (1 unit) to prevent floating-point boundary flickering
+    const float renderDistanceWithMargin = renderDistance + 1.0f;
+    const float renderDistanceSquared = renderDistanceWithMargin * renderDistanceWithMargin;
+
+    int renderedCount = 0;
+    int culledCount = 0;
 
     for (Chunk* chunk : m_chunks) {
         // Skip chunks with no vertices (optimization)
@@ -87,32 +93,24 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
             continue;
         }
 
-        // Compute distance to nearest point on chunk AABB (not just center)
-        // This prevents chunks from being culled when their far edges are still visible
-        glm::vec3 closestPoint = glm::clamp(cameraPos, chunk->getMin(), chunk->getMax());
-        glm::vec3 delta = closestPoint - cameraPos;
+        // Compute distance to chunk center
+        glm::vec3 delta = chunk->getCenter() - cameraPos;
         float distanceSquared = glm::dot(delta, delta);
 
-        // Hysteresis-based visibility update
-        // If currently visible, only hide when distance > hideDistance
-        // If currently hidden, only show when distance < showDistance
-        bool wasVisible = chunk->isVisible();
-        bool shouldBeVisible;
-
-        if (wasVisible) {
-            // Currently visible: hide only if beyond hide threshold
-            shouldBeVisible = distanceSquared <= hideDistanceSquared;
-        } else {
-            // Currently hidden: show only if within show threshold
-            shouldBeVisible = distanceSquared <= showDistanceSquared;
-        }
-
-        chunk->setVisible(shouldBeVisible);
-
-        // Render if visible
-        if (shouldBeVisible) {
+        // Simple visibility check - always render if within distance
+        if (distanceSquared <= renderDistanceSquared) {
             chunk->render(commandBuffer);
+            renderedCount++;
+        } else {
+            culledCount++;
         }
+    }
+
+    // Debug output every 60 frames (roughly once per second at 60 FPS)
+    static int frameCount = 0;
+    if (frameCount++ % 60 == 0) {
+        std::cout << "Rendered: " << renderedCount << " chunks, Culled: " << culledCount
+                  << " chunks, Total chunks: " << m_chunks.size() << std::endl;
     }
 }
 

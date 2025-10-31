@@ -261,4 +261,3 @@ If you encounter issues:
 
 ---
 
-**Having issues?** See the troubleshooting section above or check the detailed guides in the docs folder.

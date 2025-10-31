@@ -17,6 +17,21 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Check for -clean flag
+if [ "$1" == "-clean" ] || [ "$1" == "--clean" ]; then
+    echo -e "${YELLOW}[CLEAN] Removing build directory and compiled shaders...${NC}"
+    if [ -d "build" ]; then
+        echo "Deleting build directory..."
+        rm -rf build
+    fi
+    if ls shaders/*.spv 1> /dev/null 2>&1; then
+        echo "Deleting compiled shaders..."
+        rm -f shaders/*.spv
+    fi
+    echo -e "${GREEN}Clean complete!${NC}"
+    echo ""
+fi
+
 # Check if Vulkan SDK or system Vulkan is available
 echo "[1/6] Checking for Vulkan..."
 if [ -n "$VULKAN_SDK" ]; then

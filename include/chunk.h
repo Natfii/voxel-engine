@@ -34,6 +34,7 @@ public:
     ~Chunk();
 
     void generate();
+    void generateMesh(class World* world);  // Generate mesh after all chunks exist
     void createVertexBuffer(VulkanRenderer* renderer);
     void render(VkCommandBuffer commandBuffer);
 
