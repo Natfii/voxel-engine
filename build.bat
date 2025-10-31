@@ -8,6 +8,26 @@ echo   Voxel Engine - Windows Build Script
 echo ============================================================================
 echo.
 
+REM Check for -clean flag
+if "%1"=="-clean" goto clean
+if "%1"=="--clean" goto clean
+goto skip_clean
+
+:clean
+echo [CLEAN] Removing build directory and compiled shaders...
+if exist "build" (
+    echo Deleting build directory...
+    rmdir /s /q build
+)
+if exist "shaders\*.spv" (
+    echo Deleting compiled shaders...
+    del /q shaders\*.spv
+)
+echo Clean complete!
+echo.
+
+:skip_clean
+
 REM Check if Vulkan SDK is installed
 if not defined VULKAN_SDK (
     echo [ERROR] VULKAN_SDK environment variable not found!

@@ -1,5 +1,6 @@
 // chunk.cpp
 #include "chunk.h"
+#include "world.h"          // for neighbor chunk checking
 #include "vulkan_renderer.h"
 #include "block_system.h"   // for BlockRegistry and BlockDefinition
 #include "FastNoiseLite.h"  // for procedural terrain generation
@@ -39,17 +40,16 @@ int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
 // Constructor: Initialize chunk at world grid coordinates (x, y, z)
 Chunk::Chunk(int x, int y, int z) : m_x(x), m_y(y), m_z(z), m_vertexBuffer(VK_NULL_HANDLE), m_vertexBufferMemory(VK_NULL_HANDLE), m_vertexCount(0), m_visible(false) {
     // Calculate world-space bounds (blocks are 0.5 units in size)
-    // Add small epsilon (0.01) to prevent float precision issues in culling
-    const float epsilon = 0.01f;
+    // No epsilon - exact bounds prevent chunk overlap
     m_minBounds = glm::vec3(
-        float(m_x * WIDTH) * 0.5f - epsilon,
-        float(m_y * HEIGHT) * 0.5f - epsilon,
-        float(m_z * DEPTH) * 0.5f - epsilon
+        float(m_x * WIDTH) * 0.5f,
+        float(m_y * HEIGHT) * 0.5f,
+        float(m_z * DEPTH) * 0.5f
     );
     m_maxBounds = glm::vec3(
-        float((m_x + 1) * WIDTH) * 0.5f + epsilon,
-        float((m_y + 1) * HEIGHT) * 0.5f + epsilon,
-        float((m_z + 1) * DEPTH) * 0.5f + epsilon
+        float((m_x + 1) * WIDTH) * 0.5f,
+        float((m_y + 1) * HEIGHT) * 0.5f,
+        float((m_z + 1) * DEPTH) * 0.5f
     );
 
     // Determine block IDs from registry (fallback to Air=0 if not found)
@@ -135,6 +135,155 @@ void Chunk::generate() {
         if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH)
             return false; // Treat out-of-bounds as air (will show boundary faces)
         return m_blocks[x][y][z] != 0;
+    };
+
+    // Iterate over every block in the chunk (optimized order for cache locality)
+    for(int X = 0; X < WIDTH;  ++X) {
+        for(int Y = 0; Y < HEIGHT; ++Y) {
+            for(int Z = 0; Z < DEPTH;  ++Z) {
+                int id = m_blocks[X][Y][Z];
+                if (id == 0) continue; // Skip air
+
+                // Look up block definition by ID
+                const BlockDefinition& def = BlockRegistry::instance().get(id);
+                float cr, cg, cb;
+                if (def.hasColor) {
+                    // Use the block's defined color
+                    cr = def.color.r;
+                    cg = def.color.g;
+                    cb = def.color.b;
+                } else {
+                    // No color defined (likely has a texture); use white
+                    cr = cg = cb = 1.0f;
+                }
+
+                // Face culling: only render faces exposed to air
+                float bx = float(X) * 0.5f;
+                float by = float(Y) * 0.5f;
+                float bz = float(Z) * 0.5f;
+
+                // Front face (z=0, facing -Z direction)
+                if (!isSolid(X, Y, Z - 1)) {
+                    for (int i = 0; i < 18; i += 3) {
+                        Vertex v;
+                        v.x = cube[i+0] + bx;
+                        v.y = cube[i+1] + by;
+                        v.z = cube[i+2] + bz;
+                        v.r = cr; v.g = cg; v.b = cb;
+                        verts.push_back(v);
+                    }
+                }
+
+                // Back face (z=0.5, facing +Z direction)
+                if (!isSolid(X, Y, Z + 1)) {
+                    for (int i = 18; i < 36; i += 3) {
+                        Vertex v;
+                        v.x = cube[i+0] + bx;
+                        v.y = cube[i+1] + by;
+                        v.z = cube[i+2] + bz;
+                        v.r = cr; v.g = cg; v.b = cb;
+                        verts.push_back(v);
+                    }
+                }
+
+                // Left face (x=0, facing -X direction)
+                if (!isSolid(X - 1, Y, Z)) {
+                    for (int i = 36; i < 54; i += 3) {
+                        Vertex v;
+                        v.x = cube[i+0] + bx;
+                        v.y = cube[i+1] + by;
+                        v.z = cube[i+2] + bz;
+                        v.r = cr; v.g = cg; v.b = cb;
+                        verts.push_back(v);
+                    }
+                }
+
+                // Right face (x=0.5, facing +X direction)
+                if (!isSolid(X + 1, Y, Z)) {
+                    for (int i = 54; i < 72; i += 3) {
+                        Vertex v;
+                        v.x = cube[i+0] + bx;
+                        v.y = cube[i+1] + by;
+                        v.z = cube[i+2] + bz;
+                        v.r = cr; v.g = cg; v.b = cb;
+                        verts.push_back(v);
+                    }
+                }
+
+                // Top face (y=0.5, facing +Y direction)
+                if (!isSolid(X, Y + 1, Z)) {
+                    for (int i = 72; i < 90; i += 3) {
+                        Vertex v;
+                        v.x = cube[i+0] + bx;
+                        v.y = cube[i+1] + by;
+                        v.z = cube[i+2] + bz;
+                        v.r = cr; v.g = cg; v.b = cb;
+                        verts.push_back(v);
+                    }
+                }
+
+                // Bottom face (y=0, facing -Y direction)
+                if (!isSolid(X, Y - 1, Z)) {
+                    for (int i = 90; i < 108; i += 3) {
+                        Vertex v;
+                        v.x = cube[i+0] + bx;
+                        v.y = cube[i+1] + by;
+                        v.z = cube[i+2] + bz;
+                        v.r = cr; v.g = cg; v.b = cb;
+                        verts.push_back(v);
+                    }
+                }
+            }
+        }
+    }
+
+    m_vertexCount = static_cast<uint32_t>(verts.size());
+    m_vertices = std::move(verts);
+}
+
+void Chunk::generateMesh(World* world) {
+    // Define a 0.5-unit cube (36 vertices) - scaled for smaller blocks
+    static constexpr std::array<float, 108> cube = {{
+        // front face (z = 0)
+        0,0,0,  0.5f,0,0,  0.5f,0.5f,0,   0,0,0,  0.5f,0.5f,0,  0,0.5f,0,
+        // back face (z = 0.5)
+        0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,   0.5f,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
+        // left face (x = 0)
+        0,0,0.5f,  0,0,0,  0,0.5f,0,   0,0,0.5f,  0,0.5f,0,  0,0.5f,0.5f,
+        // right face (x = 0.5)
+        0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,   0.5f,0,0,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
+        // top face (y = 0.5)
+        0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,   0,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
+        // bottom face (y = 0)
+        0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,   0,0,0.5f,  0.5f,0,0,  0,0,0
+    }};
+
+    std::vector<Vertex> verts;
+    // Reserve space for estimated visible faces (roughly 30% of blocks visible, 3 faces each on average)
+    verts.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10);
+
+    // Helper lambda to check if a block is solid (non-air)
+    // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
+    auto isSolid = [this, world](int x, int y, int z) -> bool {
+        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
+            // Inside this chunk
+            return m_blocks[x][y][z] != 0;
+        }
+
+        // Out of bounds - check neighboring chunk via World
+        // Convert local coordinates to world coordinates
+        int worldBlockX = m_x * WIDTH + x;
+        int worldBlockY = m_y * HEIGHT + y;
+        int worldBlockZ = m_z * DEPTH + z;
+
+        // Convert to world position (blocks are 0.5 units)
+        float worldX = worldBlockX * 0.5f;
+        float worldY = worldBlockY * 0.5f;
+        float worldZ = worldBlockZ * 0.5f;
+
+        // Query the world (returns 0 for air or out-of-world bounds)
+        int blockID = world->getBlockAt(worldX, worldY, worldZ);
+        return blockID != 0;
     };
 
     // Iterate over every block in the chunk (optimized order for cache locality)
