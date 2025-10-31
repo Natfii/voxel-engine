@@ -1,6 +1,8 @@
 #include "world.h"
 #include "vulkan_renderer.h"
 #include <glm/glm.hpp>
+#include <thread>
+#include <algorithm>
 
 World::World(int width, int height, int depth)
     : m_width(width), m_height(height), m_depth(depth) {
@@ -28,14 +30,38 @@ int World::index(int x, int y, int z) const {
 }
 
 void World::generateWorld() {
-    for (Chunk* chunk : m_chunks) {
-        chunk->generate();
+    // Parallel chunk generation for better performance
+    const unsigned int numThreads = std::thread::hardware_concurrency();
+    const size_t chunksPerThread = (m_chunks.size() + numThreads - 1) / numThreads;
+
+    std::vector<std::thread> threads;
+    threads.reserve(numThreads);
+
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, m_chunks.size());
+
+        if (startIdx >= m_chunks.size()) break;
+
+        threads.emplace_back([this, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                m_chunks[j]->generate();
+            }
+        });
+    }
+
+    // Wait for all threads to complete
+    for (auto& thread : threads) {
+        thread.join();
     }
 }
 
 void World::createBuffers(VulkanRenderer* renderer) {
+    // Only create buffers for chunks with vertices (skip empty chunks)
     for (Chunk* chunk : m_chunks) {
-        chunk->createVertexBuffer(renderer);
+        if (chunk->getVertexCount() > 0) {
+            chunk->createVertexBuffer(renderer);
+        }
     }
 }
 

@@ -45,6 +45,9 @@ public:
     glm::vec3 getMax() const { return m_maxBounds; }
     glm::vec3 getCenter() const { return (m_minBounds + m_maxBounds) * 0.5f; }
 
+    // Get vertex count (useful for skipping empty chunks)
+    uint32_t getVertexCount() const { return m_vertexCount; }
+
 private:
     int m_x, m_y, m_z;
     int m_blocks[WIDTH][HEIGHT][DEPTH];

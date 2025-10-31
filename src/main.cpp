@@ -136,11 +136,14 @@ int main() {
         std::cout << "Creating GPU buffers..." << std::endl;
         world.createBuffers(&renderer);
 
-        // Spawn player at origin (0, 0) with appropriate height based on terrain
+        // Spawn player at world center with appropriate height based on terrain
+        // World is centered around (0, 0), so spawn at center
         float spawnX = 0.0f;
         float spawnZ = 0.0f;
         int terrainHeight = Chunk::getTerrainHeightAt(spawnX, spawnZ);
         float spawnY = (terrainHeight + 2) * 0.5f;  // +2 blocks above terrain, scaled to 0.5 units
+
+        std::cout << "Spawning player at world center (" << spawnX << ", " << spawnY << ", " << spawnZ << ")" << std::endl;
         Player player(glm::vec3(spawnX, spawnY, spawnZ), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
 
         PauseMenu pauseMenu(window);
