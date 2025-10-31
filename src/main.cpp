@@ -20,6 +20,7 @@
 #include "pause_menu.h"
 #include "crosshair.h"
 #include "config.h"
+#include "raycast.h"
 
 // Global variables
 VulkanRenderer* g_renderer = nullptr;
@@ -200,11 +201,18 @@ int main() {
             // Update uniform buffer
             renderer.updateUniformBuffer(renderer.getCurrentFrame(), model, view, projection);
 
+            // Raycast to find targeted block
+            RaycastHit hit = Raycast::castRay(&world, player.Position, player.Front, 5.0f);
+
             // Begin rendering
             renderer.beginFrame();
 
             // Render world
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, 250.0f);
+
+            // TODO: Render block outline for targeted block
+            // For now, this will require adding a line rendering pipeline to the Vulkan renderer
+            // The hit information is available in the 'hit' variable above
 
             // Render ImGui (crosshair when playing, menu when paused)
             ImGui_ImplVulkan_NewFrame();
@@ -218,6 +226,22 @@ int main() {
                 }
             } else {
                 crosshair.render();
+
+                // Show targeted block info
+                if (hit.hit) {
+                    ImGui::Begin("Block Info", nullptr,
+                        ImGuiWindowFlags_NoTitleBar |
+                        ImGuiWindowFlags_NoResize |
+                        ImGuiWindowFlags_NoMove |
+                        ImGuiWindowFlags_NoBackground |
+                        ImGuiWindowFlags_AlwaysAutoResize);
+                    ImGui::SetWindowPos(ImVec2(10, height - 80));
+                    ImGui::TextColored(ImVec4(1,1,1,1), "Looking at block:");
+                    ImGui::TextColored(ImVec4(0.7f,0.7f,0.7f,1), "  Position: (%d, %d, %d)",
+                        hit.blockX, hit.blockY, hit.blockZ);
+                    ImGui::TextColored(ImVec4(0.7f,0.7f,0.7f,1), "  Distance: %.2f", hit.distance);
+                    ImGui::End();
+                }
             }
 
             ImGui::Render();

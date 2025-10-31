@@ -95,6 +95,13 @@ Chunk::~Chunk() {
     // The buffers should be cleaned up before destruction by the renderer
 }
 
+int Chunk::getBlock(int x, int y, int z) const {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return -1; // Out of bounds
+    }
+    return m_blocks[x][y][z];
+}
+
 void Chunk::generate() {
     // Define a 0.5-unit cube (36 vertices) - scaled for smaller blocks
     static constexpr std::array<float, 108> cube = {{

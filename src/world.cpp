@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <thread>
 #include <algorithm>
+#include <cmath>
 
 World::World(int width, int height, int depth)
     : m_width(width), m_height(height), m_depth(depth) {
@@ -89,4 +90,44 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
         // Render chunk
         chunk->render(commandBuffer);
     }
+}
+
+Chunk* World::getChunkAt(int chunkX, int chunkY, int chunkZ) {
+    // Find chunk with matching coordinates
+    for (Chunk* chunk : m_chunks) {
+        if (chunk->getChunkX() == chunkX &&
+            chunk->getChunkY() == chunkY &&
+            chunk->getChunkZ() == chunkZ) {
+            return chunk;
+        }
+    }
+    return nullptr;
+}
+
+int World::getBlockAt(float worldX, float worldY, float worldZ) {
+    // Convert world coordinates to chunk coordinates
+    // Blocks are 0.5 units in size, and each chunk is 32 blocks
+    int blockX = static_cast<int>(std::floor(worldX / 0.5f));
+    int blockY = static_cast<int>(std::floor(worldY / 0.5f));
+    int blockZ = static_cast<int>(std::floor(worldZ / 0.5f));
+
+    int chunkX = blockX / Chunk::WIDTH;
+    int chunkY = blockY / Chunk::HEIGHT;
+    int chunkZ = blockZ / Chunk::DEPTH;
+
+    int localX = blockX - (chunkX * Chunk::WIDTH);
+    int localY = blockY - (chunkY * Chunk::HEIGHT);
+    int localZ = blockZ - (chunkZ * Chunk::DEPTH);
+
+    // Handle negative coordinates properly
+    if (localX < 0) { localX += Chunk::WIDTH; chunkX--; }
+    if (localY < 0) { localY += Chunk::HEIGHT; chunkY--; }
+    if (localZ < 0) { localZ += Chunk::DEPTH; chunkZ--; }
+
+    Chunk* chunk = getChunkAt(chunkX, chunkY, chunkZ);
+    if (chunk == nullptr) {
+        return 0; // Air (outside world bounds)
+    }
+
+    return chunk->getBlock(localX, localY, localZ);
 }
