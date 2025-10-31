@@ -38,7 +38,7 @@ void Player::update(GLFWwindow* window, float deltaTime) {
         }
 
         float xoffset = float(xpos - LastX);
-        float yoffset = float(LastY - ypos); // reversed
+        float yoffset = float(ypos - LastY); // NOT reversed - natural mouse movement
         LastX = float(xpos);
         LastY = float(ypos);
 
