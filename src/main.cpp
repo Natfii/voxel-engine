@@ -49,6 +49,7 @@ int main() {
     try {
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // No OpenGL context
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);     // Allow window resizing
         GLFWwindow* window = glfwCreateWindow(800, 600, "Voxel Engine - Vulkan", nullptr, nullptr);
         if (!window) {
             std::cerr << "Failed to create GLFW window\n";
@@ -239,10 +240,9 @@ int main() {
             // Sync player noclip with debug state
             player.NoclipMode = DebugState::instance().noclip.getValue();
 
-            // Update player only during gameplay
-            if (InputManager::instance().canMove()) {
-                player.update(window, deltaTime, &world);
-            }
+            // Always update player physics, but only process input during gameplay
+            bool canProcessInput = InputManager::instance().canMove();
+            player.update(window, deltaTime, &world, canProcessInput);
 
             // Check if console was closed (by clicking outside or ESC)
             // and we need to reset mouse for gameplay
@@ -268,6 +268,9 @@ int main() {
             glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.01f, 300.0f);
             // Flip Y axis for Vulkan (Vulkan's Y axis points down in NDC, OpenGL's points up)
             projection[1][1] *= -1;
+
+            // Calculate view-projection matrix for frustum culling
+            glm::mat4 viewProj = projection * view;
 
             // Update uniform buffer with camera position and render distance for fog
             const float renderDistance = 80.0f;
@@ -308,7 +311,7 @@ int main() {
             vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getGraphicsPipeline());
             vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
-            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, 80.0f);
+            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, 80.0f);
 
             // Render block outline with line pipeline
             if (target.hasTarget) {
@@ -375,6 +378,26 @@ int main() {
                     ImGui::Text("=== Target Info ===");
                     ImGui::Text("No target");
                 }
+                ImGui::End();
+            }
+
+            // Render culling stats if enabled
+            if (DebugState::instance().showCullingStats.getValue()) {
+                ImGui::SetNextWindowPos(ImVec2(10, 110), ImGuiCond_Always);
+                ImGui::SetNextWindowBgAlpha(0.5f);
+                ImGui::Begin("Culling Stats", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+                ImGui::Text("=== Chunk Culling ===");
+                ImGui::Text("Rendered: %d", DebugState::instance().chunksRendered);
+                ImGui::Text("Distance Culled: %d", DebugState::instance().chunksDistanceCulled);
+                ImGui::Text("Frustum Culled: %d", DebugState::instance().chunksFrustumCulled);
+                ImGui::Text("Total in World: %d", DebugState::instance().chunksTotalInWorld);
+
+                // Calculate culling efficiency percentage
+                int totalCulled = DebugState::instance().chunksDistanceCulled + DebugState::instance().chunksFrustumCulled;
+                int totalChunks = DebugState::instance().chunksTotalInWorld;
+                float cullingPercent = (totalChunks > 0) ? (totalCulled * 100.0f / totalChunks) : 0.0f;
+                ImGui::Text("Culled: %.1f%%", cullingPercent);
                 ImGui::End();
             }
 

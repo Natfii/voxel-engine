@@ -4,6 +4,7 @@ DebugState::DebugState()
     : renderDebug("debug_render", "Show chunk rendering debug info", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
       drawFPS("debug_drawfps", "Show FPS counter", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
       showTargetInfo("debug_targetinfo", "Show target information", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
+      showCullingStats("debug_culling", "Show frustum culling statistics", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
       noclip("noclip", "Enable noclip mode", false, FCVAR_NOTIFY) {
 }
 

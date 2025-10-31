@@ -14,7 +14,7 @@ public:
 
     void generateWorld();
     void createBuffers(VulkanRenderer* renderer);
-    void renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, float renderDistance = 50.0f);
+    void renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, const glm::mat4& viewProj, float renderDistance = 50.0f);
 
     // Block querying and modification
     Chunk* getChunkAt(int chunkX, int chunkY, int chunkZ);

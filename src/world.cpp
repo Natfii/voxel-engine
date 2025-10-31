@@ -1,5 +1,7 @@
 #include "world.h"
 #include "vulkan_renderer.h"
+#include "frustum.h"
+#include "debug_state.h"
 #include <glm/glm.hpp>
 #include <thread>
 #include <algorithm>
@@ -73,11 +75,14 @@ void World::createBuffers(VulkanRenderer* renderer) {
     }
 }
 
-void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, float renderDistance) {
+void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, const glm::mat4& viewProj, float renderDistance) {
     // Validate camera position for NaN/Inf to prevent rendering errors
     if (!std::isfinite(cameraPos.x) || !std::isfinite(cameraPos.y) || !std::isfinite(cameraPos.z)) {
         return; // Skip rendering if camera position is invalid
     }
+
+    // Extract frustum from view-projection matrix
+    Frustum frustum = extractFrustum(viewProj);
 
     // Chunk culling: account for chunk size to prevent popping
     // Chunks are 32x32x32 blocks = 16x16x16 world units
@@ -89,8 +94,13 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     const float renderDistanceWithMargin = fragmentDiscardDistance + chunkHalfDiagonal;
     const float renderDistanceSquared = renderDistanceWithMargin * renderDistanceWithMargin;
 
+    // Frustum margin: add extra padding to prevent edge-case popping
+    // Slightly larger than default to account for chunk size (16 world units)
+    const float frustumMargin = chunkHalfDiagonal + 2.0f;
+
     int renderedCount = 0;
-    int culledCount = 0;
+    int distanceCulled = 0;
+    int frustumCulled = 0;
 
     for (Chunk* chunk : m_chunks) {
         // Skip chunks with no vertices (optimization)
@@ -98,24 +108,43 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
             continue;
         }
 
-        // Compute distance to chunk center
+        // Stage 1: Distance culling (fast, eliminates far chunks)
         glm::vec3 delta = chunk->getCenter() - cameraPos;
         float distanceSquared = glm::dot(delta, delta);
 
-        // Cull chunks whose furthest corner exceeds render distance + margin
-        if (distanceSquared <= renderDistanceSquared) {
-            chunk->render(commandBuffer);
-            renderedCount++;
-        } else {
-            culledCount++;
+        if (distanceSquared > renderDistanceSquared) {
+            distanceCulled++;
+            continue;
         }
+
+        // Stage 2: Frustum culling (catches chunks behind camera)
+        // Get chunk AABB bounds
+        glm::vec3 chunkMin = chunk->getMin();
+        glm::vec3 chunkMax = chunk->getMax();
+
+        if (!frustumAABBIntersect(frustum, chunkMin, chunkMax, frustumMargin)) {
+            frustumCulled++;
+            continue;
+        }
+
+        // Chunk passed all culling tests - render it
+        chunk->render(commandBuffer);
+        renderedCount++;
     }
+
+    // Store stats in DebugState for display
+    DebugState::instance().chunksRendered = renderedCount;
+    DebugState::instance().chunksDistanceCulled = distanceCulled;
+    DebugState::instance().chunksFrustumCulled = frustumCulled;
+    DebugState::instance().chunksTotalInWorld = static_cast<int>(m_chunks.size());
 
     // Debug output every 60 frames (roughly once per second at 60 FPS)
     static int frameCount = 0;
     if (frameCount++ % 60 == 0) {
-        std::cout << "Rendered: " << renderedCount << " chunks, Culled: " << culledCount
-                  << " chunks, Total chunks: " << m_chunks.size() << std::endl;
+        std::cout << "Rendered: " << renderedCount << " chunks | "
+                  << "Distance culled: " << distanceCulled << " | "
+                  << "Frustum culled: " << frustumCulled << " | "
+                  << "Total: " << m_chunks.size() << " chunks" << std::endl;
     }
 }
 

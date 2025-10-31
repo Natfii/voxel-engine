@@ -15,9 +15,9 @@ Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     updateVectors();
 }
 
-void Player::update(GLFWwindow* window, float deltaTime, World* world) {
-    // Handle N key to toggle noclip mode
-    if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) {
+void Player::update(GLFWwindow* window, float deltaTime, World* world, bool processInput) {
+    // Handle N key to toggle noclip mode (only if processing input)
+    if (processInput && glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) {
         if (!NKeyPressed) {
             NoclipMode = !NoclipMode;
             NKeyPressed = true;
@@ -31,8 +31,8 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world) {
         NKeyPressed = false;
     }
 
-    // Update mouse look
-    if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED) {
+    // Update mouse look (only if processing input)
+    if (processInput && glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED) {
         double xpos, ypos;
         glfwGetCursorPos(window, &xpos, &ypos);
 
@@ -63,9 +63,13 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world) {
 
     // Update movement based on mode
     if (NoclipMode) {
-        updateNoclip(window, deltaTime);
+        // Noclip mode only works with input
+        if (processInput) {
+            updateNoclip(window, deltaTime);
+        }
     } else {
-        updatePhysics(window, deltaTime, world);
+        // Physics mode: always apply physics, but only process input if allowed
+        updatePhysics(window, deltaTime, world, processInput);
     }
 }
 
@@ -87,29 +91,31 @@ void Player::updateNoclip(GLFWwindow* window, float deltaTime) {
         Position -= WorldUp * velocity;
 }
 
-void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world) {
+void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bool processInput) {
     // Handle sprint (hold to sprint by default, TODO: add toggle mode from config)
-    bool sprintKeyDown = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
+    bool sprintKeyDown = processInput && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
 
     // TODO: Load sprint_toggle from config and implement toggle mode
     // For now, it's hold-to-sprint
     IsSprinting = sprintKeyDown && OnGround;  // Can only sprint on ground
 
-    // WASD input for horizontal movement
+    // WASD input for horizontal movement (only if processing input)
     glm::vec3 wishDir(0.0f);
 
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        wishDir += glm::normalize(glm::vec3(Front.x, 0.0f, Front.z));
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        wishDir -= glm::normalize(glm::vec3(Front.x, 0.0f, Front.z));
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        wishDir -= Right;
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        wishDir += Right;
+    if (processInput) {
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+            wishDir += glm::normalize(glm::vec3(Front.x, 0.0f, Front.z));
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+            wishDir -= glm::normalize(glm::vec3(Front.x, 0.0f, Front.z));
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+            wishDir -= Right;
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+            wishDir += Right;
 
-    // Normalize diagonal movement
-    if (glm::length(wishDir) > 0.0f) {
-        wishDir = glm::normalize(wishDir);
+        // Normalize diagonal movement
+        if (glm::length(wishDir) > 0.0f) {
+            wishDir = glm::normalize(wishDir);
+        }
     }
 
     // Check if player is in liquid (check center of player)
@@ -124,8 +130,8 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world) {
     }
     glm::vec3 horizontalVel = wishDir * moveSpeed;
 
-    // Jumping
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+    // Jumping (only if processing input)
+    if (processInput && glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
         if (InLiquid) {
             // Swim up in liquid
             Velocity.y = SWIM_SPEED * 0.8f;
@@ -139,13 +145,13 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world) {
     if (!InLiquid) {
         Velocity.y -= GRAVITY * deltaTime;
     } else {
-        // In liquid, apply gentle downward drift
-        if (glfwGetKey(window, GLFW_KEY_SPACE) != GLFW_PRESS &&
-            glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) != GLFW_PRESS) {
+        // In liquid, apply gentle downward drift (only if not processing input, or no keys pressed)
+        if (!processInput || (glfwGetKey(window, GLFW_KEY_SPACE) != GLFW_PRESS &&
+            glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) != GLFW_PRESS)) {
             Velocity.y = -SWIM_SPEED * 0.3f;
         }
-        // Swim down with shift
-        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+        // Swim down with shift (only if processing input)
+        if (processInput && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
             Velocity.y = -SWIM_SPEED * 0.8f;
         }
     }
@@ -226,53 +232,37 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world) {
 }
 
 void Player::resolveCollisions(glm::vec3& movement, World* world) {
-    // Player AABB collision detection
+    // AABB collision resolution using axis-by-axis approach
     // Position is at eye level, feet are PLAYER_EYE_HEIGHT below
-    glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
 
-    // Test each axis separately for better collision response
-    // Only check full body if truly stationary on ground (not jumping/falling)
-    // This prevents clipping while still allowing ledge walking and jumping
+    // Resolve Y axis FIRST (like Minecraft)
+    // This prevents edge clipping by settling vertical position before horizontal movement
+    // Axis resolution order: Y → X → Z
 
-    // Test X axis
-    glm::vec3 testPos = Position + glm::vec3(movement.x, 0.0f, 0.0f);
-    bool xCollision = false;
-
-    // Only use full body collision if on ground AND not moving vertically (not jumping/falling)
-    if (OnGround && std::abs(Velocity.y) < 0.01f) {
-        // Stationary on ground - check full body to prevent clipping into blocks at edges
-        xCollision = checkCollision(testPos, world);
-    } else {
-        // Airborne or jumping - only check from knee height up to allow ledge walking
-        xCollision = checkHorizontalCollision(testPos, world);
-    }
-
-    if (xCollision) {
-        movement.x = 0.0f;
-        Velocity.x = 0.0f;
-    }
-
-    // Test Y axis - always check full body height
-    testPos = Position + glm::vec3(0.0f, movement.y, 0.0f);
+    // ===== Test Y axis FIRST (vertical movement) =====
+    glm::vec3 testPos = Position + glm::vec3(0.0f, movement.y, 0.0f);
     if (checkCollision(testPos, world)) {
+        // Collision detected - stop vertical movement completely
         movement.y = 0.0f;
         Velocity.y = 0.0f;
     }
 
-    // Test Z axis
-    testPos = Position + glm::vec3(0.0f, 0.0f, movement.z);
-    bool zCollision = false;
+    // ===== Test X axis (horizontal movement) =====
+    testPos = Position + glm::vec3(movement.x, 0.0f, 0.0f);
 
-    // Only use full body collision if on ground AND not moving vertically (not jumping/falling)
-    if (OnGround && std::abs(Velocity.y) < 0.01f) {
-        // Stationary on ground - check full body to prevent clipping into blocks at edges
-        zCollision = checkCollision(testPos, world);
-    } else {
-        // Airborne or jumping - only check from knee height up to allow ledge walking
-        zCollision = checkHorizontalCollision(testPos, world);
+    // Use horizontal collision check (from step height up) to allow ledge walking
+    if (checkHorizontalCollision(testPos, world)) {
+        // Collision detected - stop horizontal movement
+        movement.x = 0.0f;
+        Velocity.x = 0.0f;
     }
 
-    if (zCollision) {
+    // ===== Test Z axis (horizontal movement) =====
+    testPos = Position + glm::vec3(0.0f, 0.0f, movement.z);
+
+    // Use horizontal collision check (from step height up) to allow ledge walking
+    if (checkHorizontalCollision(testPos, world)) {
+        // Collision detected - stop horizontal movement
         movement.z = 0.0f;
         Velocity.z = 0.0f;
     }

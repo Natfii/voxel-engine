@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <cmath>
 
 // Represents a plane in 3D space using the equation: Ax + By + Cz + D = 0
 struct Plane {
@@ -30,42 +31,48 @@ struct Frustum {
     enum { LEFT = 0, RIGHT, BOTTOM, TOP, NEAR, FAR };
 };
 
-// Extract frustum planes from view-projection matrix
+// Extract frustum planes from view-projection matrix (Vulkan coordinate system)
+// IMPORTANT: This assumes Vulkan conventions:
+//   - Y-axis points DOWN in NDC (opposite of OpenGL)
+//   - Z-axis range is [0, 1] (not [-1, 1] like OpenGL)
+//   - Projection matrix already accounts for Y-flip (projection[1][1] *= -1)
 inline Frustum extractFrustum(const glm::mat4& viewProj) {
     Frustum frustum;
 
-    // Extract planes from view-projection matrix
-    // Left plane
+    // Gribb-Hartmann method: Extract planes by combining matrix rows
+    // For Vulkan with Y-flip already applied in projection matrix
+
+    // Left plane: column4 + column1
     frustum.planes[Frustum::LEFT].a = viewProj[0][3] + viewProj[0][0];
     frustum.planes[Frustum::LEFT].b = viewProj[1][3] + viewProj[1][0];
     frustum.planes[Frustum::LEFT].c = viewProj[2][3] + viewProj[2][0];
     frustum.planes[Frustum::LEFT].d = viewProj[3][3] + viewProj[3][0];
 
-    // Right plane
+    // Right plane: column4 - column1
     frustum.planes[Frustum::RIGHT].a = viewProj[0][3] - viewProj[0][0];
     frustum.planes[Frustum::RIGHT].b = viewProj[1][3] - viewProj[1][0];
     frustum.planes[Frustum::RIGHT].c = viewProj[2][3] - viewProj[2][0];
     frustum.planes[Frustum::RIGHT].d = viewProj[3][3] - viewProj[3][0];
 
-    // Bottom plane
+    // Bottom plane: column4 + column2
     frustum.planes[Frustum::BOTTOM].a = viewProj[0][3] + viewProj[0][1];
     frustum.planes[Frustum::BOTTOM].b = viewProj[1][3] + viewProj[1][1];
     frustum.planes[Frustum::BOTTOM].c = viewProj[2][3] + viewProj[2][1];
     frustum.planes[Frustum::BOTTOM].d = viewProj[3][3] + viewProj[3][1];
 
-    // Top plane
+    // Top plane: column4 - column2
     frustum.planes[Frustum::TOP].a = viewProj[0][3] - viewProj[0][1];
     frustum.planes[Frustum::TOP].b = viewProj[1][3] - viewProj[1][1];
     frustum.planes[Frustum::TOP].c = viewProj[2][3] - viewProj[2][1];
     frustum.planes[Frustum::TOP].d = viewProj[3][3] - viewProj[3][1];
 
-    // Near plane
-    frustum.planes[Frustum::NEAR].a = viewProj[0][3] + viewProj[0][2];
-    frustum.planes[Frustum::NEAR].b = viewProj[1][3] + viewProj[1][2];
-    frustum.planes[Frustum::NEAR].c = viewProj[2][3] + viewProj[2][2];
-    frustum.planes[Frustum::NEAR].d = viewProj[3][3] + viewProj[3][2];
+    // Near plane: For Vulkan [0,1] depth, near plane is column3
+    frustum.planes[Frustum::NEAR].a = viewProj[0][2];
+    frustum.planes[Frustum::NEAR].b = viewProj[1][2];
+    frustum.planes[Frustum::NEAR].c = viewProj[2][2];
+    frustum.planes[Frustum::NEAR].d = viewProj[3][2];
 
-    // Far plane
+    // Far plane: column4 - column3
     frustum.planes[Frustum::FAR].a = viewProj[0][3] - viewProj[0][2];
     frustum.planes[Frustum::FAR].b = viewProj[1][3] - viewProj[1][2];
     frustum.planes[Frustum::FAR].c = viewProj[2][3] - viewProj[2][2];

@@ -12,7 +12,7 @@ public:
     Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch);
 
     void resetMouse();
-    void update(GLFWwindow* window, float deltaTime, World* world);
+    void update(GLFWwindow* window, float deltaTime, World* world, bool processInput = true);
     glm::mat4 getViewMatrix() const;
 
     // Public for easy access from rendering
@@ -57,7 +57,7 @@ private:
     static constexpr float SWIM_SPEED = 1.5f;     // Swimming speed
 
     void updateVectors();
-    void updatePhysics(GLFWwindow* window, float deltaTime, World* world);
+    void updatePhysics(GLFWwindow* window, float deltaTime, World* world, bool processInput = true);
     void updateNoclip(GLFWwindow* window, float deltaTime);
     bool checkCollision(const glm::vec3& position, World* world);
     bool checkHorizontalCollision(const glm::vec3& position, World* world);

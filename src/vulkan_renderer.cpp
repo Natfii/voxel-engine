@@ -1447,9 +1447,17 @@ void VulkanRenderer::recreateSwapChain() {
     createImageViews();
     createDepthResources();
     createFramebuffers();
+
+    // Recreate pipelines with new viewport/scissor dimensions
+    createGraphicsPipeline();
+    createLinePipeline();
 }
 
 void VulkanRenderer::cleanupSwapChain() {
+    // Destroy pipelines (they contain viewport/scissor state)
+    vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
+    vkDestroyPipeline(m_device, m_linePipeline, nullptr);
+
     vkDestroyImageView(m_device, m_depthImageView, nullptr);
     vkDestroyImage(m_device, m_depthImage, nullptr);
     vkFreeMemory(m_device, m_depthImageMemory, nullptr);
@@ -1482,8 +1490,7 @@ void VulkanRenderer::cleanup() {
     vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
 
-    vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
-    vkDestroyPipeline(m_device, m_linePipeline, nullptr);
+    // Pipelines are already destroyed in cleanupSwapChain()
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyRenderPass(m_device, m_renderPass, nullptr);
 
