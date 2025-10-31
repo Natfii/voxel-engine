@@ -68,29 +68,37 @@ Chunk::Chunk(int x, int y, int z) : m_x(x), m_y(y), m_z(z), m_vertexBuffer(VK_NU
             float worldX = (m_x * WIDTH + X) * 0.5f;  // *0.5 for your scaled blocks
             float worldZ = (m_z * DEPTH + Z) * 0.5f;
 
-            // Sample noise for terrain
+            // Sample noise for terrain height (same for entire vertical column)
             float noise = s_noise->GetNoise(worldX, worldZ);
 
-            // Convert noise (-1 to 1) to height (4 to 28) for more dramatic hills
-            int height = 16 + (int)(noise * 12.0f);
+            // Convert noise (-1 to 1) to world height in blocks (terrain height ranges from 4 to 28)
+            int terrainHeight = 16 + (int)(noise * 12.0f);
 
-            // Fill blocks based on height
+            // Fill blocks based on height (using world Y coordinates for proper cross-chunk generation)
             for (int Y = 0; Y < HEIGHT; ++Y) {
-                if (Y < height - 4) {
+                // Calculate world Y coordinate for this block
+                int worldY = m_y * HEIGHT + Y;
+
+                // Minecraft-style terrain generation rules:
+                if (worldY < terrainHeight - 4) {
+                    // Deep underground: Stone
                     m_blocks[X][Y][Z] = stoneID;
                 }
-                else if (Y < height) {
+                else if (worldY < terrainHeight) {
+                    // Near surface: Dirt layer (4 blocks deep)
                     m_blocks[X][Y][Z] = dirtID;
                 }
-                else if (Y == height) {
-                    // Only place grass if air is above
-                    // Check if the block directly above would be air
-                    // This handles chunk boundaries and surface blocks correctly
-                    bool airAbove = (Y + 1 >= HEIGHT) || (Y + 1 > height);
-                    m_blocks[X][Y][Z] = airAbove ? grassID : dirtID;
+                else if (worldY == terrainHeight) {
+                    // Surface block: Grass ONLY if:
+                    // 1. There's dirt below (implicit - this IS the terrain surface)
+                    // 2. Has sunlight (nothing above in the world)
+                    // Since this is the terrain surface (worldY == terrainHeight),
+                    // there's nothing above it by definition - it can see the sky
+                    m_blocks[X][Y][Z] = grassID;
                 }
                 else {
-                    m_blocks[X][Y][Z] = 0; // Air
+                    // Above terrain surface: Air
+                    m_blocks[X][Y][Z] = 0;
                 }
             }
         }
