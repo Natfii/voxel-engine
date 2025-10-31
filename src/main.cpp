@@ -247,22 +247,6 @@ int main() {
                 }
             } else {
                 crosshair.render();
-
-                // Show targeted block info
-                if (hit.hit) {
-                    ImGui::Begin("Block Info", nullptr,
-                        ImGuiWindowFlags_NoTitleBar |
-                        ImGuiWindowFlags_NoResize |
-                        ImGuiWindowFlags_NoMove |
-                        ImGuiWindowFlags_NoBackground |
-                        ImGuiWindowFlags_AlwaysAutoResize);
-                    ImGui::SetWindowPos(ImVec2(10, height - 80));
-                    ImGui::TextColored(ImVec4(1,1,1,1), "Looking at block:");
-                    ImGui::TextColored(ImVec4(0.7f,0.7f,0.7f,1), "  Position: (%d, %d, %d)",
-                        hit.blockX, hit.blockY, hit.blockZ);
-                    ImGui::TextColored(ImVec4(0.7f,0.7f,0.7f,1), "  Distance: %.2f", hit.distance);
-                    ImGui::End();
-                }
             }
 
             ImGui::Render();
