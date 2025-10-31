@@ -53,7 +53,8 @@ Both `build.bat` (Windows) and `build.sh` (Linux) perform the following steps au
 4. **Setup build directory** - Creates `build/` folder if needed
 5. **Run CMake** - Configures the project
 6. **Build the project** - Compiles all source files
-7. **Report success** - Shows where the executable is located
+7. **Copy assets** - Copies assets, config, shaders, and docs to build directory
+8. **Report success** - Shows where the executable is located
 
 ## Build Script Features
 
@@ -216,6 +217,10 @@ voxel-engine/
 │   ├── voxel-engine    # (Linux) Executable
 │   ├── assets/         # Copied assets (blocks, etc.)
 │   ├── config.ini      # Copied configuration
+│   ├── docs/           # Copied documentation
+│   │   ├── console.md
+│   │   ├── controls.md
+│   │   └── ...
 │   └── shaders/        # Copied compiled shaders
 │       ├── vert.spv
 │       └── frag.spv
@@ -224,6 +229,10 @@ voxel-engine/
 │   ├── shader.frag
 │   ├── vert.spv        # Compiled vertex shader
 │   └── frag.spv        # Compiled fragment shader
+├── docs/               # Source documentation
+│   ├── BUILD_INSTRUCTIONS.md
+│   ├── console.md
+│   └── ...
 └── ...
 ```
 
@@ -240,11 +249,12 @@ voxel-engine/
 ## Getting Help
 
 If you encounter issues:
-1. Check `WINDOWS_SETUP.md` for Windows-specific setup
-2. Check `QUICK_START_WINDOWS.md` for a quick Windows guide
+1. Check `docs/WINDOWS_SETUP.md` for Windows-specific setup
+2. Check `docs/QUICK_START_WINDOWS.md` for a quick Windows guide
 3. Make sure your GPU supports Vulkan (use `vulkaninfo`)
 4. Update your graphics drivers
 5. Check the main `README.md` for troubleshooting tips
+6. In-game, press **F9** and type `docs/console.md` for console help
 
 ## System Requirements
 

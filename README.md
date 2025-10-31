@@ -19,15 +19,22 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - Chunk-based rendering system
 
 🎮 **First-Person Controls**
-- WASD movement
+- WASD movement with sprint
 - Mouse look camera
-- Space/Shift for vertical movement
-- ESC for pause menu
+- Physics-based player movement
+- Noclip mode for flying
 
 🎨 **User Interface**
 - ImGui integration
 - Crosshair overlay
 - Pause menu with Resume/Quit options
+
+🖥️ **Developer Console**
+- Source engine-style console (F9)
+- Command system with autocomplete
+- Console variables (ConVars)
+- Debug overlays (FPS, position)
+- Markdown documentation viewer
 
 ## Quick Start
 
@@ -50,7 +57,7 @@ run.bat
 ./run.sh
 ```
 
-For detailed build instructions, see [BUILD_INSTRUCTIONS.md](BUILD_INSTRUCTIONS.md)
+For detailed build instructions, see [docs/BUILD_INSTRUCTIONS.md](docs/BUILD_INSTRUCTIONS.md)
 
 ## Controls
 
@@ -58,9 +65,14 @@ For detailed build instructions, see [BUILD_INSTRUCTIONS.md](BUILD_INSTRUCTIONS.
 |-----|--------|
 | **W/A/S/D** | Move forward/left/backward/right |
 | **Mouse** | Look around |
-| **Space** | Move up |
-| **Shift** | Move down |
-| **ESC** | Pause menu |
+| **Space** | Jump (or swim up in water) |
+| **Shift** | Sprint (hold) / Swim down |
+| **N** | Toggle noclip mode |
+| **F9** | Open developer console |
+| **ESC** | Pause menu / Close console |
+| **Left Click** | Break block |
+
+For more details, see [docs/controls.md](docs/controls.md)
 
 ## Configuration
 
@@ -87,13 +99,19 @@ voxel-engine/
 │   ├── vulkan_renderer.cpp
 │   ├── chunk.cpp
 │   ├── world.cpp
-│   └── player.cpp
+│   ├── player.cpp
+│   ├── console.cpp
+│   └── ...
 ├── include/            # Headers
 ├── shaders/            # GLSL shaders
 │   ├── shader.vert
 │   └── shader.frag
 ├── assets/             # Game assets
 │   └── blocks/         # Block definitions
+├── docs/               # Documentation
+│   ├── console.md
+│   ├── controls.md
+│   └── ...
 ├── external/           # Third-party libraries
 │   ├── imgui/
 │   ├── glfw/
@@ -125,9 +143,15 @@ voxel-engine/
 
 ## Documentation
 
-- [BUILD_INSTRUCTIONS.md](BUILD_INSTRUCTIONS.md) - Comprehensive build guide
-- [QUICK_START_WINDOWS.md](QUICK_START_WINDOWS.md) - Windows quick setup
-- [WINDOWS_SETUP.md](WINDOWS_SETUP.md) - Detailed Windows configuration
+### Setup & Building
+- [docs/BUILD_INSTRUCTIONS.md](docs/BUILD_INSTRUCTIONS.md) - Comprehensive build guide
+- [docs/QUICK_START_WINDOWS.md](docs/QUICK_START_WINDOWS.md) - Windows quick setup
+- [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) - Detailed Windows configuration
+
+### Gameplay & Development
+- [docs/controls.md](docs/controls.md) - Game controls reference
+- [docs/console.md](docs/console.md) - Developer console usage
+- [docs/commands.md](docs/commands.md) - Adding custom console commands
 
 ## Development Status
 
@@ -137,7 +161,10 @@ voxel-engine/
 - ✅ Implemented proper face culling
 - ✅ Integrated ImGui with Vulkan backend
 - ✅ Added pause menu and crosshair
-- ✅ All camera controls working correctly
+- ✅ Implemented developer console system
+- ✅ Added ConVar system for settings
+- ✅ Physics-based player movement
+- ✅ Block breaking and texture system
 
 ## Troubleshooting
 

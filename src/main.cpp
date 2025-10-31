@@ -22,6 +22,9 @@
 #include "config.h"
 #include "raycast.h"
 #include "block_outline.h"
+#include "console.h"
+#include "console_commands.h"
+#include "debug_state.h"
 
 // Global variables
 VulkanRenderer* g_renderer = nullptr;
@@ -161,9 +164,15 @@ int main() {
         Crosshair crosshair;
         BlockOutline blockOutline;
         blockOutline.init(&renderer);
+
+        // Create console and register commands
+        Console console(window);
+        ConsoleCommands::registerAll(&console, &player, &world);
+
         bool isPaused = false;
         bool escPressed = false;
         bool requestMouseReset = false;
+        bool f9Pressed = false;
 
         std::cout << "Entering main loop..." << std::endl;
 
@@ -174,25 +183,65 @@ int main() {
 
             glfwPollEvents();
 
-            // Handle ESC key for pause menu
+            // Update FPS counter
+            DebugState::instance().updateFPS(deltaTime);
+
+            // Handle F9 key for console
+            if (glfwGetKey(window, GLFW_KEY_F9) == GLFW_PRESS) {
+                if (!f9Pressed) {
+                    f9Pressed = true;
+                    console.toggle();
+
+                    // Enable/disable cursor based on console visibility
+                    if (console.isVisible()) {
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                    } else if (!isPaused) {
+                        requestMouseReset = true;
+                    }
+                }
+            } else {
+                f9Pressed = false;
+            }
+
+            // Handle ESC key for pause menu (but not if console is open)
             if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
                 if (!escPressed) {
                     escPressed = true;
-                    isPaused = !isPaused;
-                    if (isPaused) {
-                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
+                    // If console is open, close it instead of opening pause menu
+                    if (console.isVisible()) {
+                        console.setVisible(false);
+                        if (!isPaused) {
+                            requestMouseReset = true;
+                        }
                     } else {
-                        requestMouseReset = true;
+                        isPaused = !isPaused;
+                        if (isPaused) {
+                            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                        } else {
+                            requestMouseReset = true;
+                        }
                     }
                 }
             } else {
                 escPressed = false;
             }
 
-            // Update player if not paused
-            if (!isPaused) {
+            // Sync player noclip with debug state
+            player.NoclipMode = DebugState::instance().noclip.getValue();
+
+            // Update player if not paused and console is closed
+            if (!isPaused && !console.isVisible()) {
                 player.update(window, deltaTime, &world);
             }
+
+            // Check if console was closed (by clicking outside or ESC)
+            // and we need to reset mouse for gameplay
+            static bool wasConsoleOpen = false;
+            if (wasConsoleOpen && !console.isVisible() && !isPaused) {
+                requestMouseReset = true;
+            }
+            wasConsoleOpen = console.isVisible();
 
             if (requestMouseReset) {
                 player.resetMouse();
@@ -299,7 +348,7 @@ int main() {
                 blockOutline.render(renderer.getCurrentCommandBuffer());
             }
 
-            // Render ImGui (crosshair when playing, menu when paused)
+            // Render ImGui (crosshair when playing, menu when paused, console overlay)
             ImGui_ImplVulkan_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
@@ -309,8 +358,32 @@ int main() {
                     isPaused = false;
                     requestMouseReset = true;
                 }
-            } else {
+            } else if (!console.isVisible()) {
                 crosshair.render();
+            }
+
+            // Render console (overlays on top of everything)
+            console.render();
+
+            // Render FPS counter if enabled
+            if (DebugState::instance().drawFPS.getValue()) {
+                ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+                ImGui::SetNextWindowBgAlpha(0.5f);
+                ImGui::Begin("FPS", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+                ImGui::Text("FPS: %.1f", DebugState::instance().lastFPS);
+                ImGui::End();
+            }
+
+            // Render debug info if enabled
+            if (DebugState::instance().renderDebug.getValue()) {
+                ImGui::SetNextWindowPos(ImVec2(10, 50), ImGuiCond_Always);
+                ImGui::SetNextWindowBgAlpha(0.5f);
+                ImGui::Begin("Debug", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+                ImGui::Text("Position: (%.1f, %.1f, %.1f)", player.Position.x, player.Position.y, player.Position.z);
+                ImGui::Text("Noclip: %s", player.NoclipMode ? "ON" : "OFF");
+                ImGui::End();
             }
 
             ImGui::Render();

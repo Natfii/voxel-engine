@@ -141,6 +141,28 @@ voxel-engine.exe
 
 And see a window with your voxel terrain rendered using Vulkan! 🎉
 
+## Using the Game
+
+Once running, you can:
+
+**Movement:**
+- **W/A/S/D** - Move around
+- **Space** - Jump
+- **Shift** - Sprint
+- **Mouse** - Look around
+
+**Developer Console (F9):**
+- Press **F9** to open the console
+- Type `help` to see all commands
+- Try `noclip` to fly around
+- Type `debug drawfps` for FPS counter
+- Type `docs/console.md` to read console documentation
+
+**Other Controls:**
+- **N** - Toggle noclip mode
+- **ESC** - Pause menu
+- **Left Click** - Break blocks
+
 ---
 
 **Still having issues?** Check the full guide: `WINDOWS_SETUP.md`

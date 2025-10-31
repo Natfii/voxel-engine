@@ -104,3 +104,11 @@ add_custom_command(TARGET voxel-engine POST_BUILD
         $<TARGET_FILE_DIR:voxel-engine>/shaders
     COMMENT "Copying shaders to build directory"
 )
+
+# Copy docs directory to build output directory
+add_custom_command(TARGET voxel-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/docs
+        $<TARGET_FILE_DIR:voxel-engine>/docs
+    COMMENT "Copying documentation to build directory"
+)

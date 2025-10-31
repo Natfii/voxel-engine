@@ -9,7 +9,13 @@
       "Bash(./voxel-engine.exe)",
       "WebFetch(domain:sites.google.com)",
       "WebFetch(domain:medium.com)",
-      "WebFetch(domain:gamedev.stackexchange.com)"
+      "WebFetch(domain:gamedev.stackexchange.com)",
+      "Bash(move WINDOWS_SETUP.md docs )",
+      "Bash(move QUICK_START_WINDOWS.md docs )",
+      "Bash(move BUILD_INSTRUCTIONS.md docs )",
+      "Bash(move:*)",
+      "Bash(dir /b \"C:\\Users\\Natal\\Documents\\voxel-engine\\docs\")",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
