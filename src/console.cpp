@@ -59,8 +59,8 @@ void Console::render() {
 }
 
 void Console::renderMessages() {
-    // Reserve space for input at bottom
-    ImGui::BeginChild("ConsoleMessages", ImVec2(0, -30), true);
+    // Reserve space for input and suggestions at bottom (60 pixels total)
+    ImGui::BeginChild("ConsoleMessages", ImVec2(0, -60), true);
 
     for (const auto& msg : m_messages) {
         ImVec4 color;
@@ -134,13 +134,9 @@ void Console::renderInput() {
 
     ImGui::PopItemWidth();
 
-    // Update autocomplete suggestions based on input
+    // Update autocomplete suggestions based on input (handles commands and arguments)
     std::string currentInput(m_inputBuffer);
-    if (!currentInput.empty()) {
-        m_suggestions = CommandRegistry::instance().getSuggestions(currentInput);
-    } else {
-        m_suggestions.clear();
-    }
+    m_suggestions = CommandRegistry::instance().getFullCompletions(currentInput);
 
     // Execute command when Enter is pressed
     if (executeNow && m_inputBuffer[0] != '\0') {

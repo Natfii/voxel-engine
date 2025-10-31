@@ -15,6 +15,7 @@ struct Command {
     std::string description;
     std::string usage;
     CommandHandler handler;
+    std::vector<std::string> argumentSuggestions;  // Optional argument completions
 };
 
 // Singleton registry for console commands
@@ -26,7 +27,8 @@ public:
     void registerCommand(const std::string& name,
                         const std::string& description,
                         const std::string& usage,
-                        CommandHandler handler);
+                        CommandHandler handler,
+                        const std::vector<std::string>& argumentSuggestions = {});
 
     // Execute a command line (parses and calls handler)
     bool executeCommand(const std::string& commandLine);
@@ -34,8 +36,11 @@ public:
     // Get all registered commands (for autocomplete/help)
     const std::map<std::string, Command>& getCommands() const { return m_commands; }
 
-    // Get command suggestions for autocomplete
+    // Get command suggestions for autocomplete (handles both command and argument completion)
     std::vector<std::string> getSuggestions(const std::string& partial) const;
+
+    // Get full completion suggestions (returns complete command line with argument)
+    std::vector<std::string> getFullCompletions(const std::string& input) const;
 
 private:
     CommandRegistry() = default;

@@ -15,7 +15,9 @@
       "Bash(move BUILD_INSTRUCTIONS.md docs )",
       "Bash(move:*)",
       "Bash(dir /b \"C:\\Users\\Natal\\Documents\\voxel-engine\\docs\")",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(cmake:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

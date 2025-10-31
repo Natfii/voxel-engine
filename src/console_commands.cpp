@@ -18,8 +18,14 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
 
     auto& registry = CommandRegistry::instance();
 
+    // Build list of all command names for help autocomplete
+    std::vector<std::string> allCommands;
+    for (const auto& pair : registry.getCommands()) {
+        allCommands.push_back(pair.first);
+    }
+
     registry.registerCommand("help", "Show all available commands or help for a specific command",
-                           "help [command]", cmdHelp);
+                           "help [command]", cmdHelp, allCommands);
 
     registry.registerCommand("clear", "Clear the console output",
                            "clear", cmdClear);
@@ -44,7 +50,7 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
             s_console->addMessage("Unknown debug option: " + args[1], ConsoleMessageType::ERROR);
             s_console->addMessage("Available options: render, drawfps, targetinfo", ConsoleMessageType::INFO);
         }
-    });
+    }, {"render", "drawfps", "targetinfo"});
 
     registry.registerCommand("tp", "Teleport to coordinates",
                            "tp <x> <y> <z>", cmdTeleport);

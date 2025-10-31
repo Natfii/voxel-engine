@@ -31,6 +31,22 @@ registry.registerCommand(
 );
 ```
 
+### Step 2b: Add Tab Completion for Arguments (Optional)
+
+You can provide argument suggestions for tab completion:
+
+```cpp
+registry.registerCommand(
+    "mycommand",
+    "Description of my command",
+    "mycommand <option>",
+    myCommandHandler,
+    {"option1", "option2", "option3"}  // Argument suggestions
+);
+```
+
+Now users can type `mycommand ` and press Tab to cycle through the options!
+
 ### Step 3: Access Game State
 
 Use the static pointers in ConsoleCommands:

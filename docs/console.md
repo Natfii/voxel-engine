@@ -11,7 +11,16 @@ Press **ESC** to close the console.
 
 Simply type a command and press Enter. Use Up/Down arrow keys to navigate command history.
 
-Press **Tab** to autocomplete commands from suggestions. Press Tab multiple times to cycle through available suggestions.
+Press **Tab** to autocomplete commands and arguments from suggestions. Press Tab multiple times to cycle through available suggestions.
+
+### Tab Completion Examples
+
+- Type `deb` and press Tab → completes to `debug`
+- Type `debug ` (with space) and press Tab → cycles through `debug render`, `debug drawfps`, `debug targetinfo`
+- Type `debug r` and press Tab → completes to `debug render`
+- Type `help ` and press Tab → cycles through all available commands
+
+Tab completion works for both command names and their arguments!
 
 ## Available Commands
 
