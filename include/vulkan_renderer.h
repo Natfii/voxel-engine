@@ -11,12 +11,12 @@
 struct Vertex;
 
 // Uniform buffer object for MVP matrices and fog parameters
+// Note: Must match std140 layout in GLSL
 struct UniformBufferObject {
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 projection;
-    alignas(16) glm::vec3 cameraPos;
-    alignas(4) float renderDistance;
+    alignas(16) glm::vec4 cameraPos;       // vec4 where .xyz = position, .w = renderDistance
 };
 
 // Queue family indices

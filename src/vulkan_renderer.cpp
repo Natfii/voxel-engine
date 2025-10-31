@@ -882,8 +882,7 @@ void VulkanRenderer::updateUniformBuffer(uint32_t currentImage, const glm::mat4&
     ubo.model = model;
     ubo.view = view;
     ubo.projection = projection;
-    ubo.cameraPos = cameraPos;
-    ubo.renderDistance = renderDistance;
+    ubo.cameraPos = glm::vec4(cameraPos, renderDistance);  // Pack camera position and render distance into vec4
 
     memcpy(m_uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
