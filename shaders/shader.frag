@@ -20,15 +20,16 @@ void main() {
     // Calculate distance from camera to fragment
     float distance = length(fragWorldPos - camPos);
 
-    // Discard fragments beyond render distance (hard culling)
-    if (distance > renderDistance) {
-        discard;
-    }
-
     // Fog parameters (similar to classic OpenGL voxel engines)
     const vec3 fogColor = vec3(0.6, 0.8, 1.0); // Light blue sky color
-    const float fogStart = renderDistance * 0.85;  // Fog starts at 85% of render distance
-    const float fogEnd = renderDistance;           // Full fog at render distance
+    const float fogStart = renderDistance * 0.7;   // Fog starts at 70% of render distance
+    const float fogEnd = renderDistance * 0.95;    // Full fog at 95% of render distance
+
+    // Discard fragments well beyond fog end to avoid visible banding
+    // This happens after blocks are completely hidden by fog
+    if (distance > renderDistance * 1.05) {
+        discard;
+    }
 
     // Only apply fog if we're in the fog range
     vec3 finalColor = fragColor;

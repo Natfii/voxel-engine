@@ -1,5 +1,6 @@
 #include "raycast.h"
 #include "world.h"
+#include "block_system.h"
 #include <cmath>
 #include <algorithm>
 
@@ -57,7 +58,7 @@ RaycastHit Raycast::castRay(World* world, const glm::vec3& origin, const glm::ve
         glm::vec3 worldPos(mapPos.x * 0.5f, mapPos.y * 0.5f, mapPos.z * 0.5f);
         int blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
 
-        if (blockID > 0) { // Hit a solid block
+        if (isSolid(blockID)) { // Hit a solid block (not air)
             result.hit = true;
             result.position = worldPos;
             result.normal = glm::vec3(normal);

@@ -79,9 +79,14 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
         return; // Skip rendering if camera position is invalid
     }
 
-    // Simple distance-based culling with fixed threshold
-    // Add small margin (1 unit) to prevent floating-point boundary flickering
-    const float renderDistanceWithMargin = renderDistance + 1.0f;
+    // Chunk culling: account for chunk size to prevent popping
+    // Chunks are 32x32x32 blocks = 16x16x16 world units
+    // Distance from chunk center to farthest corner = sqrt(8^2 + 8^2 + 8^2) ≈ 13.86 units
+    // Fragment shader discards at renderDistance * 1.05 (see shader.frag)
+    // Render chunks if their farthest corner could be visible
+    const float fragmentDiscardDistance = renderDistance * 1.05f;
+    const float chunkHalfDiagonal = 13.86f;
+    const float renderDistanceWithMargin = fragmentDiscardDistance + chunkHalfDiagonal;
     const float renderDistanceSquared = renderDistanceWithMargin * renderDistanceWithMargin;
 
     int renderedCount = 0;
@@ -97,7 +102,7 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
         glm::vec3 delta = chunk->getCenter() - cameraPos;
         float distanceSquared = glm::dot(delta, delta);
 
-        // Simple visibility check - always render if within distance
+        // Cull chunks whose furthest corner exceeds render distance + margin
         if (distanceSquared <= renderDistanceSquared) {
             chunk->render(commandBuffer);
             renderedCount++;

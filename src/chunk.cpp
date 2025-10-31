@@ -157,10 +157,11 @@ void Chunk::generate() {
                     cr = cg = cb = 1.0f;
                 }
 
-                // Face culling: only render faces exposed to air
-                float bx = float(X) * 0.5f;
-                float by = float(Y) * 0.5f;
-                float bz = float(Z) * 0.5f;
+                // Calculate world position for this block
+                // Convert from chunk-local coordinates to world coordinates
+                float bx = float(m_x * WIDTH + X) * 0.5f;
+                float by = float(m_y * HEIGHT + Y) * 0.5f;
+                float bz = float(m_z * DEPTH + Z) * 0.5f;
 
                 // Front face (z=0, facing -Z direction)
                 if (!isSolid(X, Y, Z - 1)) {
@@ -306,10 +307,11 @@ void Chunk::generateMesh(World* world) {
                     cr = cg = cb = 1.0f;
                 }
 
-                // Face culling: only render faces exposed to air
-                float bx = float(X) * 0.5f;
-                float by = float(Y) * 0.5f;
-                float bz = float(Z) * 0.5f;
+                // Calculate world position for this block
+                // Convert from chunk-local coordinates to world coordinates
+                float bx = float(m_x * WIDTH + X) * 0.5f;
+                float by = float(m_y * HEIGHT + Y) * 0.5f;
+                float bz = float(m_z * DEPTH + Z) * 0.5f;
 
                 // Front face (z=0, facing -Z direction)
                 if (!isSolid(X, Y, Z - 1)) {

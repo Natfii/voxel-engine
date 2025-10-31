@@ -7,6 +7,15 @@
 #include <glm/glm.hpp>        // for glm::vec3
 #include <yaml-cpp/yaml.h>   // for YAML::Node
 
+// Block ID constants
+namespace BlockID {
+    constexpr int AIR = 0;
+}
+
+// Helper functions for block properties
+inline bool isAir(int blockID) { return blockID == BlockID::AIR; }
+inline bool isSolid(int blockID) { return blockID > BlockID::AIR; }
+
 // A definition of a block, parsed from a YAML file.
 struct BlockDefinition {
     int id = -1;
