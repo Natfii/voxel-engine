@@ -67,10 +67,19 @@ void World::createBuffers(VulkanRenderer* renderer) {
 }
 
 void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, float renderDistance) {
-    // Distance culling with squared distance (avoids expensive sqrt)
-    // Add 10% buffer to prevent flickering at boundary
-    float cullingDistance = renderDistance * 1.1f;
-    float cullingDistanceSquared = cullingDistance * cullingDistance;
+    // Validate camera position for NaN/Inf to prevent rendering errors
+    if (!std::isfinite(cameraPos.x) || !std::isfinite(cameraPos.y) || !std::isfinite(cameraPos.z)) {
+        return; // Skip rendering if camera position is invalid
+    }
+
+    // Hysteresis thresholds to prevent flashing at boundary
+    // Show chunks at 106% of render distance
+    // Hide chunks at 110% of render distance
+    // This creates a 4% hysteresis band (10 units for renderDistance=250)
+    const float showDistance = renderDistance * 1.06f;
+    const float hideDistance = renderDistance * 1.10f;
+    const float showDistanceSquared = showDistance * showDistance;
+    const float hideDistanceSquared = hideDistance * hideDistance;
 
     for (Chunk* chunk : m_chunks) {
         // Skip chunks with no vertices (optimization)
@@ -78,17 +87,32 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
             continue;
         }
 
-        // Distance culling: use squared distance for performance
-        glm::vec3 chunkCenter = chunk->getCenter();
-        glm::vec3 delta = chunkCenter - cameraPos;
+        // Compute distance to nearest point on chunk AABB (not just center)
+        // This prevents chunks from being culled when their far edges are still visible
+        glm::vec3 closestPoint = glm::clamp(cameraPos, chunk->getMin(), chunk->getMax());
+        glm::vec3 delta = closestPoint - cameraPos;
         float distanceSquared = glm::dot(delta, delta);
 
-        if (distanceSquared > cullingDistanceSquared) {
-            continue; // Too far away
+        // Hysteresis-based visibility update
+        // If currently visible, only hide when distance > hideDistance
+        // If currently hidden, only show when distance < showDistance
+        bool wasVisible = chunk->isVisible();
+        bool shouldBeVisible;
+
+        if (wasVisible) {
+            // Currently visible: hide only if beyond hide threshold
+            shouldBeVisible = distanceSquared <= hideDistanceSquared;
+        } else {
+            // Currently hidden: show only if within show threshold
+            shouldBeVisible = distanceSquared <= showDistanceSquared;
         }
 
-        // Render chunk
-        chunk->render(commandBuffer);
+        chunk->setVisible(shouldBeVisible);
+
+        // Render if visible
+        if (shouldBeVisible) {
+            chunk->render(commandBuffer);
+        }
     }
 }
 

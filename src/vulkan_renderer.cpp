@@ -564,7 +564,11 @@ void VulkanRenderer::createLinePipeline() {
     rasterizer.lineWidth = 2.0f; // Thicker lines for better visibility
     rasterizer.cullMode = VK_CULL_MODE_NONE; // No culling for lines
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.depthBiasEnable = VK_FALSE;
+    // Enable depth bias to prevent z-fighting with block geometry
+    rasterizer.depthBiasEnable = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = -1.0f;  // Push outline away from camera
+    rasterizer.depthBiasSlopeFactor = -1.0f;     // Adjust for slope
+    rasterizer.depthBiasClamp = 0.0f;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;

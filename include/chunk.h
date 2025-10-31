@@ -56,6 +56,10 @@ public:
     int getChunkY() const { return m_y; }
     int getChunkZ() const { return m_z; }
 
+    // Visibility state for hysteresis-based culling
+    bool isVisible() const { return m_visible; }
+    void setVisible(bool visible) { m_visible = visible; }
+
 private:
     int m_x, m_y, m_z;
     int m_blocks[WIDTH][HEIGHT][DEPTH];
@@ -67,4 +71,7 @@ private:
     // Chunk bounds in world space
     glm::vec3 m_minBounds;
     glm::vec3 m_maxBounds;
+
+    // Visibility state for hysteresis-based culling
+    bool m_visible;
 };

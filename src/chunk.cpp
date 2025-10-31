@@ -37,17 +37,19 @@ int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
 }
 
 // Constructor: Initialize chunk at world grid coordinates (x, y, z)
-Chunk::Chunk(int x, int y, int z) : m_x(x), m_y(y), m_z(z), m_vertexBuffer(VK_NULL_HANDLE), m_vertexBufferMemory(VK_NULL_HANDLE), m_vertexCount(0) {
+Chunk::Chunk(int x, int y, int z) : m_x(x), m_y(y), m_z(z), m_vertexBuffer(VK_NULL_HANDLE), m_vertexBufferMemory(VK_NULL_HANDLE), m_vertexCount(0), m_visible(false) {
     // Calculate world-space bounds (blocks are 0.5 units in size)
+    // Add small epsilon (0.01) to prevent float precision issues in culling
+    const float epsilon = 0.01f;
     m_minBounds = glm::vec3(
-        float(m_x * WIDTH) * 0.5f,
-        float(m_y * HEIGHT) * 0.5f,
-        float(m_z * DEPTH) * 0.5f
+        float(m_x * WIDTH) * 0.5f - epsilon,
+        float(m_y * HEIGHT) * 0.5f - epsilon,
+        float(m_z * DEPTH) * 0.5f - epsilon
     );
     m_maxBounds = glm::vec3(
-        float((m_x + 1) * WIDTH) * 0.5f,
-        float((m_y + 1) * HEIGHT) * 0.5f,
-        float((m_z + 1) * DEPTH) * 0.5f
+        float((m_x + 1) * WIDTH) * 0.5f + epsilon,
+        float((m_y + 1) * HEIGHT) * 0.5f + epsilon,
+        float((m_z + 1) * DEPTH) * 0.5f + epsilon
     );
 
     // Determine block IDs from registry (fallback to Air=0 if not found)

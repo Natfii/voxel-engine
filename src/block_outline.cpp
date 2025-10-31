@@ -15,7 +15,7 @@ std::vector<float> BlockOutline::createOutlineVertices(float x, float y, float z
     // Create a wireframe cube with 12 edges (24 vertices for lines)
     // Each block is 0.5 units in size
     const float size = 0.5f;
-    const float offset = 0.001f; // Small offset to prevent z-fighting
+    const float offset = 0.005f; // Small offset to prevent z-fighting (combined with depth bias)
 
     std::vector<float> vertices;
     vertices.reserve(24 * 6); // 24 vertices * 6 floats per vertex (x,y,z,r,g,b)
