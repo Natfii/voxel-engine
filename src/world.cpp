@@ -66,14 +66,23 @@ void World::createBuffers(VulkanRenderer* renderer) {
 }
 
 void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, float renderDistance) {
-    // Distance culling only
+    // Distance culling with squared distance (avoids expensive sqrt)
+    // Add 10% buffer to prevent flickering at boundary
+    float cullingDistance = renderDistance * 1.1f;
+    float cullingDistanceSquared = cullingDistance * cullingDistance;
 
     for (Chunk* chunk : m_chunks) {
-        // Distance culling: skip chunks beyond render distance
-        glm::vec3 chunkCenter = chunk->getCenter();
-        float distance = glm::length(chunkCenter - cameraPos);
+        // Skip chunks with no vertices (optimization)
+        if (chunk->getVertexCount() == 0) {
+            continue;
+        }
 
-        if (distance > renderDistance) {
+        // Distance culling: use squared distance for performance
+        glm::vec3 chunkCenter = chunk->getCenter();
+        glm::vec3 delta = chunkCenter - cameraPos;
+        float distanceSquared = glm::dot(delta, delta);
+
+        if (distanceSquared > cullingDistanceSquared) {
             continue; // Too far away
         }
 
