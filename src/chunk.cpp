@@ -193,6 +193,33 @@ void Chunk::generate() {
                 float uMin = def.atlasX * uvScale;
                 float vMin = def.atlasY * uvScale;
 
+                // Texture variation: zoom in on random portions of the texture
+                // Use world position as seed for deterministic randomness
+                int worldX = m_x * WIDTH + X;
+                int worldY = m_y * HEIGHT + Y;
+                int worldZ = m_z * DEPTH + Z;
+
+                // Simple hash function for pseudo-random offset
+                unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
+                float randU = ((seed >> 0) & 0xFF) / 255.0f;  // Random value 0-1
+                float randV = ((seed >> 8) & 0xFF) / 255.0f;  // Random value 0-1
+
+                // Zoom factor: 1.5 means we sample a 66% region of the texture (zoomed in)
+                // Higher values = more zoom = more variation but less of original texture visible
+                float zoomFactor = 1.5f;
+
+                // Calculate how much space we can shift within (to keep UVs in bounds)
+                float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
+
+                // Random offset for this block
+                float uShift = randU * maxShift;
+                float vShift = randV * maxShift;
+
+                // Adjust base coordinates and scale
+                float uvScaleZoomed = uvScale / zoomFactor;
+                uMin += uShift;
+                vMin += vShift;
+
                 // Calculate world position for this block
                 // Convert from chunk-local coordinates to world coordinates
                 float bx = float(m_x * WIDTH + X) * 0.5f;
@@ -207,8 +234,8 @@ void Chunk::generate() {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }
@@ -221,8 +248,8 @@ void Chunk::generate() {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }
@@ -235,8 +262,8 @@ void Chunk::generate() {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }
@@ -249,8 +276,8 @@ void Chunk::generate() {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }
@@ -263,8 +290,8 @@ void Chunk::generate() {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }
@@ -277,8 +304,8 @@ void Chunk::generate() {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }
@@ -380,6 +407,33 @@ void Chunk::generateMesh(World* world) {
                 float uMin = def.atlasX * uvScale;
                 float vMin = def.atlasY * uvScale;
 
+                // Texture variation: zoom in on random portions of the texture
+                // Use world position as seed for deterministic randomness
+                int worldX = m_x * WIDTH + X;
+                int worldY = m_y * HEIGHT + Y;
+                int worldZ = m_z * DEPTH + Z;
+
+                // Simple hash function for pseudo-random offset
+                unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
+                float randU = ((seed >> 0) & 0xFF) / 255.0f;  // Random value 0-1
+                float randV = ((seed >> 8) & 0xFF) / 255.0f;  // Random value 0-1
+
+                // Zoom factor: 1.5 means we sample a 66% region of the texture (zoomed in)
+                // Higher values = more zoom = more variation but less of original texture visible
+                float zoomFactor = 1.5f;
+
+                // Calculate how much space we can shift within (to keep UVs in bounds)
+                float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
+
+                // Random offset for this block
+                float uShift = randU * maxShift;
+                float vShift = randV * maxShift;
+
+                // Adjust base coordinates and scale
+                float uvScaleZoomed = uvScale / zoomFactor;
+                uMin += uShift;
+                vMin += vShift;
+
                 // Calculate world position for this block
                 // Convert from chunk-local coordinates to world coordinates
                 float bx = float(m_x * WIDTH + X) * 0.5f;
@@ -394,8 +448,8 @@ void Chunk::generateMesh(World* world) {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }
@@ -408,8 +462,8 @@ void Chunk::generateMesh(World* world) {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }
@@ -422,8 +476,8 @@ void Chunk::generateMesh(World* world) {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }
@@ -436,8 +490,8 @@ void Chunk::generateMesh(World* world) {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }
@@ -450,8 +504,8 @@ void Chunk::generateMesh(World* world) {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }
@@ -464,8 +518,8 @@ void Chunk::generateMesh(World* world) {
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScale;
-                        v.v = vMin + cubeUVs[uv+1] * uvScale;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
                 }

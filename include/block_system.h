@@ -54,7 +54,7 @@ public:
 
     // Load all block YAML files from the given directory.
     // Expected file extension: .yaml or .yml.
-    // Textures are loaded from assets/textures/{block_name}.png (16x16 PNG)
+    // Textures are loaded from assets/blocks/{block_name}.png (auto-resized to 64x64)
     // Returns true on success.
     bool loadBlocks(const std::string& directory = "assets/blocks", VulkanRenderer* renderer = nullptr);
 

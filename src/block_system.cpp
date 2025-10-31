@@ -14,13 +14,13 @@
 
 // Helper structure to hold loaded texture data before atlas building
 struct LoadedTexture {
-    unsigned char* pixels = nullptr;  // RGBA data (16x16)
-    int width = 16;
-    int height = 16;
+    unsigned char* pixels = nullptr;  // RGBA data (64x64)
+    int width = 64;
+    int height = 64;
     std::string name;
 };
 
-// Helper function to load and downscale a texture to 16x16
+// Helper function to load and downscale a texture to 64x64
 static LoadedTexture loadAndResizeTexture(const std::string& texturePath, const std::string& name) {
     LoadedTexture tex;
     tex.name = name;
@@ -32,13 +32,13 @@ static LoadedTexture loadAndResizeTexture(const std::string& texturePath, const 
         return tex;  // pixels = nullptr indicates failure
     }
 
-    // Auto-downscale to 16x16 if needed
-    if (texWidth != 16 || texHeight != 16) {
-        std::cout << "Downscaling texture " << texturePath << " from " << texWidth << "x" << texHeight << " to 16x16" << std::endl;
+    // Auto-downscale to 64x64 if needed
+    if (texWidth != 64 || texHeight != 64) {
+        std::cout << "Resizing texture " << texturePath << " from " << texWidth << "x" << texHeight << " to 64x64" << std::endl;
 
-        unsigned char* resizedPixels = (unsigned char*)malloc(16 * 16 * 4);  // 16x16 RGBA
+        unsigned char* resizedPixels = (unsigned char*)malloc(64 * 64 * 4);  // 64x64 RGBA
         stbir_resize_uint8_linear(pixels, texWidth, texHeight, 0,
-                                  resizedPixels, 16, 16, 0,
+                                  resizedPixels, 64, 64, 0,
                                   STBIR_RGBA);
 
         stbi_image_free(pixels);
@@ -199,7 +199,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
         m_atlasGridSize *= 2;
     }
 
-    int atlasSize = m_atlasGridSize * 16;  // Each slot is 16x16
+    int atlasSize = m_atlasGridSize * 64;  // Each slot is 64x64
     std::cout << "Atlas grid: " << m_atlasGridSize << "x" << m_atlasGridSize << " (" << atlasSize << "x" << atlasSize << " pixels)" << std::endl;
 
     // Create atlas pixel data (RGBA)
@@ -221,11 +221,11 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
 
         // Copy texture pixels into atlas
         LoadedTexture& tex = textures[atlasIndex];
-        for (int y = 0; y < 16; y++) {
-            for (int x = 0; x < 16; x++) {
-                int srcIdx = (y * 16 + x) * 4;
-                int dstX = atlasX * 16 + x;
-                int dstY = atlasY * 16 + y;
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                int srcIdx = (y * 64 + x) * 4;
+                int dstX = atlasX * 64 + x;
+                int dstY = atlasY * 64 + y;
                 int dstIdx = (dstY * atlasSize + dstX) * 4;
 
                 atlasPixels[dstIdx + 0] = tex.pixels[srcIdx + 0];  // R
