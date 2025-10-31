@@ -201,20 +201,22 @@ int main() {
             // Render world
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, 250.0f);
 
-            // Render ImGui if paused
-            if (isPaused) {
-                ImGui_ImplVulkan_NewFrame();
-                ImGui_ImplGlfw_NewFrame();
-                ImGui::NewFrame();
+            // Render ImGui (crosshair when playing, menu when paused)
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
 
+            if (isPaused) {
                 if (pauseMenu.render()) {
                     isPaused = false;
                     requestMouseReset = true;
                 }
-
-                ImGui::Render();
-                ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), renderer.getCurrentCommandBuffer());
+            } else {
+                crosshair.render();
             }
+
+            ImGui::Render();
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), renderer.getCurrentCommandBuffer());
 
             // End rendering
             renderer.endFrame();
