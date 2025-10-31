@@ -56,8 +56,11 @@ public:
     VkQueue getGraphicsQueue() const { return m_graphicsQueue; }
     VkRenderPass getRenderPass() const { return m_renderPass; }
     VkPipeline getGraphicsPipeline() const { return m_graphicsPipeline; }
+    VkPipeline getLinePipeline() const { return m_linePipeline; }
+    VkPipelineLayout getPipelineLayout() const { return m_pipelineLayout; }
     VkCommandBuffer getCurrentCommandBuffer() const { return m_commandBuffers[m_currentFrame]; }
     VkDescriptorSetLayout getDescriptorSetLayout() const { return m_descriptorSetLayout; }
+    VkDescriptorSet getCurrentDescriptorSet() const { return m_descriptorSets[m_currentFrame]; }
     uint32_t getCurrentFrame() const { return m_currentFrame; }
     VkExtent2D getSwapChainExtent() const { return m_swapChainExtent; }
 
@@ -88,6 +91,7 @@ private:
     void createRenderPass();
     void createDescriptorSetLayout();
     void createGraphicsPipeline();
+    void createLinePipeline();
     void createFramebuffers();
     void createCommandPool();
     void createDepthResources();
@@ -160,6 +164,7 @@ private:
     VkDescriptorSetLayout m_descriptorSetLayout;
     VkPipelineLayout m_pipelineLayout;
     VkPipeline m_graphicsPipeline;
+    VkPipeline m_linePipeline;
 
     // Command buffers
     VkCommandPool m_commandPool;

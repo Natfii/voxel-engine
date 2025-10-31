@@ -16,6 +16,10 @@ public:
     void createBuffers(VulkanRenderer* renderer);
     void renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, float renderDistance = 50.0f);
 
+    // Block querying for raycasting
+    Chunk* getChunkAt(int chunkX, int chunkY, int chunkZ);
+    int getBlockAt(float worldX, float worldY, float worldZ);
+
 private:
     int m_width, m_height, m_depth;
     std::vector<Chunk*> m_chunks;

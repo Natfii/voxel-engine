@@ -20,6 +20,8 @@
 #include "pause_menu.h"
 #include "crosshair.h"
 #include "config.h"
+#include "raycast.h"
+#include "block_outline.h"
 
 // Global variables
 VulkanRenderer* g_renderer = nullptr;
@@ -136,15 +138,20 @@ int main() {
         std::cout << "Creating GPU buffers..." << std::endl;
         world.createBuffers(&renderer);
 
-        // Spawn player at origin (0, 0) with appropriate height based on terrain
+        // Spawn player at world center with appropriate height based on terrain
+        // World is centered around (0, 0), so spawn at center
         float spawnX = 0.0f;
         float spawnZ = 0.0f;
         int terrainHeight = Chunk::getTerrainHeightAt(spawnX, spawnZ);
         float spawnY = (terrainHeight + 2) * 0.5f;  // +2 blocks above terrain, scaled to 0.5 units
+
+        std::cout << "Spawning player at world center (" << spawnX << ", " << spawnY << ", " << spawnZ << ")" << std::endl;
         Player player(glm::vec3(spawnX, spawnY, spawnZ), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
 
         PauseMenu pauseMenu(window);
         Crosshair crosshair;
+        BlockOutline blockOutline;
+        blockOutline.init(&renderer);
         bool isPaused = false;
         bool escPressed = false;
         bool requestMouseReset = false;
@@ -197,11 +204,36 @@ int main() {
             // Update uniform buffer
             renderer.updateUniformBuffer(renderer.getCurrentFrame(), model, view, projection);
 
+            // Raycast to find targeted block (5 blocks = 2.5 world units since blocks are 0.5 units)
+            RaycastHit hit = Raycast::castRay(&world, player.Position, player.Front, 2.5f);
+
+            // Update block outline if we're looking at a block
+            if (hit.hit) {
+                blockOutline.setPosition(hit.position.x, hit.position.y, hit.position.z);
+                blockOutline.updateBuffer(&renderer);
+            } else {
+                blockOutline.setVisible(false);
+            }
+
             // Begin rendering
             renderer.beginFrame();
 
-            // Render world
+            // Get current descriptor set (need to store it to take address)
+            VkDescriptorSet currentDescriptorSet = renderer.getCurrentDescriptorSet();
+
+            // Render world with normal pipeline
+            vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getGraphicsPipeline());
+            vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                   renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, 250.0f);
+
+            // Render block outline with line pipeline
+            if (hit.hit) {
+                vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getLinePipeline());
+                vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                       renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
+                blockOutline.render(renderer.getCurrentCommandBuffer());
+            }
 
             // Render ImGui (crosshair when playing, menu when paused)
             ImGui_ImplVulkan_NewFrame();

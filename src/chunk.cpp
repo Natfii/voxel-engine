@@ -74,10 +74,22 @@ Chunk::Chunk(int x, int y, int z) : m_x(x), m_y(y), m_z(z), m_vertexBuffer(VK_NU
 
             // Fill blocks based on height
             for (int Y = 0; Y < HEIGHT; ++Y) {
-                if (Y < height - 4)      m_blocks[X][Y][Z] = stoneID;
-                else if (Y < height)     m_blocks[X][Y][Z] = dirtID;
-                else if (Y == height)    m_blocks[X][Y][Z] = grassID;
-                else                     m_blocks[X][Y][Z] = 0; // Air
+                if (Y < height - 4) {
+                    m_blocks[X][Y][Z] = stoneID;
+                }
+                else if (Y < height) {
+                    m_blocks[X][Y][Z] = dirtID;
+                }
+                else if (Y == height) {
+                    // Only place grass if air is above
+                    // Check if the block directly above would be air
+                    // This handles chunk boundaries and surface blocks correctly
+                    bool airAbove = (Y + 1 >= HEIGHT) || (Y + 1 > height);
+                    m_blocks[X][Y][Z] = airAbove ? grassID : dirtID;
+                }
+                else {
+                    m_blocks[X][Y][Z] = 0; // Air
+                }
             }
         }
     }
@@ -86,6 +98,13 @@ Chunk::Chunk(int x, int y, int z) : m_x(x), m_y(y), m_z(z), m_vertexBuffer(VK_NU
 Chunk::~Chunk() {
     // Vulkan cleanup is handled separately
     // The buffers should be cleaned up before destruction by the renderer
+}
+
+int Chunk::getBlock(int x, int y, int z) const {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return -1; // Out of bounds
+    }
+    return m_blocks[x][y][z];
 }
 
 void Chunk::generate() {
@@ -106,7 +125,8 @@ void Chunk::generate() {
     }};
 
     std::vector<Vertex> verts;
-    verts.reserve(WIDTH * HEIGHT * DEPTH * 36);
+    // Reserve space for estimated visible faces (roughly 30% of blocks visible, 3 faces each on average)
+    verts.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10);
 
     // Helper lambda to check if a block is solid (non-air)
     auto isSolid = [this](int x, int y, int z) -> bool {
@@ -115,10 +135,10 @@ void Chunk::generate() {
         return m_blocks[x][y][z] != 0;
     };
 
-    // Iterate over every block in the chunk
+    // Iterate over every block in the chunk (optimized order for cache locality)
     for(int X = 0; X < WIDTH;  ++X) {
-        for(int Z = 0; Z < DEPTH;  ++Z) {
-            for(int Y = 0; Y < HEIGHT; ++Y) {
+        for(int Y = 0; Y < HEIGHT; ++Y) {
+            for(int Z = 0; Z < DEPTH;  ++Z) {
                 int id = m_blocks[X][Y][Z];
                 if (id == 0) continue; // Skip air
 
