@@ -3,6 +3,9 @@ project(voxel-engine)
 
 set(CMAKE_CXX_STANDARD 17)
 
+# Define GLFW to not include OpenGL headers
+add_compile_definitions(GLFW_INCLUDE_VULKAN GLFW_INCLUDE_NONE)
+
 # Add external dependencies
 add_subdirectory(external/yaml-cpp)
 
@@ -40,7 +43,10 @@ if(WIN32)
 else()
     # Linux: use system libraries
     find_package(Vulkan REQUIRED)
-    find_package(glfw3 REQUIRED)
+    find_package(glfw3 QUIET)
+    if(NOT glfw3_FOUND)
+        message(STATUS "glfw3 package not found, will link directly with -lglfw")
+    endif()
     include_directories(${Vulkan_INCLUDE_DIRS})
 endif()
 
@@ -57,12 +63,22 @@ if(WIN32)
     )
 else()
     # Linux
-    target_link_libraries(voxel-engine
-        ${Vulkan_LIBRARIES}
-        glfw
-        yaml-cpp
-        ${CMAKE_DL_LIBS}
-    )
+    if(glfw3_FOUND)
+        target_link_libraries(voxel-engine
+            ${Vulkan_LIBRARIES}
+            glfw
+            yaml-cpp
+            ${CMAKE_DL_LIBS}
+        )
+    else()
+        # Direct linking when package config not available
+        target_link_libraries(voxel-engine
+            ${Vulkan_LIBRARIES}
+            -lglfw
+            yaml-cpp
+            ${CMAKE_DL_LIBS}
+        )
+    endif()
 endif()
 
 # Copy assets directory to build output directory

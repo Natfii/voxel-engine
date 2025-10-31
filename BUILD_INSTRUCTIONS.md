@@ -240,11 +240,11 @@ voxel-engine/
 ## Getting Help
 
 If you encounter issues:
-1. Check `VULKAN_MIGRATION.md` for detailed migration information
-2. Check `WINDOWS_SETUP.md` for Windows-specific setup
-3. Check `QUICK_START_WINDOWS.md` for a quick Windows guide
-4. Make sure your GPU supports Vulkan (use `vulkaninfo`)
-5. Update your graphics drivers
+1. Check `WINDOWS_SETUP.md` for Windows-specific setup
+2. Check `QUICK_START_WINDOWS.md` for a quick Windows guide
+3. Make sure your GPU supports Vulkan (use `vulkaninfo`)
+4. Update your graphics drivers
+5. Check the main `README.md` for troubleshooting tips
 
 ## System Requirements
 

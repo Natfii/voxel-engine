@@ -5,6 +5,7 @@
 #include "FastNoiseLite.h"  // for procedural terrain generation
 #include <vector>
 #include <array>
+#include <cstring>  // for memcpy
 
 FastNoiseLite* Chunk::s_noise = nullptr;
 

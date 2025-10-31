@@ -38,7 +38,7 @@ void Player::update(GLFWwindow* window, float deltaTime) {
         }
 
         float xoffset = float(xpos - LastX);
-        float yoffset = float(LastY - ypos); // reversed
+        float yoffset = float(LastY - ypos); // Reversed for Vulkan's flipped Y projection
         LastX = float(xpos);
         LastY = float(ypos);
 
