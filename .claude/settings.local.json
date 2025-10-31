@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Bash(dir /b \"C:\\Users\\Natal\\Documents\\voxel-engine\\external\")",
+      "Bash(curl:*)",
+      "Bash(cmake --build:*)"
     ],
     "deny": [],
     "ask": []

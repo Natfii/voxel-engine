@@ -7,12 +7,20 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 cameraPos;  // .xyz = camera position, .w = render distance
 } ubo;
 
+layout(binding = 1) uniform sampler2D texSampler;
+
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec3 fragWorldPos;
+layout(location = 2) in vec2 fragTexCoord;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    // Sample texture and multiply by vertex color
+    // Textured blocks have white (1,1,1) vertex color → shows texture
+    // Colored blocks have colored vertex color → shows solid color (default white texture)
+    vec4 texColor = texture(texSampler, fragTexCoord);
+    vec3 baseColor = texColor.rgb * fragColor;
     // Extract camera position and render distance from packed vec4
     vec3 camPos = ubo.cameraPos.xyz;
     float renderDistance = ubo.cameraPos.w;
@@ -32,12 +40,12 @@ void main() {
     }
 
     // Only apply fog if we're in the fog range
-    vec3 finalColor = fragColor;
+    vec3 finalColor = baseColor;
     if (distance > fogStart) {
         // Calculate linear fog factor (1.0 = no fog, 0.0 = full fog)
         float fogFactor = clamp((fogEnd - distance) / (fogEnd - fogStart), 0.0, 1.0);
         // Mix block color with fog color
-        finalColor = mix(fogColor, fragColor, fogFactor);
+        finalColor = mix(fogColor, baseColor, fogFactor);
     }
 
     outColor = vec4(finalColor, 1.0);

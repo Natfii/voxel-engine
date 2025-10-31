@@ -11,12 +11,13 @@
 class VulkanRenderer;
 
 struct Vertex {
-    float x, y, z;
-    float r, g, b;
+    float x, y, z;      // Position
+    float r, g, b;      // Color (fallback if no texture)
+    float u, v;         // Texture coordinates
 
     // Vulkan vertex input descriptions
     static VkVertexInputBindingDescription getBindingDescription();
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions();
+    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions();
 };
 
 class Chunk {

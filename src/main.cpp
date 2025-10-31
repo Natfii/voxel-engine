@@ -125,8 +125,15 @@ int main() {
         int worldHeight = config.getInt("World", "world_height", 3);
         int worldDepth = config.getInt("World", "world_depth", 12);
 
-        std::cout << "Loading block registry..." << std::endl;
-        BlockRegistry::instance().loadBlocks("assets/blocks");
+        std::cout << "Loading block registry with textures..." << std::endl;
+        BlockRegistry::instance().loadBlocks("assets/blocks", &renderer);
+
+        // Bind texture atlas to renderer descriptor sets
+        std::cout << "Binding texture atlas..." << std::endl;
+        renderer.bindAtlasTexture(
+            BlockRegistry::instance().getAtlasImageView(),
+            BlockRegistry::instance().getAtlasSampler()
+        );
 
         std::cout << "Initializing world generation..." << std::endl;
         Chunk::initNoise(seed);

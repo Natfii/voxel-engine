@@ -50,6 +50,9 @@ public:
     void endFrame();
     void updateUniformBuffer(uint32_t currentImage, const glm::mat4& model, const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos, float renderDistance);
 
+    // Update descriptor sets to use texture atlas (call after loading blocks)
+    void bindAtlasTexture(VkImageView atlasView, VkSampler atlasSampler);
+
     // Getters
     VkInstance getInstance() const { return m_instance; }
     VkDevice getDevice() const { return m_device; }
@@ -80,6 +83,17 @@ public:
 
     // Memory utility
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+
+    // Texture/Image utilities (public for block system)
+    void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling,
+                     VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+    VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
+    void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+    void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+    VkSampler createTextureSampler();
+
+    // Default texture for blocks without custom textures
+    void createDefaultTexture();
 
 private:
     // Initialization
@@ -117,9 +131,6 @@ private:
     VkShaderModule createShaderModule(const std::vector<char>& code);
     VkFormat findDepthFormat();
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
-    void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling,
-                     VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
-    VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
 
     // Swapchain recreation
     void recreateSwapChain();
@@ -185,6 +196,12 @@ private:
     // Descriptor pool and sets
     VkDescriptorPool m_descriptorPool;
     std::vector<VkDescriptorSet> m_descriptorSets;
+
+    // Default texture (1x1 white pixel for blocks without custom textures)
+    VkImage m_defaultTextureImage;
+    VkDeviceMemory m_defaultTextureMemory;
+    VkImageView m_defaultTextureView;
+    VkSampler m_defaultTextureSampler;
 
     // Synchronization
     std::vector<VkSemaphore> m_imageAvailableSemaphores;

@@ -30,10 +30,10 @@ void Chunk::cleanupNoise() {
 }
 
 int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
-    if (!s_noise) return 16; // Default height if noise not initialized
+    if (!s_noise) return 64; // Default height if noise not initialized
 
     float noise = s_noise->GetNoise(worldX, worldZ);
-    int height = 16 + (int)(noise * 12.0f);
+    int height = 64 + (int)(noise * 12.0f);  // Must match terrain generation formula
     return height;
 }
 
@@ -71,8 +71,10 @@ Chunk::Chunk(int x, int y, int z) : m_x(x), m_y(y), m_z(z), m_vertexBuffer(VK_NU
             // Sample noise for terrain height (same for entire vertical column)
             float noise = s_noise->GetNoise(worldX, worldZ);
 
-            // Convert noise (-1 to 1) to world height in blocks (terrain height ranges from 4 to 28)
-            int terrainHeight = 16 + (int)(noise * 12.0f);
+            // Convert noise (-1 to 1) to world height in blocks
+            // Terrain surface ranges from Y=52 to Y=76 (average Y=64, like Minecraft sea level)
+            // This leaves ~60 blocks below for underground mining and caves
+            int terrainHeight = 64 + (int)(noise * 12.0f);
 
             // Fill blocks based on height (using world Y coordinates for proper cross-chunk generation)
             for (int Y = 0; Y < HEIGHT; ++Y) {
@@ -134,6 +136,23 @@ void Chunk::generate() {
         0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,   0,0,0.5f,  0.5f,0,0,  0,0,0
     }};
 
+    // UV coordinates for each vertex (matches cube structure above)
+    // Each face gets standard UV mapping: (0,0) bottom-left to (1,1) top-right
+    static constexpr std::array<float, 72> cubeUVs = {{
+        // front face: 6 vertices (2 triangles)
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
+        // back face
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
+        // left face
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
+        // right face
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
+        // top face
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
+        // bottom face
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1
+    }};
+
     std::vector<Vertex> verts;
     // Reserve space for estimated visible faces (roughly 30% of blocks visible, 3 faces each on average)
     verts.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10);
@@ -145,6 +164,11 @@ void Chunk::generate() {
         return m_blocks[x][y][z] != 0;
     };
 
+    // Get atlas grid size for UV calculations
+    auto& registry = BlockRegistry::instance();
+    int atlasGridSize = registry.getAtlasGridSize();
+    float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
+
     // Iterate over every block in the chunk (optimized order for cache locality)
     for(int X = 0; X < WIDTH;  ++X) {
         for(int Y = 0; Y < HEIGHT; ++Y) {
@@ -153,7 +177,7 @@ void Chunk::generate() {
                 if (id == 0) continue; // Skip air
 
                 // Look up block definition by ID
-                const BlockDefinition& def = BlockRegistry::instance().get(id);
+                const BlockDefinition& def = registry.get(id);
                 float cr, cg, cb;
                 if (def.hasColor) {
                     // Use the block's defined color
@@ -165,6 +189,10 @@ void Chunk::generate() {
                     cr = cg = cb = 1.0f;
                 }
 
+                // Calculate atlas UV offset for this block's texture
+                float uMin = def.atlasX * uvScale;
+                float vMin = def.atlasY * uvScale;
+
                 // Calculate world position for this block
                 // Convert from chunk-local coordinates to world coordinates
                 float bx = float(m_x * WIDTH + X) * 0.5f;
@@ -173,72 +201,84 @@ void Chunk::generate() {
 
                 // Front face (z=0, facing -Z direction)
                 if (!isSolid(X, Y, Z - 1)) {
-                    for (int i = 0; i < 18; i += 3) {
+                    for (int i = 0, uv = 0; i < 18; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }
 
                 // Back face (z=0.5, facing +Z direction)
                 if (!isSolid(X, Y, Z + 1)) {
-                    for (int i = 18; i < 36; i += 3) {
+                    for (int i = 18, uv = 12; i < 36; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }
 
                 // Left face (x=0, facing -X direction)
                 if (!isSolid(X - 1, Y, Z)) {
-                    for (int i = 36; i < 54; i += 3) {
+                    for (int i = 36, uv = 24; i < 54; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }
 
                 // Right face (x=0.5, facing +X direction)
                 if (!isSolid(X + 1, Y, Z)) {
-                    for (int i = 54; i < 72; i += 3) {
+                    for (int i = 54, uv = 36; i < 72; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }
 
                 // Top face (y=0.5, facing +Y direction)
                 if (!isSolid(X, Y + 1, Z)) {
-                    for (int i = 72; i < 90; i += 3) {
+                    for (int i = 72, uv = 48; i < 90; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }
 
                 // Bottom face (y=0, facing -Y direction)
                 if (!isSolid(X, Y - 1, Z)) {
-                    for (int i = 90; i < 108; i += 3) {
+                    for (int i = 90, uv = 60; i < 108; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }
@@ -265,6 +305,22 @@ void Chunk::generateMesh(World* world) {
         0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,   0,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
         // bottom face (y = 0)
         0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,   0,0,0.5f,  0.5f,0,0,  0,0,0
+    }};
+
+    // UV coordinates for each vertex (matches cube structure above)
+    static constexpr std::array<float, 72> cubeUVs = {{
+        // front face: 6 vertices (2 triangles)
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
+        // back face
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
+        // left face
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
+        // right face
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
+        // top face
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
+        // bottom face
+        0,0,  1,0,  1,1,   0,0,  1,1,  0,1
     }};
 
     std::vector<Vertex> verts;
@@ -295,6 +351,11 @@ void Chunk::generateMesh(World* world) {
         return blockID != 0;
     };
 
+    // Get atlas grid size for UV calculations
+    auto& registry = BlockRegistry::instance();
+    int atlasGridSize = registry.getAtlasGridSize();
+    float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
+
     // Iterate over every block in the chunk (optimized order for cache locality)
     for(int X = 0; X < WIDTH;  ++X) {
         for(int Y = 0; Y < HEIGHT; ++Y) {
@@ -303,7 +364,7 @@ void Chunk::generateMesh(World* world) {
                 if (id == 0) continue; // Skip air
 
                 // Look up block definition by ID
-                const BlockDefinition& def = BlockRegistry::instance().get(id);
+                const BlockDefinition& def = registry.get(id);
                 float cr, cg, cb;
                 if (def.hasColor) {
                     // Use the block's defined color
@@ -315,6 +376,10 @@ void Chunk::generateMesh(World* world) {
                     cr = cg = cb = 1.0f;
                 }
 
+                // Calculate atlas UV offset for this block's texture
+                float uMin = def.atlasX * uvScale;
+                float vMin = def.atlasY * uvScale;
+
                 // Calculate world position for this block
                 // Convert from chunk-local coordinates to world coordinates
                 float bx = float(m_x * WIDTH + X) * 0.5f;
@@ -323,72 +388,84 @@ void Chunk::generateMesh(World* world) {
 
                 // Front face (z=0, facing -Z direction)
                 if (!isSolid(X, Y, Z - 1)) {
-                    for (int i = 0; i < 18; i += 3) {
+                    for (int i = 0, uv = 0; i < 18; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }
 
                 // Back face (z=0.5, facing +Z direction)
                 if (!isSolid(X, Y, Z + 1)) {
-                    for (int i = 18; i < 36; i += 3) {
+                    for (int i = 18, uv = 12; i < 36; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }
 
                 // Left face (x=0, facing -X direction)
                 if (!isSolid(X - 1, Y, Z)) {
-                    for (int i = 36; i < 54; i += 3) {
+                    for (int i = 36, uv = 24; i < 54; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }
 
                 // Right face (x=0.5, facing +X direction)
                 if (!isSolid(X + 1, Y, Z)) {
-                    for (int i = 54; i < 72; i += 3) {
+                    for (int i = 54, uv = 36; i < 72; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }
 
                 // Top face (y=0.5, facing +Y direction)
                 if (!isSolid(X, Y + 1, Z)) {
-                    for (int i = 72; i < 90; i += 3) {
+                    for (int i = 72, uv = 48; i < 90; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }
 
                 // Bottom face (y=0, facing -Y direction)
                 if (!isSolid(X, Y - 1, Z)) {
-                    for (int i = 90; i < 108; i += 3) {
+                    for (int i = 90, uv = 60; i < 108; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScale;
+                        v.v = vMin + cubeUVs[uv+1] * uvScale;
                         verts.push_back(v);
                     }
                 }

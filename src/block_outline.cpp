@@ -18,7 +18,7 @@ std::vector<float> BlockOutline::createOutlineVertices(float x, float y, float z
     const float offset = 0.005f; // Small offset to prevent z-fighting (combined with depth bias)
 
     std::vector<float> vertices;
-    vertices.reserve(24 * 6); // 24 vertices * 6 floats per vertex (x,y,z,r,g,b)
+    vertices.reserve(24 * 8); // 24 vertices * 8 floats per vertex (x,y,z,r,g,b,u,v)
 
     // Helper lambda to add a line (2 vertices)
     auto addLine = [&](float x1, float y1, float z1, float x2, float y2, float z2) {
@@ -26,16 +26,20 @@ std::vector<float> BlockOutline::createOutlineVertices(float x, float y, float z
         vertices.push_back(x1);
         vertices.push_back(y1);
         vertices.push_back(z1);
-        vertices.push_back(0.0f); // Black outline
+        vertices.push_back(0.0f); // Black outline color
         vertices.push_back(0.0f);
+        vertices.push_back(0.0f);
+        vertices.push_back(0.0f); // UV coordinates (not used for lines)
         vertices.push_back(0.0f);
 
         // Second vertex
         vertices.push_back(x2);
         vertices.push_back(y2);
         vertices.push_back(z2);
-        vertices.push_back(0.0f); // Black outline
+        vertices.push_back(0.0f); // Black outline color
         vertices.push_back(0.0f);
+        vertices.push_back(0.0f);
+        vertices.push_back(0.0f); // UV coordinates (not used for lines)
         vertices.push_back(0.0f);
     };
 
@@ -99,7 +103,7 @@ void BlockOutline::init(VulkanRenderer* renderer) {
     vkDestroyBuffer(renderer->getDevice(), stagingBuffer, nullptr);
     vkFreeMemory(renderer->getDevice(), stagingBufferMemory, nullptr);
 
-    m_vertexCount = dummyVerts.size() / 6; // 6 floats per vertex (xyz rgb)
+    m_vertexCount = dummyVerts.size() / 8; // 8 floats per vertex (xyz rgb uv)
 }
 
 void BlockOutline::setPosition(float x, float y, float z) {
