@@ -42,7 +42,7 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
     echo Using glslc to compile shaders...
     "%VULKAN_SDK%\Bin\glslc.exe" shader.vert -o vert.spv
     if errorlevel 1 (
-        echo [ERROR] Failed to compile vertex shader!
+        echo [ERROR] Failed to compile shader.vert!
         cd ..
         pause
         exit /b 1
@@ -50,7 +50,23 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
 
     "%VULKAN_SDK%\Bin\glslc.exe" shader.frag -o frag.spv
     if errorlevel 1 (
-        echo [ERROR] Failed to compile fragment shader!
+        echo [ERROR] Failed to compile shader.frag!
+        cd ..
+        pause
+        exit /b 1
+    )
+
+    "%VULKAN_SDK%\Bin\glslc.exe" line.vert -o line_vert.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile line.vert!
+        cd ..
+        pause
+        exit /b 1
+    )
+
+    "%VULKAN_SDK%\Bin\glslc.exe" line.frag -o line_frag.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile line.frag!
         cd ..
         pause
         exit /b 1
@@ -62,7 +78,7 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
     echo Using glslangValidator to compile shaders...
     "%VULKAN_SDK%\Bin\glslangValidator.exe" -V shader.vert -o vert.spv
     if errorlevel 1 (
-        echo [ERROR] Failed to compile vertex shader!
+        echo [ERROR] Failed to compile shader.vert!
         cd ..
         pause
         exit /b 1
@@ -70,7 +86,23 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
 
     "%VULKAN_SDK%\Bin\glslangValidator.exe" -V shader.frag -o frag.spv
     if errorlevel 1 (
-        echo [ERROR] Failed to compile fragment shader!
+        echo [ERROR] Failed to compile shader.frag!
+        cd ..
+        pause
+        exit /b 1
+    )
+
+    "%VULKAN_SDK%\Bin\glslangValidator.exe" -V line.vert -o line_vert.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile line.vert!
+        cd ..
+        pause
+        exit /b 1
+    )
+
+    "%VULKAN_SDK%\Bin\glslangValidator.exe" -V line.frag -o line_frag.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile line.frag!
         cd ..
         pause
         exit /b 1
