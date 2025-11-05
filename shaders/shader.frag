@@ -38,7 +38,7 @@ void main() {
     // Dynamic fog color based on time of day
     vec3 dayFogColor = vec3(0.7, 0.85, 1.0);       // Light blue (day)
     vec3 dawnDuskFogColor = vec3(1.0, 0.7, 0.5);   // Orange/pink (dawn/dusk)
-    vec3 nightFogColor = vec3(0.15, 0.2, 0.35);    // Dark blue (night)
+    vec3 nightFogColor = vec3(0.02, 0.02, 0.02);   // Nearly black (night)
 
     // Calculate dawn/dusk factor
     float dawnDuskFactor = smoothstep(0.2, 0.3, time) * (1.0 - smoothstep(0.35, 0.45, time));
