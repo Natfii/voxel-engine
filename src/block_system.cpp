@@ -120,15 +120,11 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         if (doc["transparency"]) {
             def.transparency = doc["transparency"].as<float>();
         }
-        // Texture variation (zoom factor for random sampling)
-        if (doc["texture_variation"]) {
-            def.textureVariation = doc["texture_variation"].as<float>();
-        }
         // Store metadata node if exists
         if (doc["metadata"]) {
             def.metadata = doc["metadata"];
         }
-        
+
         // Parse texture field (either PNG filename, hex color, or cube_map)
         if (doc["cube_map"]) {
             // Cube map mode: different textures for different faces
