@@ -53,6 +53,7 @@ public:
 
     // Sky system
     void setSkyTime(float timeOfDay);  // Set time of day (0-1, where 0 = midnight, 0.5 = noon)
+    void renderSkybox();  // Render the skybox (call before rendering world)
 
     // Update descriptor sets to use texture atlas (call after loading blocks)
     void bindAtlasTexture(VkImageView atlasView, VkSampler atlasSampler);

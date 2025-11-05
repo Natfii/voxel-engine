@@ -2077,6 +2077,27 @@ void VulkanRenderer::setSkyTime(float timeOfDay) {
     m_skyTime = glm::clamp(timeOfDay, 0.0f, 1.0f);
 }
 
+// Render the skybox
+void VulkanRenderer::renderSkybox() {
+    VkCommandBuffer commandBuffer = m_commandBuffers[m_currentFrame];
+    VkDescriptorSet currentDescriptorSet = m_descriptorSets[m_currentFrame];
+
+    // Bind skybox pipeline
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyboxPipeline);
+
+    // Bind descriptor set (contains UBO and cube maps)
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                           m_pipelineLayout, 0, 1, &currentDescriptorSet, 0, nullptr);
+
+    // Bind skybox vertex buffer
+    VkBuffer vertexBuffers[] = {m_skyboxVertexBuffer};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+    // Draw skybox cube (36 vertices)
+    vkCmdDraw(commandBuffer, 36, 1, 0, 0);
+}
+
 void VulkanRenderer::cleanup() {
     cleanupSwapChain();
 
