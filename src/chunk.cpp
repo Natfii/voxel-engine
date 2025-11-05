@@ -145,19 +145,19 @@ void Chunk::generate() {
     }};
 
     // UV coordinates for each vertex (matches cube structure above)
-    // Each face gets standard UV mapping: (0,0) bottom-left to (1,1) top-right
+    // Note: V coordinates are flipped for side faces to prevent upside-down textures
     static constexpr std::array<float, 72> cubeUVs = {{
-        // front face: 6 vertices (2 triangles)
+        // front face: 6 vertices (2 triangles) - V flipped
+        0,1,  1,1,  1,0,   0,1,  1,0,  0,0,
+        // back face - V flipped
+        0,1,  1,1,  1,0,   0,1,  1,0,  0,0,
+        // left face - V flipped
+        0,1,  1,1,  1,0,   0,1,  1,0,  0,0,
+        // right face - V flipped
+        0,1,  1,1,  1,0,   0,1,  1,0,  0,0,
+        // top face - normal orientation
         0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // back face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // left face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // right face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // top face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // bottom face
+        // bottom face - normal orientation
         0,0,  1,0,  1,1,   0,0,  1,1,  0,1
     }};
 
@@ -316,18 +316,19 @@ void Chunk::generateMesh(World* world) {
     }};
 
     // UV coordinates for each vertex (matches cube structure above)
+    // Note: V coordinates are flipped for side faces to prevent upside-down textures
     static constexpr std::array<float, 72> cubeUVs = {{
-        // front face: 6 vertices (2 triangles)
+        // front face: 6 vertices (2 triangles) - V flipped
+        0,1,  1,1,  1,0,   0,1,  1,0,  0,0,
+        // back face - V flipped
+        0,1,  1,1,  1,0,   0,1,  1,0,  0,0,
+        // left face - V flipped
+        0,1,  1,1,  1,0,   0,1,  1,0,  0,0,
+        // right face - V flipped
+        0,1,  1,1,  1,0,   0,1,  1,0,  0,0,
+        // top face - normal orientation
         0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // back face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // left face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // right face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // top face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // bottom face
+        // bottom face - normal orientation
         0,0,  1,0,  1,1,   0,0,  1,1,  0,1
     }};
 
