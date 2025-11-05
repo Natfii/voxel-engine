@@ -130,183 +130,208 @@ void Chunk::setBlock(int x, int y, int z, int blockID) {
     // Note: Caller is responsible for calling generateMesh() and createBuffer() to update visuals
 }
 
+// Helper struct for greedy meshing
+struct MaskEntry {
+    int blockID = 0;
+    bool processed = false;
+};
+
 void Chunk::generate() {
-    // Define a 0.5-unit cube (4 vertices per face, 24 total) - indexed rendering
-    static constexpr std::array<float, 72> cube = {{
-        // front face (z = 0) - 4 vertices
-        0,0,0,  0.5f,0,0,  0.5f,0.5f,0,  0,0.5f,0,
-        // back face (z = 0.5) - 4 vertices
-        0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
-        // left face (x = 0) - 4 vertices
-        0,0,0.5f,  0,0,0,  0,0.5f,0,  0,0.5f,0.5f,
-        // right face (x = 0.5) - 4 vertices
-        0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
-        // top face (y = 0.5) - 4 vertices
-        0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
-        // bottom face (y = 0) - 4 vertices
-        0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,  0,0,0
-    }};
-
-    // UV coordinates for each vertex (4 per face)
-    // Note: V coordinates are flipped for side faces to prevent upside-down textures
-    static constexpr std::array<float, 48> cubeUVs = {{
-        // front face: 4 vertices - V flipped
-        0,1,  1,1,  1,0,  0,0,
-        // back face - V flipped
-        0,1,  1,1,  1,0,  0,0,
-        // left face - V flipped
-        0,1,  1,1,  1,0,  0,0,
-        // right face - V flipped
-        0,1,  1,1,  1,0,  0,0,
-        // top face - normal orientation
-        0,0,  1,0,  1,1,  0,1,
-        // bottom face - normal orientation
-        0,0,  1,0,  1,1,  0,1
-    }};
-
     std::vector<Vertex> verts;
     std::vector<uint32_t> indices;
-    // Reserve space for estimated visible faces (roughly 30% of blocks visible, 3 faces each on average)
-    // With indexed rendering: 4 vertices per face instead of 6
-    verts.reserve(WIDTH * HEIGHT * DEPTH * 12 / 10);  // 4 vertices per face
-    indices.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10); // 6 indices per face (same as before)
-
-    // Helper lambda to check if a block is solid (non-air)
-    auto isSolid = [this](int x, int y, int z) -> bool {
-        if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH)
-            return false; // Treat out-of-bounds as air (will show boundary faces)
-        return m_blocks[x][y][z] != 0;
-    };
+    verts.reserve(WIDTH * HEIGHT * DEPTH * 4 / 10);   // Reduced estimate due to greedy meshing
+    indices.reserve(WIDTH * HEIGHT * DEPTH * 6 / 10);  // Reduced estimate due to greedy meshing
 
     // Get atlas grid size for UV calculations
     auto& registry = BlockRegistry::instance();
     int atlasGridSize = registry.getAtlasGridSize();
     float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
 
-    // Iterate over every block in the chunk (optimized order for cache locality)
-    for(int X = 0; X < WIDTH;  ++X) {
-        for(int Y = 0; Y < HEIGHT; ++Y) {
-            for(int Z = 0; Z < DEPTH;  ++Z) {
-                int id = m_blocks[X][Y][Z];
-                if (id == 0) continue; // Skip air
+    // Helper to check if a block is solid (non-air)
+    auto isSolid = [this](int x, int y, int z) -> bool {
+        if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH)
+            return false;
+        return m_blocks[x][y][z] != 0;
+    };
 
-                // Look up block definition by ID
-                const BlockDefinition& def = registry.get(id);
-                float cr, cg, cb;
-                if (def.hasColor) {
-                    // Use the block's defined color
-                    cr = def.color.r;
-                    cg = def.color.g;
-                    cb = def.color.b;
-                } else {
-                    // No color defined (likely has a texture); use white
-                    cr = cg = cb = 1.0f;
-                }
+    // Helper to create a merged quad
+    auto createQuad = [&](int x, int y, int z, int w, int h, int axis, bool positive, int blockID) {
+        const BlockDefinition& def = registry.get(blockID);
+        float cr, cg, cb;
+        if (def.hasColor) {
+            cr = def.color.r; cg = def.color.g; cb = def.color.b;
+        } else {
+            cr = cg = cb = 1.0f;
+        }
 
-                // Helper to get UV coordinates for a specific face with texture variation
-                auto getUVsForFace = [&](const BlockDefinition::FaceTexture& face) -> std::pair<float, float> {
-                    float uMin = face.atlasX * uvScale;
-                    float vMin = face.atlasY * uvScale;
+        // Select appropriate texture based on axis/direction
+        const BlockDefinition::FaceTexture* faceTexture;
+        bool flipV = false;  // For side faces
 
-                    // Apply texture variation if enabled (per-face variation)
-                    float zoomFactor = face.variation;
-                    if (zoomFactor > 1.0f) {
-                        int worldX = m_x * WIDTH + X;
-                        int worldY = m_y * HEIGHT + Y;
-                        int worldZ = m_z * DEPTH + Z;
+        if (axis == 0) {  // X axis
+            faceTexture = positive ? (def.useCubeMap ? &def.right : &def.all) : (def.useCubeMap ? &def.left : &def.all);
+            flipV = true;
+        } else if (axis == 1) {  // Y axis
+            faceTexture = positive ? (def.useCubeMap ? &def.top : &def.all) : (def.useCubeMap ? &def.bottom : &def.all);
+        } else {  // Z axis
+            faceTexture = positive ? (def.useCubeMap ? &def.back : &def.all) : (def.useCubeMap ? &def.front : &def.all);
+            flipV = true;
+        }
 
-                        // Simple hash function for pseudo-random offset
-                        unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
-                        float randU = ((seed >> 0) & 0xFF) / 255.0f;
-                        float randV = ((seed >> 8) & 0xFF) / 255.0f;
+        float uMin = faceTexture->atlasX * uvScale;
+        float vMin = faceTexture->atlasY * uvScale;
+        // Note: Texture variation disabled for merged quads for simplicity
 
-                        // Calculate how much space we can shift within
-                        float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
-                        float uShift = randU * maxShift;
-                        float vShift = randV * maxShift;
+        uint32_t baseIndex = static_cast<uint32_t>(verts.size());
+        float blockSize = 0.5f;
+        float bx = float(m_x * WIDTH + x) * blockSize;
+        float by = float(m_y * HEIGHT + y) * blockSize;
+        float bz = float(m_z * DEPTH + z) * blockSize;
 
-                        uMin += uShift;
-                        vMin += vShift;
+        // Create 4 vertices for merged quad
+        Vertex v[4];
+        for (int i = 0; i < 4; i++) {
+            v[i].r = cr; v[i].g = cg; v[i].b = cb;
+        }
+
+        if (axis == 0) {  // X axis (left/right faces)
+            float xOffset = positive ? blockSize : 0.0f;
+            v[0].x = bx + xOffset; v[0].y = by;                v[0].z = bz;
+            v[1].x = bx + xOffset; v[1].y = by;                v[1].z = bz + h * blockSize;
+            v[2].x = bx + xOffset; v[2].y = by + w * blockSize; v[2].z = bz + h * blockSize;
+            v[3].x = bx + xOffset; v[3].y = by + w * blockSize; v[3].z = bz;
+        } else if (axis == 1) {  // Y axis (top/bottom faces)
+            float yOffset = positive ? blockSize : 0.0f;
+            v[0].x = bx;                v[0].y = by + yOffset; v[0].z = bz;
+            v[1].x = bx + w * blockSize; v[1].y = by + yOffset; v[1].z = bz;
+            v[2].x = bx + w * blockSize; v[2].y = by + yOffset; v[2].z = bz + h * blockSize;
+            v[3].x = bx;                v[3].y = by + yOffset; v[3].z = bz + h * blockSize;
+        } else {  // Z axis (front/back faces)
+            float zOffset = positive ? blockSize : 0.0f;
+            v[0].x = bx;                v[0].y = by;                v[0].z = bz + zOffset;
+            v[1].x = bx + w * blockSize; v[1].y = by;                v[1].z = bz + zOffset;
+            v[2].x = bx + w * blockSize; v[2].y = by + h * blockSize; v[2].z = bz + zOffset;
+            v[3].x = bx;                v[3].y = by + h * blockSize; v[3].z = bz + zOffset;
+        }
+
+        // UV coordinates - tile the texture across merged quad
+        if (flipV) {
+            v[0].u = uMin;             v[0].v = vMin + h * uvScale;
+            v[1].u = uMin + w * uvScale; v[1].v = vMin + h * uvScale;
+            v[2].u = uMin + w * uvScale; v[2].v = vMin;
+            v[3].u = uMin;             v[3].v = vMin;
+        } else {
+            v[0].u = uMin;             v[0].v = vMin;
+            v[1].u = uMin + w * uvScale; v[1].v = vMin;
+            v[2].u = uMin + w * uvScale; v[2].v = vMin + h * uvScale;
+            v[3].u = uMin;             v[3].v = vMin + h * uvScale;
+        }
+
+        for (int i = 0; i < 4; i++) verts.push_back(v[i]);
+
+        // Create indices (winding order depends on direction)
+        if ((axis == 0 && positive) || (axis == 1 && !positive) || (axis == 2 && !positive)) {
+            indices.push_back(baseIndex + 0);
+            indices.push_back(baseIndex + 2);
+            indices.push_back(baseIndex + 1);
+            indices.push_back(baseIndex + 0);
+            indices.push_back(baseIndex + 3);
+            indices.push_back(baseIndex + 2);
+        } else {
+            indices.push_back(baseIndex + 0);
+            indices.push_back(baseIndex + 1);
+            indices.push_back(baseIndex + 2);
+            indices.push_back(baseIndex + 0);
+            indices.push_back(baseIndex + 2);
+            indices.push_back(baseIndex + 3);
+        }
+    };
+
+    // Greedy meshing for each axis and direction
+    for (int axis = 0; axis < 3; axis++) {
+        for (int positive = 0; positive <= 1; positive++) {
+            int u = (axis + 1) % 3;  // First tangent axis
+            int v = (axis + 2) % 3;  // Second tangent axis
+
+            int dim[3] = {WIDTH, HEIGHT, DEPTH};
+            int sliceCount = dim[axis];
+            int uSize = dim[u];
+            int vSize = dim[v];
+
+            std::vector<MaskEntry> mask(uSize * vSize);
+
+            // Iterate through slices
+            for (int slice = 0; slice < sliceCount; slice++) {
+                // Build mask for this slice
+                std::fill(mask.begin(), mask.end(), MaskEntry{});
+
+                for (int iu = 0; iu < uSize; iu++) {
+                    for (int iv = 0; iv < vSize; iv++) {
+                        int pos[3];
+                        pos[axis] = slice;
+                        pos[u] = iu;
+                        pos[v] = iv;
+
+                        int x = pos[0], y = pos[1], z = pos[2];
+                        int blockID = m_blocks[x][y][z];
+
+                        if (blockID == 0) continue;  // Skip air
+
+                        // Check if face is exposed
+                        int nx = x, ny = y, nz = z;
+                        if (axis == 0) nx += (positive ? 1 : -1);
+                        else if (axis == 1) ny += (positive ? 1 : -1);
+                        else nz += (positive ? 1 : -1);
+
+                        if (!isSolid(nx, ny, nz)) {
+                            mask[iu + iv * uSize].blockID = blockID;
+                        }
                     }
+                }
 
-                    return {uMin, vMin};
-                };
+                // Greedy meshing on the mask
+                for (int iu = 0; iu < uSize; iu++) {
+                    for (int iv = 0; iv < vSize; iv++) {
+                        int idx = iu + iv * uSize;
+                        if (mask[idx].blockID == 0 || mask[idx].processed) continue;
 
-                // Calculate world position for this block
-                float bx = float(m_x * WIDTH + X) * 0.5f;
-                float by = float(m_y * HEIGHT + Y) * 0.5f;
-                float bz = float(m_z * DEPTH + Z) * 0.5f;
+                        int blockID = mask[idx].blockID;
 
-                // Helper to render a face with the appropriate texture (indexed rendering)
-                auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart) {
-                    auto [uMin, vMin] = getUVsForFace(faceTexture);
-                    float uvScaleZoomed = uvScale;
+                        // Expand horizontally (along u)
+                        int w;
+                        for (w = 1; iu + w < uSize; w++) {
+                            int checkIdx = (iu + w) + iv * uSize;
+                            if (mask[checkIdx].blockID != blockID || mask[checkIdx].processed)
+                                break;
+                        }
 
-                    // Recalculate uvScaleZoomed if texture variation is enabled (per-face)
-                    if (faceTexture.variation > 1.0f) {
-                        uvScaleZoomed = uvScale / faceTexture.variation;
+                        // Expand vertically (along v)
+                        int h;
+                        bool canExpand = true;
+                        for (h = 1; iv + h < vSize && canExpand; h++) {
+                            for (int du = 0; du < w; du++) {
+                                int checkIdx = (iu + du) + (iv + h) * uSize;
+                                if (mask[checkIdx].blockID != blockID || mask[checkIdx].processed) {
+                                    canExpand = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Create merged quad
+                        int pos[3];
+                        pos[axis] = slice;
+                        pos[u] = iu;
+                        pos[v] = iv;
+                        createQuad(pos[0], pos[1], pos[2], w, h, axis, positive != 0, blockID);
+
+                        // Mark as processed
+                        for (int dv = 0; dv < h; dv++) {
+                            for (int du = 0; du < w; du++) {
+                                mask[(iu + du) + (iv + dv) * uSize].processed = true;
+                            }
+                        }
                     }
-
-                    // Get the base index for these vertices
-                    uint32_t baseIndex = static_cast<uint32_t>(verts.size());
-
-                    // Create 4 vertices for this face (corners of the quad)
-                    for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
-
-                    // Create 6 indices for 2 triangles (0,1,2 and 0,2,3)
-                    indices.push_back(baseIndex + 0);
-                    indices.push_back(baseIndex + 1);
-                    indices.push_back(baseIndex + 2);
-                    indices.push_back(baseIndex + 0);
-                    indices.push_back(baseIndex + 2);
-                    indices.push_back(baseIndex + 3);
-                };
-
-                // Select appropriate texture for each face
-                const BlockDefinition::FaceTexture& frontTex = def.useCubeMap ? def.front : def.all;
-                const BlockDefinition::FaceTexture& backTex = def.useCubeMap ? def.back : def.all;
-                const BlockDefinition::FaceTexture& leftTex = def.useCubeMap ? def.left : def.all;
-                const BlockDefinition::FaceTexture& rightTex = def.useCubeMap ? def.right : def.all;
-                const BlockDefinition::FaceTexture& topTex = def.useCubeMap ? def.top : def.all;
-                const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
-
-                // Front face (z=0, facing -Z direction)
-                if (!isSolid(X, Y, Z - 1)) {
-                    renderFace(frontTex, 0, 0);
-                }
-
-                // Back face (z=0.5, facing +Z direction)
-                if (!isSolid(X, Y, Z + 1)) {
-                    renderFace(backTex, 12, 8);
-                }
-
-                // Left face (x=0, facing -X direction)
-                if (!isSolid(X - 1, Y, Z)) {
-                    renderFace(leftTex, 24, 16);
-                }
-
-                // Right face (x=0.5, facing +X direction)
-                if (!isSolid(X + 1, Y, Z)) {
-                    renderFace(rightTex, 36, 24);
-                }
-
-                // Top face (y=0.5, facing +Y direction)
-                if (!isSolid(X, Y + 1, Z)) {
-                    renderFace(topTex, 48, 32);
-                }
-
-                // Bottom face (y=0, facing -Y direction)
-                if (!isSolid(X, Y - 1, Z)) {
-                    renderFace(bottomTex, 60, 40);
                 }
             }
         }
@@ -319,199 +344,197 @@ void Chunk::generate() {
 }
 
 void Chunk::generateMesh(World* world) {
-    // Define a 0.5-unit cube (4 vertices per face, 24 total) - indexed rendering
-    static constexpr std::array<float, 72> cube = {{
-        // front face (z = 0) - 4 vertices
-        0,0,0,  0.5f,0,0,  0.5f,0.5f,0,  0,0.5f,0,
-        // back face (z = 0.5) - 4 vertices
-        0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
-        // left face (x = 0) - 4 vertices
-        0,0,0.5f,  0,0,0,  0,0.5f,0,  0,0.5f,0.5f,
-        // right face (x = 0.5) - 4 vertices
-        0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
-        // top face (y = 0.5) - 4 vertices
-        0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
-        // bottom face (y = 0) - 4 vertices
-        0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,  0,0,0
-    }};
-
-    // UV coordinates for each vertex (4 per face)
-    // Note: V coordinates are flipped for side faces to prevent upside-down textures
-    static constexpr std::array<float, 48> cubeUVs = {{
-        // front face: 4 vertices - V flipped
-        0,1,  1,1,  1,0,  0,0,
-        // back face - V flipped
-        0,1,  1,1,  1,0,  0,0,
-        // left face - V flipped
-        0,1,  1,1,  1,0,  0,0,
-        // right face - V flipped
-        0,1,  1,1,  1,0,  0,0,
-        // top face - normal orientation
-        0,0,  1,0,  1,1,  0,1,
-        // bottom face - normal orientation
-        0,0,  1,0,  1,1,  0,1
-    }};
-
     std::vector<Vertex> verts;
     std::vector<uint32_t> indices;
-    // Reserve space for estimated visible faces (roughly 30% of blocks visible, 3 faces each on average)
-    // With indexed rendering: 4 vertices per face instead of 6
-    verts.reserve(WIDTH * HEIGHT * DEPTH * 12 / 10);  // 4 vertices per face
-    indices.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10); // 6 indices per face (same as before)
-
-    // Helper lambda to check if a block is solid (non-air)
-    // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
-    auto isSolid = [this, world](int x, int y, int z) -> bool {
-        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
-            // Inside this chunk
-            return m_blocks[x][y][z] != 0;
-        }
-
-        // Out of bounds - check neighboring chunk via World
-        // Convert local coordinates to world coordinates
-        int worldBlockX = m_x * WIDTH + x;
-        int worldBlockY = m_y * HEIGHT + y;
-        int worldBlockZ = m_z * DEPTH + z;
-
-        // Convert to world position (blocks are 0.5 units)
-        float worldX = worldBlockX * 0.5f;
-        float worldY = worldBlockY * 0.5f;
-        float worldZ = worldBlockZ * 0.5f;
-
-        // Query the world (returns 0 for air or out-of-world bounds)
-        int blockID = world->getBlockAt(worldX, worldY, worldZ);
-        return blockID != 0;
-    };
+    verts.reserve(WIDTH * HEIGHT * DEPTH * 4 / 10);   // Reduced estimate due to greedy meshing
+    indices.reserve(WIDTH * HEIGHT * DEPTH * 6 / 10);  // Reduced estimate due to greedy meshing
 
     // Get atlas grid size for UV calculations
     auto& registry = BlockRegistry::instance();
     int atlasGridSize = registry.getAtlasGridSize();
     float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
 
-    // Iterate over every block in the chunk (optimized order for cache locality)
-    for(int X = 0; X < WIDTH;  ++X) {
-        for(int Y = 0; Y < HEIGHT; ++Y) {
-            for(int Z = 0; Z < DEPTH;  ++Z) {
-                int id = m_blocks[X][Y][Z];
-                if (id == 0) continue; // Skip air
+    // Helper to check if a block is solid (non-air) - checks neighboring chunks via World
+    auto isSolid = [this, world](int x, int y, int z) -> bool {
+        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
+            return m_blocks[x][y][z] != 0;
+        }
+        // Out of bounds - check neighboring chunk
+        int worldBlockX = m_x * WIDTH + x;
+        int worldBlockY = m_y * HEIGHT + y;
+        int worldBlockZ = m_z * DEPTH + z;
+        float worldX = worldBlockX * 0.5f;
+        float worldY = worldBlockY * 0.5f;
+        float worldZ = worldBlockZ * 0.5f;
+        int blockID = world->getBlockAt(worldX, worldY, worldZ);
+        return blockID != 0;
+    };
 
-                // Look up block definition by ID
-                const BlockDefinition& def = registry.get(id);
-                float cr, cg, cb;
-                if (def.hasColor) {
-                    // Use the block's defined color
-                    cr = def.color.r;
-                    cg = def.color.g;
-                    cb = def.color.b;
-                } else {
-                    // No color defined (likely has a texture); use white
-                    cr = cg = cb = 1.0f;
-                }
+    // Helper to create a merged quad (same as generate() but with world-aware culling)
+    auto createQuad = [&](int x, int y, int z, int w, int h, int axis, bool positive, int blockID) {
+        const BlockDefinition& def = registry.get(blockID);
+        float cr, cg, cb;
+        if (def.hasColor) {
+            cr = def.color.r; cg = def.color.g; cb = def.color.b;
+        } else {
+            cr = cg = cb = 1.0f;
+        }
 
-                // Helper to get UV coordinates for a specific face with texture variation
-                auto getUVsForFace = [&](const BlockDefinition::FaceTexture& face) -> std::pair<float, float> {
-                    float uMin = face.atlasX * uvScale;
-                    float vMin = face.atlasY * uvScale;
+        const BlockDefinition::FaceTexture* faceTexture;
+        bool flipV = false;
 
-                    // Apply texture variation if enabled (per-face variation)
-                    float zoomFactor = face.variation;
-                    if (zoomFactor > 1.0f) {
-                        int worldX = m_x * WIDTH + X;
-                        int worldY = m_y * HEIGHT + Y;
-                        int worldZ = m_z * DEPTH + Z;
+        if (axis == 0) {
+            faceTexture = positive ? (def.useCubeMap ? &def.right : &def.all) : (def.useCubeMap ? &def.left : &def.all);
+            flipV = true;
+        } else if (axis == 1) {
+            faceTexture = positive ? (def.useCubeMap ? &def.top : &def.all) : (def.useCubeMap ? &def.bottom : &def.all);
+        } else {
+            faceTexture = positive ? (def.useCubeMap ? &def.back : &def.all) : (def.useCubeMap ? &def.front : &def.all);
+            flipV = true;
+        }
 
-                        // Simple hash function for pseudo-random offset
-                        unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
-                        float randU = ((seed >> 0) & 0xFF) / 255.0f;
-                        float randV = ((seed >> 8) & 0xFF) / 255.0f;
+        float uMin = faceTexture->atlasX * uvScale;
+        float vMin = faceTexture->atlasY * uvScale;
 
-                        // Calculate how much space we can shift within
-                        float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
-                        float uShift = randU * maxShift;
-                        float vShift = randV * maxShift;
+        uint32_t baseIndex = static_cast<uint32_t>(verts.size());
+        float blockSize = 0.5f;
+        float bx = float(m_x * WIDTH + x) * blockSize;
+        float by = float(m_y * HEIGHT + y) * blockSize;
+        float bz = float(m_z * DEPTH + z) * blockSize;
 
-                        uMin += uShift;
-                        vMin += vShift;
+        Vertex v[4];
+        for (int i = 0; i < 4; i++) {
+            v[i].r = cr; v[i].g = cg; v[i].b = cb;
+        }
+
+        if (axis == 0) {
+            float xOffset = positive ? blockSize : 0.0f;
+            v[0].x = bx + xOffset; v[0].y = by;                v[0].z = bz;
+            v[1].x = bx + xOffset; v[1].y = by;                v[1].z = bz + h * blockSize;
+            v[2].x = bx + xOffset; v[2].y = by + w * blockSize; v[2].z = bz + h * blockSize;
+            v[3].x = bx + xOffset; v[3].y = by + w * blockSize; v[3].z = bz;
+        } else if (axis == 1) {
+            float yOffset = positive ? blockSize : 0.0f;
+            v[0].x = bx;                v[0].y = by + yOffset; v[0].z = bz;
+            v[1].x = bx + w * blockSize; v[1].y = by + yOffset; v[1].z = bz;
+            v[2].x = bx + w * blockSize; v[2].y = by + yOffset; v[2].z = bz + h * blockSize;
+            v[3].x = bx;                v[3].y = by + yOffset; v[3].z = bz + h * blockSize;
+        } else {
+            float zOffset = positive ? blockSize : 0.0f;
+            v[0].x = bx;                v[0].y = by;                v[0].z = bz + zOffset;
+            v[1].x = bx + w * blockSize; v[1].y = by;                v[1].z = bz + zOffset;
+            v[2].x = bx + w * blockSize; v[2].y = by + h * blockSize; v[2].z = bz + zOffset;
+            v[3].x = bx;                v[3].y = by + h * blockSize; v[3].z = bz + zOffset;
+        }
+
+        if (flipV) {
+            v[0].u = uMin;             v[0].v = vMin + h * uvScale;
+            v[1].u = uMin + w * uvScale; v[1].v = vMin + h * uvScale;
+            v[2].u = uMin + w * uvScale; v[2].v = vMin;
+            v[3].u = uMin;             v[3].v = vMin;
+        } else {
+            v[0].u = uMin;             v[0].v = vMin;
+            v[1].u = uMin + w * uvScale; v[1].v = vMin;
+            v[2].u = uMin + w * uvScale; v[2].v = vMin + h * uvScale;
+            v[3].u = uMin;             v[3].v = vMin + h * uvScale;
+        }
+
+        for (int i = 0; i < 4; i++) verts.push_back(v[i]);
+
+        if ((axis == 0 && positive) || (axis == 1 && !positive) || (axis == 2 && !positive)) {
+            indices.push_back(baseIndex + 0);
+            indices.push_back(baseIndex + 2);
+            indices.push_back(baseIndex + 1);
+            indices.push_back(baseIndex + 0);
+            indices.push_back(baseIndex + 3);
+            indices.push_back(baseIndex + 2);
+        } else {
+            indices.push_back(baseIndex + 0);
+            indices.push_back(baseIndex + 1);
+            indices.push_back(baseIndex + 2);
+            indices.push_back(baseIndex + 0);
+            indices.push_back(baseIndex + 2);
+            indices.push_back(baseIndex + 3);
+        }
+    };
+
+    // Greedy meshing for each axis and direction (same as generate())
+    for (int axis = 0; axis < 3; axis++) {
+        for (int positive = 0; positive <= 1; positive++) {
+            int u = (axis + 1) % 3;
+            int v = (axis + 2) % 3;
+
+            int dim[3] = {WIDTH, HEIGHT, DEPTH};
+            int sliceCount = dim[axis];
+            int uSize = dim[u];
+            int vSize = dim[v];
+
+            std::vector<MaskEntry> mask(uSize * vSize);
+
+            for (int slice = 0; slice < sliceCount; slice++) {
+                std::fill(mask.begin(), mask.end(), MaskEntry{});
+
+                for (int iu = 0; iu < uSize; iu++) {
+                    for (int iv = 0; iv < vSize; iv++) {
+                        int pos[3];
+                        pos[axis] = slice;
+                        pos[u] = iu;
+                        pos[v] = iv;
+
+                        int x = pos[0], y = pos[1], z = pos[2];
+                        int blockID = m_blocks[x][y][z];
+
+                        if (blockID == 0) continue;
+
+                        int nx = x, ny = y, nz = z;
+                        if (axis == 0) nx += (positive ? 1 : -1);
+                        else if (axis == 1) ny += (positive ? 1 : -1);
+                        else nz += (positive ? 1 : -1);
+
+                        if (!isSolid(nx, ny, nz)) {
+                            mask[iu + iv * uSize].blockID = blockID;
+                        }
                     }
+                }
 
-                    return {uMin, vMin};
-                };
+                for (int iu = 0; iu < uSize; iu++) {
+                    for (int iv = 0; iv < vSize; iv++) {
+                        int idx = iu + iv * uSize;
+                        if (mask[idx].blockID == 0 || mask[idx].processed) continue;
 
-                // Calculate world position for this block
-                float bx = float(m_x * WIDTH + X) * 0.5f;
-                float by = float(m_y * HEIGHT + Y) * 0.5f;
-                float bz = float(m_z * DEPTH + Z) * 0.5f;
+                        int blockID = mask[idx].blockID;
 
-                // Helper to render a face with the appropriate texture (indexed rendering)
-                auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart) {
-                    auto [uMin, vMin] = getUVsForFace(faceTexture);
-                    float uvScaleZoomed = uvScale;
+                        int w;
+                        for (w = 1; iu + w < uSize; w++) {
+                            int checkIdx = (iu + w) + iv * uSize;
+                            if (mask[checkIdx].blockID != blockID || mask[checkIdx].processed)
+                                break;
+                        }
 
-                    // Recalculate uvScaleZoomed if texture variation is enabled (per-face)
-                    if (faceTexture.variation > 1.0f) {
-                        uvScaleZoomed = uvScale / faceTexture.variation;
+                        int h;
+                        bool canExpand = true;
+                        for (h = 1; iv + h < vSize && canExpand; h++) {
+                            for (int du = 0; du < w; du++) {
+                                int checkIdx = (iu + du) + (iv + h) * uSize;
+                                if (mask[checkIdx].blockID != blockID || mask[checkIdx].processed) {
+                                    canExpand = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        int pos[3];
+                        pos[axis] = slice;
+                        pos[u] = iu;
+                        pos[v] = iv;
+                        createQuad(pos[0], pos[1], pos[2], w, h, axis, positive != 0, blockID);
+
+                        for (int dv = 0; dv < h; dv++) {
+                            for (int du = 0; du < w; du++) {
+                                mask[(iu + du) + (iv + dv) * uSize].processed = true;
+                            }
+                        }
                     }
-
-                    // Get the base index for these vertices
-                    uint32_t baseIndex = static_cast<uint32_t>(verts.size());
-
-                    // Create 4 vertices for this face (corners of the quad)
-                    for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
-
-                    // Create 6 indices for 2 triangles (0,1,2 and 0,2,3)
-                    indices.push_back(baseIndex + 0);
-                    indices.push_back(baseIndex + 1);
-                    indices.push_back(baseIndex + 2);
-                    indices.push_back(baseIndex + 0);
-                    indices.push_back(baseIndex + 2);
-                    indices.push_back(baseIndex + 3);
-                };
-
-                // Select appropriate texture for each face
-                const BlockDefinition::FaceTexture& frontTex = def.useCubeMap ? def.front : def.all;
-                const BlockDefinition::FaceTexture& backTex = def.useCubeMap ? def.back : def.all;
-                const BlockDefinition::FaceTexture& leftTex = def.useCubeMap ? def.left : def.all;
-                const BlockDefinition::FaceTexture& rightTex = def.useCubeMap ? def.right : def.all;
-                const BlockDefinition::FaceTexture& topTex = def.useCubeMap ? def.top : def.all;
-                const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
-
-                // Front face (z=0, facing -Z direction)
-                if (!isSolid(X, Y, Z - 1)) {
-                    renderFace(frontTex, 0, 0);
-                }
-
-                // Back face (z=0.5, facing +Z direction)
-                if (!isSolid(X, Y, Z + 1)) {
-                    renderFace(backTex, 12, 8);
-                }
-
-                // Left face (x=0, facing -X direction)
-                if (!isSolid(X - 1, Y, Z)) {
-                    renderFace(leftTex, 24, 16);
-                }
-
-                // Right face (x=0.5, facing +X direction)
-                if (!isSolid(X + 1, Y, Z)) {
-                    renderFace(rightTex, 36, 24);
-                }
-
-                // Top face (y=0.5, facing +Y direction)
-                if (!isSolid(X, Y + 1, Z)) {
-                    renderFace(topTex, 48, 32);
-                }
-
-                // Bottom face (y=0, facing -Y direction)
-                if (!isSolid(X, Y - 1, Z)) {
-                    renderFace(bottomTex, 60, 40);
                 }
             }
         }
