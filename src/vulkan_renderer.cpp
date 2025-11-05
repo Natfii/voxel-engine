@@ -1909,9 +1909,9 @@ void VulkanRenderer::createNightCubeMap() {
                 // Create gradient from top to bottom
                 float t = v;  // 0 at top, 1 at bottom
 
-                // Very dark night colors - nearly black with slight blue tint
-                glm::vec3 zenithColor = glm::vec3(0.02f, 0.03f, 0.06f);   // Almost black at top
-                glm::vec3 horizonColor = glm::vec3(0.05f, 0.06f, 0.08f); // Slightly lighter at horizon
+                // Very dark night colors - nearly pure black, no tint
+                glm::vec3 zenithColor = glm::vec3(0.01f, 0.01f, 0.01f);   // Almost pure black at top
+                glm::vec3 horizonColor = glm::vec3(0.03f, 0.03f, 0.03f); // Slightly lighter at horizon
 
                 // Interpolate based on vertical position
                 glm::vec3 skyColor = glm::mix(zenithColor, horizonColor, t);
@@ -1921,7 +1921,7 @@ void VulkanRenderer::createNightCubeMap() {
                 if (face == 2) {  // +Y (top)
                     skyColor = zenithColor;
                 } else if (face == 3) {  // -Y (bottom)
-                    glm::vec3 groundColor = glm::vec3(0.01f, 0.01f, 0.02f);  // Nearly black
+                    glm::vec3 groundColor = glm::vec3(0.005f, 0.005f, 0.005f);  // Nearly pure black
                     skyColor = glm::mix(horizonColor, groundColor, t);
                 }
 
