@@ -4,17 +4,24 @@
 #include "debug_state.h"
 #include "player.h"
 #include "world.h"
+#include "vulkan_renderer.h"
 #include <sstream>
+#include <iomanip>
+#include <cmath>
 
 // Static member initialization
 Console* ConsoleCommands::s_console = nullptr;
 Player* ConsoleCommands::s_player = nullptr;
 World* ConsoleCommands::s_world = nullptr;
+VulkanRenderer* ConsoleCommands::s_renderer = nullptr;
+float ConsoleCommands::s_timeSpeed = 0.0f;      // Default: paused
+float ConsoleCommands::s_currentSkyTime = 0.5f; // Default: noon
 
-void ConsoleCommands::registerAll(Console* console, Player* player, World* world) {
+void ConsoleCommands::registerAll(Console* console, Player* player, World* world, VulkanRenderer* renderer) {
     s_console = console;
     s_player = player;
     s_world = world;
+    s_renderer = renderer;
 
     auto& registry = CommandRegistry::instance();
 
@@ -66,6 +73,12 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
 
     registry.registerCommand("list", "List all ConVars",
                            "list", cmdListConVars);
+
+    registry.registerCommand("skytime", "Set the time of day (0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset)",
+                           "skytime <0-1>", cmdSkyTime);
+
+    registry.registerCommand("timespeed", "Set the time progression speed (0=paused, 1=normal, higher=faster)",
+                           "timespeed <value>", cmdTimeSpeed, {"0", "0.1", "1", "10", "100"});
 }
 
 void ConsoleCommands::cmdHelp(const std::vector<std::string>& args) {
@@ -219,4 +232,118 @@ void ConsoleCommands::cmdListConVars(const std::vector<std::string>& args) {
         s_console->addMessage("  " + pair.first + " = " + pair.second->getValueAsString() + flags,
                              ConsoleMessageType::INFO);
     }
+}
+
+void ConsoleCommands::cmdSkyTime(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        // Show current sky time
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(3);
+        oss << "Current sky time: " << s_currentSkyTime;
+        s_console->addMessage(oss.str(), ConsoleMessageType::INFO);
+        s_console->addMessage("Usage: skytime <0-1> (0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset)", ConsoleMessageType::INFO);
+        return;
+    }
+
+    if (!s_renderer) {
+        s_console->addMessage("Error: Renderer not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    try {
+        float time = std::stof(args[1]);
+
+        // Clamp to valid range
+        time = std::fmax(0.0f, std::fmin(1.0f, time));
+
+        s_currentSkyTime = time;
+        s_renderer->setSkyTime(time);
+
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(3);
+        oss << "Sky time set to: " << time;
+
+        // Add helpful description
+        if (time < 0.1f || time > 0.9f) {
+            oss << " (night)";
+        } else if (time >= 0.1f && time < 0.3f) {
+            oss << " (sunrise)";
+        } else if (time >= 0.3f && time < 0.7f) {
+            oss << " (day)";
+        } else if (time >= 0.7f && time <= 0.9f) {
+            oss << " (sunset)";
+        }
+
+        s_console->addMessage(oss.str(), ConsoleMessageType::INFO);
+    } catch (const std::exception& e) {
+        s_console->addMessage("Error: Invalid time value", ConsoleMessageType::ERROR);
+    }
+}
+
+void ConsoleCommands::cmdTimeSpeed(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        // Show current time speed
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2);
+        oss << "Current time speed: " << s_timeSpeed;
+        if (s_timeSpeed == 0.0f) {
+            oss << " (paused)";
+        } else if (s_timeSpeed == 1.0f) {
+            oss << " (normal)";
+        } else if (s_timeSpeed > 1.0f) {
+            oss << " (" << s_timeSpeed << "x faster)";
+        } else {
+            oss << " (" << (s_timeSpeed * 100.0f) << "% speed)";
+        }
+        s_console->addMessage(oss.str(), ConsoleMessageType::INFO);
+        s_console->addMessage("Usage: timespeed <value> (0=paused, 1=normal, higher=faster)", ConsoleMessageType::INFO);
+        return;
+    }
+
+    try {
+        float speed = std::stof(args[1]);
+
+        // Allow 0 or positive values
+        if (speed < 0.0f) {
+            s_console->addMessage("Error: Time speed cannot be negative", ConsoleMessageType::ERROR);
+            return;
+        }
+
+        s_timeSpeed = speed;
+
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2);
+        oss << "Time speed set to: " << speed;
+        if (speed == 0.0f) {
+            oss << " (paused)";
+        } else if (speed == 1.0f) {
+            oss << " (normal)";
+        } else if (speed > 1.0f) {
+            oss << " (" << speed << "x faster)";
+        } else {
+            oss << " (" << (speed * 100.0f) << "% speed)";
+        }
+        s_console->addMessage(oss.str(), ConsoleMessageType::INFO);
+    } catch (const std::exception& e) {
+        s_console->addMessage("Error: Invalid speed value", ConsoleMessageType::ERROR);
+    }
+}
+
+void ConsoleCommands::updateSkyTime(float deltaTime) {
+    if (!s_renderer || s_timeSpeed == 0.0f) {
+        return; // Don't update if paused or renderer not available
+    }
+
+    // Update sky time (1 full cycle = 24 minutes at speed 1.0)
+    // deltaTime is in seconds, so we divide by 1440 (24 minutes * 60 seconds)
+    s_currentSkyTime += (deltaTime * s_timeSpeed) / 1440.0f;
+
+    // Wrap around after full cycle
+    s_currentSkyTime = std::fmod(s_currentSkyTime, 1.0f);
+    if (s_currentSkyTime < 0.0f) {
+        s_currentSkyTime += 1.0f;
+    }
+
+    // Update renderer
+    s_renderer->setSkyTime(s_currentSkyTime);
 }

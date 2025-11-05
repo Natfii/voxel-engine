@@ -168,7 +168,7 @@ int main() {
 
         // Create console and register commands
         Console console(window);
-        ConsoleCommands::registerAll(&console, &player, &world);
+        ConsoleCommands::registerAll(&console, &player, &world, &renderer);
 
         bool isPaused = false;
         bool escPressed = false;
@@ -186,6 +186,9 @@ int main() {
 
             // Update FPS counter
             DebugState::instance().updateFPS(deltaTime);
+
+            // Update sky time (handles day/night cycle)
+            ConsoleCommands::updateSkyTime(deltaTime);
 
             // Handle F9 key for console
             if (glfwGetKey(window, GLFW_KEY_F9) == GLFW_PRESS) {
