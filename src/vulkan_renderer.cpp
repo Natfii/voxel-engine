@@ -1935,6 +1935,56 @@ void VulkanRenderer::createNightCubeMap() {
         }
     }
 
+    // Add stars to the night sky as texture pixels
+    // Simple hash function for deterministic randomness
+    auto hash = [](uint32_t x, uint32_t y, uint32_t face) -> uint32_t {
+        uint32_t h = x * 374761393u + y * 668265263u + face * 1610612741u;
+        h = (h ^ (h >> 13)) * 1274126177u;
+        return h ^ (h >> 16);
+    };
+
+    // Add stars to each face (skip -Y face which is below horizon)
+    for (int face = 0; face < 6; face++) {
+        if (face == 3) continue;  // Skip -Y (bottom face)
+
+        unsigned char* faceData = pixels.data() + (face * faceSize);
+
+        // Scatter stars across the face
+        for (uint32_t y = 0; y < size; y++) {
+            for (uint32_t x = 0; x < size; x++) {
+                uint32_t h = hash(x, y, face);
+                float randVal = (float)(h % 10000) / 10000.0f;
+
+                // 1.5% chance of a star at this pixel
+                if (randVal < 0.015f) {
+                    uint32_t index = (y * size + x) * 4;
+
+                    // Determine star color based on hash
+                    float colorRand = (float)((h >> 8) % 1000) / 1000.0f;
+                    glm::vec3 starColor;
+
+                    if (colorRand < 0.15f) {
+                        starColor = glm::vec3(1.0f, 0.6f, 0.6f);  // Red star
+                    } else if (colorRand < 0.30f) {
+                        starColor = glm::vec3(0.6f, 0.7f, 1.0f);  // Blue star
+                    } else {
+                        starColor = glm::vec3(0.95f, 0.95f, 1.0f);  // White star
+                    }
+
+                    // Vary brightness
+                    float brightness = 0.7f + 0.3f * ((float)((h >> 16) % 1000) / 1000.0f);
+                    starColor *= brightness;
+
+                    // Write star pixel
+                    faceData[index + 0] = static_cast<unsigned char>(glm::clamp(starColor.r * 255.0f, 0.0f, 255.0f));
+                    faceData[index + 1] = static_cast<unsigned char>(glm::clamp(starColor.g * 255.0f, 0.0f, 255.0f));
+                    faceData[index + 2] = static_cast<unsigned char>(glm::clamp(starColor.b * 255.0f, 0.0f, 255.0f));
+                    faceData[index + 3] = 255;
+                }
+            }
+        }
+    }
+
     // Create staging buffer
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingBufferMemory;

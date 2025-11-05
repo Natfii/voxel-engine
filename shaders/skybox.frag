@@ -15,86 +15,6 @@ layout(location = 0) in vec3 fragTexCoord;
 
 layout(location = 0) out vec4 outColor;
 
-// Hash function for procedural stars - better distribution
-float hash(vec2 p) {
-    p = fract(p * vec2(123.45, 456.78));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
-}
-
-// Generate procedural stars with colors - spherical coordinate approach
-vec3 stars(vec3 dir) {
-    // Only render stars in upper hemisphere
-    if (dir.y < 0.0) return vec3(0.0);
-
-    // Convert to spherical coordinates for even distribution
-    float phi = atan(dir.z, dir.x);  // Azimuthal angle
-    float theta = asin(clamp(dir.y, -1.0, 1.0));        // Elevation angle, clamped
-
-    // Create grid in angular space (evenly distributed on sphere)
-    // Use coarser grid density to reduce star count
-    vec2 angleCoord = vec2(phi, theta) * 30.0;  // 30 cells per radian (was 50)
-    vec2 cellCoord = floor(angleCoord);
-
-    vec3 starColor = vec3(0.0);
-
-    // Only check immediate neighbors - uniform 3x3 search everywhere
-    for (int dx = -1; dx <= 1; dx++) {
-        for (int dy = -1; dy <= 1; dy++) {
-            vec2 checkCell = cellCoord + vec2(dx, dy);
-            float h = hash(checkCell);
-
-            if (h > 0.985) {  // 1.5% chance per cell
-                // Random offset within this cell
-                vec2 offset = vec2(
-                    fract(h * 41.123),
-                    fract(h * 73.456)
-                );
-                vec2 starAngle = (checkCell + offset) / 30.0;
-
-                // Convert back to 3D direction
-                float starPhi = starAngle.x;
-                float starTheta = clamp(starAngle.y, -1.57, 1.57);
-
-                vec3 starDir = normalize(vec3(
-                    cos(starTheta) * cos(starPhi),
-                    sin(starTheta),
-                    cos(starTheta) * sin(starPhi)
-                ));
-
-                // Angular distance to this star
-                float angularDist = acos(clamp(dot(dir, starDir), -1.0, 1.0));
-
-                // Small but visible star size - 0.0001 to 0.00015 radians
-                float starSize = 0.0001 + fract(h * 97.789) * 0.00005;
-
-                if (angularDist < starSize) {
-                    float brightness = (1.0 - angularDist / starSize);
-
-                    // Twinkle
-                    float twinkle = 0.7 + 0.3 * sin(h * 100.0 + ubo.skyTimeData.x * 6.28);
-                    brightness *= twinkle;
-
-                    // Determine star color
-                    float colorHash = fract(h * 43.7584);
-                    vec3 color;
-                    if (colorHash < 0.15) {
-                        color = vec3(1.0, 0.6, 0.6);  // Red
-                    } else if (colorHash < 0.30) {
-                        color = vec3(0.6, 0.7, 1.0);  // Blue
-                    } else {
-                        color = vec3(0.95, 0.95, 1.0);  // White
-                    }
-
-                    starColor = max(starColor, color * brightness);
-                }
-            }
-        }
-    }
-
-    return starColor;
-}
-
 void main() {
     // Sample both day and night cube maps
     vec3 daySkyColor = texture(daySkybox, fragTexCoord).rgb;
@@ -221,12 +141,7 @@ void main() {
         }
     }
 
-    // Add stars at night
-    if (starIntensity > 0.01) {
-        vec3 starColor = stars(fragTexCoord);
-        // Stars now have their own colors (red, blue, white)
-        skyColor += starColor * starIntensity * 2.0;
-    }
+    // Stars are now baked into the night cube map texture
 
     outColor = vec4(skyColor, 1.0);
 }
