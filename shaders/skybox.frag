@@ -60,23 +60,23 @@ void main() {
 
     // Calculate time-based sky tint
     // Dawn/dusk: orange/red tint
-    // Noon: neutral
-    // Night: darker blue
-    vec3 dayTint = vec3(1.0);
-    vec3 dawnDuskTint = vec3(1.2, 0.8, 0.6);  // Warm orange
-    vec3 nightTint = vec3(0.3, 0.4, 0.6);     // Dark blue
+    // Noon: bright blue
+    // Night: very dark blue
+    vec3 dayTint = vec3(1.5, 1.8, 2.2);        // Bright blue day sky
+    vec3 dawnDuskTint = vec3(2.0, 1.2, 0.8);   // Warm orange/pink
+    vec3 nightTint = vec3(0.5, 0.6, 0.9);      // Dark blue night
 
     // Calculate whether we're in dawn/dusk period
     float dawnDuskFactor = smoothstep(0.2, 0.3, time) * (1.0 - smoothstep(0.35, 0.45, time));
     dawnDuskFactor += smoothstep(0.65, 0.75, time) * (1.0 - smoothstep(0.8, 0.9, time));
 
     vec3 timeTint = mix(dayTint, dawnDuskTint, dawnDuskFactor);
-    timeTint = mix(timeTint, nightTint, moonIntensity * 0.7);
+    timeTint = mix(timeTint, nightTint, moonIntensity * 0.9);
 
     skyColor *= timeTint;
 
-    // Darken sky during night
-    skyColor *= (0.3 + 0.7 * sunIntensity + 0.2 * moonIntensity);
+    // Aggressive darkening during night
+    skyColor *= (0.15 + 0.85 * sunIntensity + 0.15 * moonIntensity);
 
     // Calculate sun direction (moves across sky based on time)
     // At time 0.5 (noon), sun is at top
