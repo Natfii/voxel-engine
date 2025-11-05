@@ -22,10 +22,10 @@ float hash(vec3 p) {
     return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
 }
 
-// Generate procedural stars
-float stars(vec3 dir) {
+// Generate procedural stars with colors
+vec3 stars(vec3 dir) {
     // Only render stars in upper hemisphere
-    if (dir.y < 0.0) return 0.0;
+    if (dir.y < 0.0) return vec3(0.0);
 
     vec3 starCoord = dir * 100.0;
     vec3 cellCoord = floor(starCoord);
@@ -33,13 +33,13 @@ float stars(vec3 dir) {
     // Generate a star in each cell with some probability
     float h = hash(cellCoord);
 
-    if (h > 0.97) {  // 3% of cells have stars (good balance!)
+    if (h > 0.985) {  // 1.5% of cells have stars (less clustered!)
         vec3 starPos = cellCoord + vec3(0.5);
         vec3 toStar = normalize(starPos - starCoord);
         float dist = distance(normalize(starPos), dir);
 
         // Vary star sizes - some bigger, some smaller
-        float starSize = 0.012 + (h - 0.97) * 0.13;  // 0.012 to 0.016
+        float starSize = 0.012 + (h - 0.985) * 0.27;  // 0.012 to 0.016
 
         // Make stars twinkle slightly
         float twinkle = 0.7 + 0.3 * sin(h * 100.0 + ubo.skyTimeData.x * 6.28);
@@ -47,12 +47,27 @@ float stars(vec3 dir) {
         if (dist < starSize) {
             float brightness = (1.0 - dist / starSize) * twinkle;
             // Vary brightness - some stars brighter than others
-            brightness *= (0.5 + (h - 0.97) * 16.67);  // 0.5 to 1.0 brightness
-            return brightness;
+            brightness *= (0.5 + (h - 0.985) * 33.33);  // 0.5 to 1.0 brightness
+
+            // Determine star color based on hash value
+            float colorHash = fract(h * 43.7584);  // Different hash for color
+            vec3 starColor;
+            if (colorHash < 0.15) {
+                // Red stars (15%)
+                starColor = vec3(1.0, 0.6, 0.6);
+            } else if (colorHash < 0.30) {
+                // Blue stars (15%)
+                starColor = vec3(0.6, 0.7, 1.0);
+            } else {
+                // White stars (70%)
+                starColor = vec3(0.95, 0.95, 1.0);
+            }
+
+            return starColor * brightness;
         }
     }
 
-    return 0.0;
+    return vec3(0.0);
 }
 
 void main() {
@@ -156,9 +171,9 @@ void main() {
 
     // Add stars at night
     if (starIntensity > 0.01) {
-        float starBrightness = stars(fragTexCoord);
-        // Brighter stars with slight blue tint
-        skyColor += vec3(0.9, 0.95, 1.0) * starBrightness * starIntensity * 2.0;
+        vec3 starColor = stars(fragTexCoord);
+        // Stars now have their own colors (red, blue, white)
+        skyColor += starColor * starIntensity * 2.0;
     }
 
     outColor = vec4(skyColor, 1.0);
