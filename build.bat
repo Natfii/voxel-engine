@@ -92,6 +92,22 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
         exit /b 1
     )
 
+    "%VULKAN_SDK%\Bin\glslc.exe" skybox.vert -o skybox_vert.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile skybox.vert!
+        cd ..
+        pause
+        exit /b 1
+    )
+
+    "%VULKAN_SDK%\Bin\glslc.exe" skybox.frag -o skybox_frag.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile skybox.frag!
+        cd ..
+        pause
+        exit /b 1
+    )
+
     echo Shaders compiled successfully!
 
 ) else if exist "%VULKAN_SDK%\Bin\glslangValidator.exe" (
@@ -123,6 +139,22 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
     "%VULKAN_SDK%\Bin\glslangValidator.exe" -V line.frag -o line_frag.spv
     if errorlevel 1 (
         echo [ERROR] Failed to compile line.frag!
+        cd ..
+        pause
+        exit /b 1
+    )
+
+    "%VULKAN_SDK%\Bin\glslangValidator.exe" -V skybox.vert -o skybox_vert.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile skybox.vert!
+        cd ..
+        pause
+        exit /b 1
+    )
+
+    "%VULKAN_SDK%\Bin\glslangValidator.exe" -V skybox.frag -o skybox_frag.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile skybox.frag!
         cd ..
         pause
         exit /b 1

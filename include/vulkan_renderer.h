@@ -17,6 +17,7 @@ struct UniformBufferObject {
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 projection;
     alignas(16) glm::vec4 cameraPos;       // vec4 where .xyz = position, .w = renderDistance
+    alignas(16) glm::vec4 skyTimeData;     // .x = time of day (0-1), .y = sun intensity, .z = moon intensity, .w = star intensity
 };
 
 // Queue family indices
@@ -49,6 +50,10 @@ public:
     bool beginFrame();  // Returns false if frame should be skipped (e.g., during swap chain recreation)
     void endFrame();
     void updateUniformBuffer(uint32_t currentImage, const glm::mat4& model, const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos, float renderDistance);
+
+    // Sky system
+    void setSkyTime(float timeOfDay);  // Set time of day (0-1, where 0 = midnight, 0.5 = noon)
+    void renderSkybox();  // Render the skybox (call before rendering world)
 
     // Update descriptor sets to use texture atlas (call after loading blocks)
     void bindAtlasTexture(VkImageView atlasView, VkSampler atlasSampler);
@@ -95,6 +100,12 @@ public:
     // Default texture for blocks without custom textures
     void createDefaultTexture();
 
+    // Cube map creation
+    void createCubeMap(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling,
+                       VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+    VkImageView createCubeMapView(VkImage image, VkFormat format);
+    void transitionCubeMapLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+
 private:
     // Initialization
     void createInstance();
@@ -108,6 +119,7 @@ private:
     void createDescriptorSetLayout();
     void createGraphicsPipeline();
     void createLinePipeline();
+    void createSkyboxPipeline();
     void createFramebuffers();
     void createCommandPool();
     void createDepthResources();
@@ -116,6 +128,9 @@ private:
     void createDescriptorSets();
     void createCommandBuffers();
     void createSyncObjects();
+    void createSkybox();
+    void createProceduralCubeMap();
+    void createNightCubeMap();
 
     // Helper functions
     bool checkValidationLayerSupport();
@@ -178,6 +193,7 @@ private:
     VkPipelineLayout m_pipelineLayout;
     VkPipeline m_graphicsPipeline;
     VkPipeline m_linePipeline;
+    VkPipeline m_skyboxPipeline;
 
     // Command buffers
     VkCommandPool m_commandPool;
@@ -202,6 +218,24 @@ private:
     VkDeviceMemory m_defaultTextureMemory;
     VkImageView m_defaultTextureView;
     VkSampler m_defaultTextureSampler;
+
+    // Skybox cube map (day)
+    VkImage m_skyboxImage;
+    VkDeviceMemory m_skyboxMemory;
+    VkImageView m_skyboxView;
+    VkSampler m_skyboxSampler;
+
+    // Night skybox cube map
+    VkImage m_nightSkyboxImage;
+    VkDeviceMemory m_nightSkyboxMemory;
+    VkImageView m_nightSkyboxView;
+
+    // Skybox geometry (cube vertices)
+    VkBuffer m_skyboxVertexBuffer;
+    VkDeviceMemory m_skyboxVertexBufferMemory;
+
+    // Sky time for day/night cycle
+    float m_skyTime = 0.25f;  // 0.25 = morning (sunrise)
 
     // Synchronization
     std::vector<VkSemaphore> m_imageAvailableSemaphores;

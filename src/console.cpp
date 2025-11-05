@@ -124,7 +124,9 @@ void Console::renderInput() {
                 console->autoComplete();
                 data->DeleteChars(0, data->BufTextLen);
                 data->InsertChars(0, console->m_inputBuffer);
-                data->SelectAll();
+                // Move cursor to end instead of selecting all (prevents accidental overwrite)
+                data->CursorPos = data->BufTextLen;
+                data->SelectionStart = data->SelectionEnd = data->CursorPos;
             } else if (data->EventFlag == ImGuiInputTextFlags_CallbackEdit) {
                 // Input changed, reset suggestion index
                 console->m_suggestionIndex = 0;

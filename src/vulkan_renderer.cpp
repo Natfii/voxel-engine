@@ -102,10 +102,12 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : m_window(window) {
     createDescriptorSetLayout();
     createGraphicsPipeline();
     createLinePipeline();
+    createSkyboxPipeline();
     createCommandPool();
     createDepthResources();
     createFramebuffers();
     createDefaultTexture();  // Create default white texture before descriptor sets
+    createSkybox();  // Create skybox and cube map
     createUniformBuffers();
     createDescriptorPool();
     createDescriptorSets();
@@ -368,7 +370,7 @@ void VulkanRenderer::createDescriptorSetLayout() {
     uboLayoutBinding.binding = 0;
     uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     uboLayoutBinding.descriptorCount = 1;
-    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;  // Also available in fragment for skybox
     uboLayoutBinding.pImmutableSamplers = nullptr;
 
     // Texture sampler binding (binding 1)
@@ -379,7 +381,23 @@ void VulkanRenderer::createDescriptorSetLayout() {
     samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     samplerLayoutBinding.pImmutableSamplers = nullptr;
 
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
+    // Cube map sampler binding (binding 2) for day skybox
+    VkDescriptorSetLayoutBinding cubeMapLayoutBinding{};
+    cubeMapLayoutBinding.binding = 2;
+    cubeMapLayoutBinding.descriptorCount = 1;
+    cubeMapLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    cubeMapLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    cubeMapLayoutBinding.pImmutableSamplers = nullptr;
+
+    // Night cube map sampler binding (binding 3) for night skybox
+    VkDescriptorSetLayoutBinding nightCubeMapLayoutBinding{};
+    nightCubeMapLayoutBinding.binding = 3;
+    nightCubeMapLayoutBinding.descriptorCount = 1;
+    nightCubeMapLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    nightCubeMapLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    nightCubeMapLayoutBinding.pImmutableSamplers = nullptr;
+
+    std::array<VkDescriptorSetLayoutBinding, 4> bindings = {uboLayoutBinding, samplerLayoutBinding, cubeMapLayoutBinding, nightCubeMapLayoutBinding};
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -644,6 +662,131 @@ void VulkanRenderer::createLinePipeline() {
     vkDestroyShaderModule(m_device, vertShaderModule, nullptr);
 }
 
+// Create skybox pipeline
+void VulkanRenderer::createSkyboxPipeline() {
+    auto vertShaderCode = readFile("shaders/skybox_vert.spv");
+    auto fragShaderCode = readFile("shaders/skybox_frag.spv");
+
+    VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+    VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = vertShaderModule;
+    vertShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = fragShaderModule;
+    fragShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+    // Skybox uses vec3 positions only
+    VkVertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 0;
+    bindingDescription.stride = sizeof(glm::vec3);
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attributeDescription{};
+    attributeDescription.binding = 0;
+    attributeDescription.location = 0;
+    attributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescription.offset = 0;
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = 1;
+    vertexInputInfo.pVertexAttributeDescriptions = &attributeDescription;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)m_swapChainExtent.width;
+    viewport.height = (float)m_swapChainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = m_swapChainExtent;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;  // No culling for skybox
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE;  // Don't write depth for skybox
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;  // Allow skybox at max depth
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.logicOp = VK_LOGIC_OP_COPY;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = nullptr;
+    pipelineInfo.layout = m_pipelineLayout;
+    pipelineInfo.renderPass = m_renderPass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_skyboxPipeline) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create skybox pipeline!");
+    }
+
+    vkDestroyShaderModule(m_device, fragShaderModule, nullptr);
+    vkDestroyShaderModule(m_device, vertShaderModule, nullptr);
+}
+
 // Create framebuffers
 void VulkanRenderer::createFramebuffers() {
     m_swapChainFramebuffers.resize(m_swapChainImageViews.size());
@@ -719,9 +862,9 @@ void VulkanRenderer::createDescriptorPool() {
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
-    // Texture sampler pool size
+    // Combined image sampler pool size (for texture atlas + day cube map + night cube map)
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 3);  // 3 samplers per frame
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -761,7 +904,19 @@ void VulkanRenderer::createDescriptorSets() {
         imageInfo.imageView = m_defaultTextureView;
         imageInfo.sampler = m_defaultTextureSampler;
 
-        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+        // Cube map descriptor for day skybox
+        VkDescriptorImageInfo cubeMapInfo{};
+        cubeMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        cubeMapInfo.imageView = m_skyboxView;
+        cubeMapInfo.sampler = m_skyboxSampler;
+
+        // Night cube map descriptor for night skybox
+        VkDescriptorImageInfo nightCubeMapInfo{};
+        nightCubeMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        nightCubeMapInfo.imageView = m_nightSkyboxView;
+        nightCubeMapInfo.sampler = m_skyboxSampler;  // Reuse same sampler
+
+        std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
 
         // Write UBO (binding 0)
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -780,6 +935,24 @@ void VulkanRenderer::createDescriptorSets() {
         descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         descriptorWrites[1].descriptorCount = 1;
         descriptorWrites[1].pImageInfo = &imageInfo;
+
+        // Write day cube map sampler (binding 2)
+        descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[2].dstSet = m_descriptorSets[i];
+        descriptorWrites[2].dstBinding = 2;
+        descriptorWrites[2].dstArrayElement = 0;
+        descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[2].descriptorCount = 1;
+        descriptorWrites[2].pImageInfo = &cubeMapInfo;
+
+        // Write night cube map sampler (binding 3)
+        descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[3].dstSet = m_descriptorSets[i];
+        descriptorWrites[3].dstBinding = 3;
+        descriptorWrites[3].dstArrayElement = 0;
+        descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[3].descriptorCount = 1;
+        descriptorWrites[3].pImageInfo = &nightCubeMapInfo;
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(descriptorWrites.size()),
                               descriptorWrites.data(), 0, nullptr);
@@ -929,6 +1102,15 @@ void VulkanRenderer::updateUniformBuffer(uint32_t currentImage, const glm::mat4&
     ubo.view = view;
     ubo.projection = projection;
     ubo.cameraPos = glm::vec4(cameraPos, renderDistance);  // Pack camera position and render distance into vec4
+
+    // Calculate sun, moon, and star intensities based on time of day
+    // Time: 0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset, 1.0 = midnight
+    float sunIntensity = glm::smoothstep(0.2f, 0.3f, m_skyTime) * (1.0f - glm::smoothstep(0.7f, 0.8f, m_skyTime));
+    float moonIntensity = 1.0f - glm::smoothstep(0.15f, 0.25f, m_skyTime) + glm::smoothstep(0.75f, 0.85f, m_skyTime);
+    moonIntensity = glm::clamp(moonIntensity, 0.0f, 1.0f);
+    float starIntensity = moonIntensity;  // Stars visible when moon is visible
+
+    ubo.skyTimeData = glm::vec4(m_skyTime, sunIntensity, moonIntensity, starIntensity);
 
     memcpy(m_uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
@@ -1348,6 +1530,104 @@ void VulkanRenderer::createDefaultTexture() {
     std::cout << "Created default 1x1 white texture for fallback rendering" << std::endl;
 }
 
+// Create cube map image (6 faces)
+void VulkanRenderer::createCubeMap(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling,
+                                   VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 6;  // 6 faces for cube map
+    imageInfo.format = format;
+    imageInfo.tiling = tiling;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = usage;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;  // Important for cube maps!
+
+    if (vkCreateImage(m_device, &imageInfo, nullptr, &image) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create cube map image!");
+    }
+
+    VkMemoryRequirements memRequirements;
+    vkGetImageMemoryRequirements(m_device, image, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+    if (vkAllocateMemory(m_device, &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate cube map memory!");
+    }
+
+    vkBindImageMemory(m_device, image, imageMemory, 0);
+}
+
+// Create cube map view
+VkImageView VulkanRenderer::createCubeMapView(VkImage image, VkFormat format) {
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;  // Cube map view type
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 6;  // All 6 faces
+
+    VkImageView imageView;
+    if (vkCreateImageView(m_device, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create cube map image view!");
+    }
+
+    return imageView;
+}
+
+// Transition cube map layout (all 6 faces)
+void VulkanRenderer::transitionCubeMapLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 6;  // All 6 cube map faces
+
+    VkPipelineStageFlags sourceStage;
+    VkPipelineStageFlags destinationStage;
+
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else {
+        throw std::invalid_argument("unsupported cube map layout transition!");
+    }
+
+    vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    endSingleTimeCommands(commandBuffer);
+}
+
 void VulkanRenderer::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
                                   VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
     VkBufferCreateInfo bufferInfo{};
@@ -1451,12 +1731,14 @@ void VulkanRenderer::recreateSwapChain() {
     // Recreate pipelines with new viewport/scissor dimensions
     createGraphicsPipeline();
     createLinePipeline();
+    createSkyboxPipeline();
 }
 
 void VulkanRenderer::cleanupSwapChain() {
     // Destroy pipelines (they contain viewport/scissor state)
     vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
     vkDestroyPipeline(m_device, m_linePipeline, nullptr);
+    vkDestroyPipeline(m_device, m_skyboxPipeline, nullptr);
 
     vkDestroyImageView(m_device, m_depthImageView, nullptr);
     vkDestroyImage(m_device, m_depthImage, nullptr);
@@ -1473,6 +1755,400 @@ void VulkanRenderer::cleanupSwapChain() {
     vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
 }
 
+// Generate procedural cube map with gradient sky colors
+void VulkanRenderer::createProceduralCubeMap() {
+    const uint32_t size = 256;  // 256x256 per face
+    const uint32_t faceSize = size * size * 4;  // RGBA
+    const uint32_t totalSize = faceSize * 6;
+
+    // Allocate buffer for all 6 faces
+    std::vector<unsigned char> pixels(totalSize);
+
+    // Generate gradient for each face
+    // Face order: +X, -X, +Y, -Y, +Z, -Z
+    for (int face = 0; face < 6; face++) {
+        unsigned char* faceData = pixels.data() + (face * faceSize);
+
+        for (uint32_t y = 0; y < size; y++) {
+            for (uint32_t x = 0; x < size; x++) {
+                uint32_t index = (y * size + x) * 4;
+
+                // Normalized coordinates [0, 1]
+                float u = (float)x / (float)(size - 1);
+                float v = (float)y / (float)(size - 1);
+
+                // Create gradient from top (zenith) to bottom (horizon)
+                float t = v;  // 0 at top, 1 at bottom
+
+                // Sky colors - natural blue sky gradient (neutral, not overly saturated)
+                glm::vec3 zenithColor = glm::vec3(0.25f, 0.5f, 0.85f);    // Deep blue at zenith
+                glm::vec3 horizonColor = glm::vec3(0.65f, 0.8f, 0.95f);   // Light blue/white at horizon
+
+                // Interpolate based on vertical position with slight curve
+                float curvedT = t * t;  // Quadratic falloff for smoother gradient
+                glm::vec3 skyColor = glm::mix(zenithColor, horizonColor, curvedT);
+
+                // For +Y face (top), make it uniform zenith color
+                // For -Y face (bottom), fade to darker blue
+                if (face == 2) {  // +Y (top)
+                    skyColor = zenithColor;
+                } else if (face == 3) {  // -Y (bottom)
+                    // Below horizon - slightly darker blue
+                    glm::vec3 belowColor = glm::vec3(0.4f, 0.6f, 0.75f);
+                    skyColor = glm::mix(horizonColor, belowColor, t);
+                }
+
+                // Write pixel (convert from [0,1] to [0,255])
+                faceData[index + 0] = static_cast<unsigned char>(skyColor.r * 255.0f);
+                faceData[index + 1] = static_cast<unsigned char>(skyColor.g * 255.0f);
+                faceData[index + 2] = static_cast<unsigned char>(skyColor.b * 255.0f);
+                faceData[index + 3] = 255;  // Alpha
+            }
+        }
+    }
+
+    // Create staging buffer
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer(totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                stagingBuffer, stagingBufferMemory);
+
+    // Copy pixel data to staging buffer
+    void* data;
+    vkMapMemory(m_device, stagingBufferMemory, 0, totalSize, 0, &data);
+    memcpy(data, pixels.data(), totalSize);
+    vkUnmapMemory(m_device, stagingBufferMemory);
+
+    // Create cube map image
+    createCubeMap(size, size, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+                 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                 m_skyboxImage, m_skyboxMemory);
+
+    // Transition to transfer dst
+    transitionCubeMapLayout(m_skyboxImage, VK_FORMAT_R8G8B8A8_SRGB,
+                           VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    // Copy each face
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+    for (uint32_t face = 0; face < 6; face++) {
+        VkBufferImageCopy region{};
+        region.bufferOffset = face * faceSize;
+        region.bufferRowLength = 0;
+        region.bufferImageHeight = 0;
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = face;
+        region.imageSubresource.layerCount = 1;
+        region.imageOffset = {0, 0, 0};
+        region.imageExtent = {size, size, 1};
+
+        vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, m_skyboxImage,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    }
+
+    endSingleTimeCommands(commandBuffer);
+
+    // Transition to shader read
+    transitionCubeMapLayout(m_skyboxImage, VK_FORMAT_R8G8B8A8_SRGB,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    // Cleanup staging buffer
+    vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+    vkFreeMemory(m_device, stagingBufferMemory, nullptr);
+
+    // Create cube map view
+    m_skyboxView = createCubeMapView(m_skyboxImage, VK_FORMAT_R8G8B8A8_SRGB);
+
+    // Create cube map sampler
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.maxAnisotropy = 1.0f;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+    if (vkCreateSampler(m_device, &samplerInfo, nullptr, &m_skyboxSampler) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create cube map sampler!");
+    }
+
+    std::cout << "Created procedural cube map skybox (256x256 per face)" << std::endl;
+}
+
+// Generate dark night cube map
+void VulkanRenderer::createNightCubeMap() {
+    const uint32_t size = 256;  // 256x256 per face
+    const uint32_t faceSize = size * size * 4;  // RGBA
+    const uint32_t totalSize = faceSize * 6;
+
+    // Allocate buffer for all 6 faces
+    std::vector<unsigned char> pixels(totalSize);
+
+    // Generate very dark gradient for each face
+    // Face order: +X, -X, +Y, -Y, +Z, -Z
+    for (int face = 0; face < 6; face++) {
+        unsigned char* faceData = pixels.data() + (face * faceSize);
+
+        for (uint32_t y = 0; y < size; y++) {
+            for (uint32_t x = 0; x < size; x++) {
+                uint32_t index = (y * size + x) * 4;
+
+                // Normalized coordinates [0, 1]
+                float u = (float)x / (float)(size - 1);
+                float v = (float)y / (float)(size - 1);
+
+                // Create gradient from top to bottom
+                float t = v;  // 0 at top, 1 at bottom
+
+                // Very dark night colors - nearly pure black, no tint
+                glm::vec3 zenithColor = glm::vec3(0.01f, 0.01f, 0.01f);   // Almost pure black at top
+                glm::vec3 horizonColor = glm::vec3(0.03f, 0.03f, 0.03f); // Slightly lighter at horizon
+
+                // Interpolate based on vertical position
+                glm::vec3 skyColor = glm::mix(zenithColor, horizonColor, t);
+
+                // For +Y face (top), keep it uniform
+                // For -Y face (bottom), make it even darker
+                if (face == 2) {  // +Y (top)
+                    skyColor = zenithColor;
+                } else if (face == 3) {  // -Y (bottom)
+                    glm::vec3 groundColor = glm::vec3(0.005f, 0.005f, 0.005f);  // Nearly pure black
+                    skyColor = glm::mix(horizonColor, groundColor, t);
+                }
+
+                // Write pixel (convert from [0,1] to [0,255])
+                faceData[index + 0] = static_cast<unsigned char>(skyColor.r * 255.0f);
+                faceData[index + 1] = static_cast<unsigned char>(skyColor.g * 255.0f);
+                faceData[index + 2] = static_cast<unsigned char>(skyColor.b * 255.0f);
+                faceData[index + 3] = 255;  // Alpha
+            }
+        }
+    }
+
+    // Add stars to the night sky as texture pixels
+    // Simple hash function for deterministic randomness
+    auto hash = [](uint32_t x, uint32_t y, uint32_t face) -> uint32_t {
+        uint32_t h = x * 374761393u + y * 668265263u + face * 1610612741u;
+        h = (h ^ (h >> 13)) * 1274126177u;
+        return h ^ (h >> 16);
+    };
+
+    // Add stars to each face (skip -Y face which is below horizon)
+    for (int face = 0; face < 6; face++) {
+        if (face == 3) continue;  // Skip -Y (bottom face)
+
+        unsigned char* faceData = pixels.data() + (face * faceSize);
+
+        // Scatter stars across the face
+        for (uint32_t y = 0; y < size; y++) {
+            for (uint32_t x = 0; x < size; x++) {
+                uint32_t h = hash(x, y, face);
+                float randVal = (float)(h % 10000) / 10000.0f;
+
+                // 0.75% chance of a star at this pixel (half of previous density)
+                if (randVal < 0.0075f) {
+                    uint32_t index = (y * size + x) * 4;
+
+                    // Determine star color based on hash
+                    float colorRand = (float)((h >> 8) % 1000) / 1000.0f;
+                    glm::vec3 starColor;
+
+                    if (colorRand < 0.15f) {
+                        starColor = glm::vec3(1.0f, 0.6f, 0.6f);  // Red star
+                    } else if (colorRand < 0.30f) {
+                        starColor = glm::vec3(0.6f, 0.7f, 1.0f);  // Blue star
+                    } else {
+                        starColor = glm::vec3(0.95f, 0.95f, 1.0f);  // White star
+                    }
+
+                    // Vary brightness
+                    float brightness = 0.7f + 0.3f * ((float)((h >> 16) % 1000) / 1000.0f);
+                    starColor *= brightness;
+
+                    // Write star pixel
+                    faceData[index + 0] = static_cast<unsigned char>(glm::clamp(starColor.r * 255.0f, 0.0f, 255.0f));
+                    faceData[index + 1] = static_cast<unsigned char>(glm::clamp(starColor.g * 255.0f, 0.0f, 255.0f));
+                    faceData[index + 2] = static_cast<unsigned char>(glm::clamp(starColor.b * 255.0f, 0.0f, 255.0f));
+                    faceData[index + 3] = 255;
+                }
+            }
+        }
+    }
+
+    // Create staging buffer
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer(totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                stagingBuffer, stagingBufferMemory);
+
+    // Copy pixel data to staging buffer
+    void* data;
+    vkMapMemory(m_device, stagingBufferMemory, 0, totalSize, 0, &data);
+    memcpy(data, pixels.data(), totalSize);
+    vkUnmapMemory(m_device, stagingBufferMemory);
+
+    // Create cube map image
+    createCubeMap(size, size, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+                 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                 m_nightSkyboxImage, m_nightSkyboxMemory);
+
+    // Transition to transfer dst
+    transitionCubeMapLayout(m_nightSkyboxImage, VK_FORMAT_R8G8B8A8_SRGB,
+                           VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    // Copy each face
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+    for (uint32_t face = 0; face < 6; face++) {
+        VkBufferImageCopy region{};
+        region.bufferOffset = face * faceSize;
+        region.bufferRowLength = 0;
+        region.bufferImageHeight = 0;
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = face;
+        region.imageSubresource.layerCount = 1;
+        region.imageOffset = {0, 0, 0};
+        region.imageExtent = {size, size, 1};
+
+        vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, m_nightSkyboxImage,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    }
+
+    endSingleTimeCommands(commandBuffer);
+
+    // Transition to shader read
+    transitionCubeMapLayout(m_nightSkyboxImage, VK_FORMAT_R8G8B8A8_SRGB,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    // Cleanup staging buffer
+    vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+    vkFreeMemory(m_device, stagingBufferMemory, nullptr);
+
+    // Create cube map view
+    m_nightSkyboxView = createCubeMapView(m_nightSkyboxImage, VK_FORMAT_R8G8B8A8_SRGB);
+
+    std::cout << "Created night cube map skybox (256x256 per face)" << std::endl;
+}
+
+// Create skybox geometry and resources
+void VulkanRenderer::createSkybox() {
+    // Generate procedural cube maps
+    createProceduralCubeMap();
+    createNightCubeMap();
+
+    // Skybox cube vertices (positions only, no UVs - we use direction for sampling)
+    // Large cube centered at origin
+    std::vector<glm::vec3> skyboxVertices = {
+        // Positions
+        {-1.0f,  1.0f, -1.0f},
+        {-1.0f, -1.0f, -1.0f},
+        { 1.0f, -1.0f, -1.0f},
+        { 1.0f, -1.0f, -1.0f},
+        { 1.0f,  1.0f, -1.0f},
+        {-1.0f,  1.0f, -1.0f},
+
+        {-1.0f, -1.0f,  1.0f},
+        {-1.0f, -1.0f, -1.0f},
+        {-1.0f,  1.0f, -1.0f},
+        {-1.0f,  1.0f, -1.0f},
+        {-1.0f,  1.0f,  1.0f},
+        {-1.0f, -1.0f,  1.0f},
+
+        { 1.0f, -1.0f, -1.0f},
+        { 1.0f, -1.0f,  1.0f},
+        { 1.0f,  1.0f,  1.0f},
+        { 1.0f,  1.0f,  1.0f},
+        { 1.0f,  1.0f, -1.0f},
+        { 1.0f, -1.0f, -1.0f},
+
+        {-1.0f, -1.0f,  1.0f},
+        {-1.0f,  1.0f,  1.0f},
+        { 1.0f,  1.0f,  1.0f},
+        { 1.0f,  1.0f,  1.0f},
+        { 1.0f, -1.0f,  1.0f},
+        {-1.0f, -1.0f,  1.0f},
+
+        {-1.0f,  1.0f, -1.0f},
+        { 1.0f,  1.0f, -1.0f},
+        { 1.0f,  1.0f,  1.0f},
+        { 1.0f,  1.0f,  1.0f},
+        {-1.0f,  1.0f,  1.0f},
+        {-1.0f,  1.0f, -1.0f},
+
+        {-1.0f, -1.0f, -1.0f},
+        {-1.0f, -1.0f,  1.0f},
+        { 1.0f, -1.0f, -1.0f},
+        { 1.0f, -1.0f, -1.0f},
+        {-1.0f, -1.0f,  1.0f},
+        { 1.0f, -1.0f,  1.0f}
+    };
+
+    VkDeviceSize bufferSize = sizeof(glm::vec3) * skyboxVertices.size();
+
+    // Create staging buffer
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                stagingBuffer, stagingBufferMemory);
+
+    void* data;
+    vkMapMemory(m_device, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, skyboxVertices.data(), bufferSize);
+    vkUnmapMemory(m_device, stagingBufferMemory);
+
+    // Create vertex buffer
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                m_skyboxVertexBuffer, m_skyboxVertexBufferMemory);
+
+    copyBuffer(stagingBuffer, m_skyboxVertexBuffer, bufferSize);
+
+    vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+    vkFreeMemory(m_device, stagingBufferMemory, nullptr);
+
+    std::cout << "Created skybox geometry" << std::endl;
+}
+
+// Set time of day for sky rendering
+void VulkanRenderer::setSkyTime(float timeOfDay) {
+    m_skyTime = glm::clamp(timeOfDay, 0.0f, 1.0f);
+}
+
+// Render the skybox
+void VulkanRenderer::renderSkybox() {
+    VkCommandBuffer commandBuffer = m_commandBuffers[m_currentFrame];
+    VkDescriptorSet currentDescriptorSet = m_descriptorSets[m_currentFrame];
+
+    // Bind skybox pipeline
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyboxPipeline);
+
+    // Bind descriptor set (contains UBO and cube maps)
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                           m_pipelineLayout, 0, 1, &currentDescriptorSet, 0, nullptr);
+
+    // Bind skybox vertex buffer
+    VkBuffer vertexBuffers[] = {m_skyboxVertexBuffer};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+    // Draw skybox cube (36 vertices)
+    vkCmdDraw(commandBuffer, 36, 1, 0, 0);
+}
+
 void VulkanRenderer::cleanup() {
     cleanupSwapChain();
 
@@ -1481,6 +2157,19 @@ void VulkanRenderer::cleanup() {
     vkDestroyImageView(m_device, m_defaultTextureView, nullptr);
     vkDestroyImage(m_device, m_defaultTextureImage, nullptr);
     vkFreeMemory(m_device, m_defaultTextureMemory, nullptr);
+
+    // Cleanup skybox
+    vkDestroyBuffer(m_device, m_skyboxVertexBuffer, nullptr);
+    vkFreeMemory(m_device, m_skyboxVertexBufferMemory, nullptr);
+    vkDestroySampler(m_device, m_skyboxSampler, nullptr);
+    vkDestroyImageView(m_device, m_skyboxView, nullptr);
+    vkDestroyImage(m_device, m_skyboxImage, nullptr);
+    vkFreeMemory(m_device, m_skyboxMemory, nullptr);
+
+    // Cleanup night skybox
+    vkDestroyImageView(m_device, m_nightSkyboxView, nullptr);
+    vkDestroyImage(m_device, m_nightSkyboxImage, nullptr);
+    vkFreeMemory(m_device, m_nightSkyboxMemory, nullptr);
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroyBuffer(m_device, m_uniformBuffers[i], nullptr);

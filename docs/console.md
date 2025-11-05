@@ -77,6 +77,23 @@ Get a console variable (ConVar) value.
 List all console variables.
 - Example: `list`
 
+### skytime <0-1>
+Set the time of day (0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset).
+- Example: `skytime 0.5` (set to noon)
+- Example: `skytime 0.75` (set to sunset)
+- Example: `skytime` (show current time)
+
+### timespeed <value>
+Set the time progression speed (0=paused, 1=normal, higher=faster).
+- Example: `timespeed 0` (pause time)
+- Example: `timespeed 1` (normal speed, 24 minute cycle)
+- Example: `timespeed 10` (10x faster, 2.4 minute cycle)
+- Example: `timespeed` (show current speed)
+
+**Tab completion:** Press Tab after `timespeed ` to cycle through common values.
+
+See [docs/sky_system.md](sky_system.md) for detailed sky system documentation.
+
 ## Opening Documentation
 
 You can open any .md file by typing its path:

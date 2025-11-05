@@ -168,7 +168,7 @@ int main() {
 
         // Create console and register commands
         Console console(window);
-        ConsoleCommands::registerAll(&console, &player, &world);
+        ConsoleCommands::registerAll(&console, &player, &world, &renderer);
 
         bool isPaused = false;
         bool escPressed = false;
@@ -187,15 +187,18 @@ int main() {
             // Update FPS counter
             DebugState::instance().updateFPS(deltaTime);
 
+            // Update sky time (handles day/night cycle)
+            ConsoleCommands::updateSkyTime(deltaTime);
+
             // Handle F9 key for console
             if (glfwGetKey(window, GLFW_KEY_F9) == GLFW_PRESS) {
                 if (!f9Pressed) {
                     f9Pressed = true;
                     console.toggle();
 
-                    // Enable/disable cursor based on console visibility
+                    // Hide cursor when console is visible (text input uses keyboard only)
                     if (console.isVisible()) {
-                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
                     } else if (!isPaused) {
                         requestMouseReset = true;
                     }
@@ -306,6 +309,9 @@ int main() {
 
             // Get current descriptor set (need to store it to take address)
             VkDescriptorSet currentDescriptorSet = renderer.getCurrentDescriptorSet();
+
+            // Render skybox first (renders behind everything)
+            renderer.renderSkybox();
 
             // Render world with normal pipeline
             vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getGraphicsPipeline());
