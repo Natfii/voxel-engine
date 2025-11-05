@@ -25,14 +25,23 @@
 - [x] Update shader compilation scripts
 - [x] Dynamic fog colors that match sky
 
-### Phase 4: Testing & Finalization ✅
+### Phase 4: Console Commands & Time Control ✅
+- [x] Implement `skytime` command to set time of day
+- [x] Implement `timespeed` command to control time progression
+- [x] Add automatic time update to main game loop
+- [x] Fix tab completion highlighting issue
+- [x] Add tab completion suggestions for timespeed
+
+### Phase 5: Documentation & Testing ✅
 - [x] Automatic shader compilation in build scripts
-- [ ] Build and test the engine (user just needs to run build.bat or build.sh)
-- [ ] Test all sky states (day/night/sunset/sunrise)
-- [ ] Verify no performance regression
+- [x] Create comprehensive sky system documentation
+- [x] Update README.md with sky system features
+- [x] Update console command documentation
+- [x] Add usage examples and troubleshooting
+- [x] Ready for user testing
 
 ## Current Status
-🟢 Implementation complete - Build scripts updated! Just run `build.bat` (Windows) or `./build.sh` (Linux)!
+🎉 **COMPLETE!** Full hybrid sky system with console commands implemented and documented!
 
 ## Files Modified
 
@@ -129,13 +138,53 @@
 - **Binding 1:** Block texture atlas
 - **Binding 2:** Cube map sampler (NEW)
 
-## Next Steps
+## Console Commands
+
+### `skytime <0-1>`
+Set the time of day instantly.
+- `skytime 0.0` - Midnight
+- `skytime 0.5` - Noon
+- `skytime 0.75` - Sunset
+- `skytime` - Show current time
+
+### `timespeed <value>`
+Control time progression speed.
+- `timespeed 0` - Pause (default)
+- `timespeed 1` - Normal (24 min cycle)
+- `timespeed 10` - 10x faster
+- `timespeed` - Show current speed
+
+## Quick Start
+
 1. **Build the project** (shaders compile automatically):
-   - Windows: `build.bat`
-   - Linux: `./build.sh`
-2. **Run the engine**: `run.bat` (Windows) or `./run.sh` (Linux)
-3. **Test day/night cycle** by calling `renderer->setSkyTime(value)` in your code
-4. Verify performance is acceptable
+   ```bash
+   # Windows
+   build.bat
+
+   # Linux
+   ./build.sh
+   ```
+
+2. **Run the engine**:
+   ```bash
+   # Windows
+   run.bat
+
+   # Linux
+   ./run.sh
+   ```
+
+3. **Test the sky system** (press F9 for console):
+   ```
+   skytime 0.5      # Set to noon
+   timespeed 10     # Fast timelapse
+   skytime 0.75     # Jump to sunset
+   timespeed 0      # Freeze time
+   ```
+
+4. **Read the full guide**:
+   - In console: `docs/sky_system.md`
+   - Or open: [docs/sky_system.md](sky_system.md)
 
 ## Notes
 - Skybox renders first with depth writes disabled

@@ -13,6 +13,13 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - Efficient GPU buffer management
 - Back-face culling for optimized rendering
 
+🌅 **Dynamic Sky System**
+- Hybrid cube map + procedural sky rendering
+- Dynamic day/night cycle with configurable speed
+- Procedural sun, moon, and star field
+- Time-based fog and ambient lighting
+- Console commands for time control (`skytime`, `timespeed`)
+
 🌍 **Procedural World Generation**
 - Infinite terrain using FastNoise
 - Configurable world size and seed
@@ -158,6 +165,7 @@ voxel-engine/
 - [docs/controls.md](docs/controls.md) - Game controls reference
 - [docs/console.md](docs/console.md) - Developer console usage
 - [docs/commands.md](docs/commands.md) - Adding custom console commands
+- [docs/sky_system.md](docs/sky_system.md) - Sky system and time control guide
 
 ## Development Status
 
@@ -174,6 +182,9 @@ voxel-engine/
 - ✅ Unified targeting system with rich block info
 - ✅ Input manager for context-aware controls
 - ✅ Tab completion for console commands
+- ✅ Hybrid sky system with cube map rendering
+- ✅ Dynamic day/night cycle with procedural sun/moon/stars
+- ✅ Time control console commands (`skytime`, `timespeed`)
 
 ## Troubleshooting
 
