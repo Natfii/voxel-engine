@@ -1,0 +1,15 @@
+# Example: Fully directional block with different texture on every face
+# Useful for blocks that need unique orientation markers
+name: "DirectionalBlock"
+cube_map:
+  top: "dir_top.png"       # +Y (up)
+  bottom: "dir_bottom.png" # -Y (down)
+  front: "dir_front.png"   # -Z
+  back: "dir_back.png"     # +Z
+  left: "dir_left.png"     # -X
+  right: "dir_right.png"   # +X
+durability: 10
+liquid: false
+affected_by_gravity: false
+flammability: 0
+transparency: 0.0

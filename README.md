@@ -27,6 +27,13 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - Configurable world size and seed
 - Chunk-based rendering system
 
+🧱 **Advanced Block & Texture System**
+- **Cube map textures**: Different textures for each face of a block
+- **Texture atlas**: All textures packed into a single GPU texture
+- **YAML-based block definitions**: Easy block creation and modification
+- **Texture variation**: Random texture offsets for natural appearance
+- **Backwards compatible**: Supports both single-texture and multi-face blocks
+
 🎮 **First-Person Controls**
 - WASD movement with sprint
 - Mouse look camera
@@ -168,6 +175,7 @@ voxel-engine/
 - [docs/console.md](docs/console.md) - Developer console usage
 - [docs/commands.md](docs/commands.md) - Adding custom console commands
 - [docs/sky_system.md](docs/sky_system.md) - Sky system and time control guide
+- [docs/CUBE_MAP_GUIDE.md](docs/CUBE_MAP_GUIDE.md) - Cube map textures and block definitions
 
 ## Development Status
 

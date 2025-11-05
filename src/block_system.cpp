@@ -129,8 +129,12 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
             def.metadata = doc["metadata"];
         }
         
-        // Parse texture field (either PNG filename or hex color)
-        if (doc["texture"]) {
+        // Parse texture field (either PNG filename, hex color, or cube_map)
+        if (doc["cube_map"]) {
+            // Cube map mode: different textures for different faces
+            def.useCubeMap = true;
+            // Textures will be loaded during atlas building
+        } else if (doc["texture"]) {
             std::string tex = doc["texture"].as<std::string>();
 
             // Parse hex color as fallback
@@ -167,27 +171,107 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
 }
 
 void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
-    std::cout << "Building texture atlas..." << std::endl;
+    std::cout << "Building texture atlas with cube map support..." << std::endl;
 
-    // Load all textures from blocks (skip Air at index 0)
+    // Map texture names to atlas indices to avoid duplicates
+    std::unordered_map<std::string, int> textureNameToAtlasIndex;
     std::vector<LoadedTexture> textures;
+
+    // Helper to add a texture to the atlas if not already present
+    auto addTextureToAtlas = [&](const std::string& textureName, const std::string& blockName) -> int {
+        // Check if already loaded
+        auto it = textureNameToAtlasIndex.find(textureName);
+        if (it != textureNameToAtlasIndex.end()) {
+            return it->second;
+        }
+
+        // Load the texture
+        std::string texturePath = "assets/blocks/" + textureName;
+        LoadedTexture tex = loadAndResizeTexture(texturePath, blockName + ":" + textureName);
+
+        if (!tex.pixels) {
+            std::cerr << "  Failed to load texture: " << textureName << std::endl;
+            return -1;
+        }
+
+        int atlasIndex = (int)textures.size();
+        textures.push_back(tex);
+        textureNameToAtlasIndex[textureName] = atlasIndex;
+        std::cout << "  Loaded texture: " << textureName << " (atlas index " << atlasIndex << ")" << std::endl;
+        return atlasIndex;
+    };
+
+    // First pass: Load all textures from YAML definitions
     for (size_t i = 1; i < m_defs.size(); i++) {  // Skip air (index 0)
         BlockDefinition& def = m_defs[i];
 
-        // Convert name to lowercase for filename
+        // Re-parse YAML to get texture information
         std::string lowerName = def.name;
         std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
                      [](unsigned char c){ return std::tolower(c); });
 
-        std::string texturePath = "assets/blocks/" + lowerName + ".png";
+        std::string yamlPath = "assets/blocks/" + lowerName + ".yaml";
+        YAML::Node doc;
+        try {
+            doc = YAML::LoadFile(yamlPath);
+        } catch (const std::exception& e) {
+            std::cerr << "Error re-parsing YAML for " << def.name << ": " << e.what() << std::endl;
+            continue;
+        }
 
-        LoadedTexture tex = loadAndResizeTexture(texturePath, def.name);
-        if (tex.pixels) {
+        if (doc["cube_map"]) {
+            // Cube map mode
+            def.useCubeMap = true;
             def.hasTexture = true;
-            textures.push_back(tex);
-            std::cout << "  Loaded texture: " << def.name << std::endl;
-        } else {
-            std::cout << "  No texture for " << def.name << ", using color" << std::endl;
+
+            YAML::Node cubeMap = doc["cube_map"];
+
+            // Helper to load a face texture, with fallback to "sides" or "all"
+            auto loadFace = [&](const std::string& faceName, BlockDefinition::FaceTexture& face) {
+                std::string texName;
+                if (cubeMap[faceName]) {
+                    texName = cubeMap[faceName].as<std::string>();
+                } else if (cubeMap["sides"] && (faceName == "front" || faceName == "back" || faceName == "left" || faceName == "right")) {
+                    texName = cubeMap["sides"].as<std::string>();
+                } else if (cubeMap["all"]) {
+                    texName = cubeMap["all"].as<std::string>();
+                } else {
+                    return;
+                }
+
+                int atlasIndex = addTextureToAtlas(texName, def.name);
+                if (atlasIndex >= 0) {
+                    // Atlas coordinates will be calculated after we know the grid size
+                    face.atlasX = atlasIndex;  // Temporarily store atlas index
+                    face.atlasY = 0;
+                }
+            };
+
+            loadFace("top", def.top);
+            loadFace("bottom", def.bottom);
+            loadFace("front", def.front);
+            loadFace("back", def.back);
+            loadFace("left", def.left);
+            loadFace("right", def.right);
+
+            std::cout << "  Loaded cube map for " << def.name << std::endl;
+        } else if (doc["texture"]) {
+            // Simple texture mode (backwards compatibility)
+            std::string texName = doc["texture"].as<std::string>();
+
+            // Skip hex colors
+            if (!texName.empty() && texName[0] == '#') {
+                continue;
+            }
+
+            int atlasIndex = addTextureToAtlas(texName, def.name);
+            if (atlasIndex >= 0) {
+                def.hasTexture = true;
+                def.useCubeMap = false;
+                // Store atlas index temporarily
+                def.all.atlasX = atlasIndex;
+                def.all.atlasY = 0;
+            }
         }
     }
 
@@ -204,27 +288,20 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
     }
 
     int atlasSize = m_atlasGridSize * 64;  // Each slot is 64x64
-    std::cout << "Atlas grid: " << m_atlasGridSize << "x" << m_atlasGridSize << " (" << atlasSize << "x" << atlasSize << " pixels)" << std::endl;
+    std::cout << "Atlas grid: " << m_atlasGridSize << "x" << m_atlasGridSize << " (" << atlasSize << "x" << atlasSize << " pixels, " << numTextures << " textures)" << std::endl;
 
     // Create atlas pixel data (RGBA)
     size_t atlasDataSize = atlasSize * atlasSize * 4;
     unsigned char* atlasPixels = (unsigned char*)calloc(atlasDataSize, 1);  // Initialize to zeros
 
-    // Arrange textures in atlas grid and store atlas coordinates
-    int atlasIndex = 0;
-    for (size_t i = 1; i < m_defs.size(); i++) {  // Skip air
-        BlockDefinition& def = m_defs[i];
-
-        if (!def.hasTexture) continue;
+    // Copy textures into atlas
+    for (int atlasIndex = 0; atlasIndex < (int)textures.size(); atlasIndex++) {
+        LoadedTexture& tex = textures[atlasIndex];
 
         int atlasX = atlasIndex % m_atlasGridSize;
         int atlasY = atlasIndex / m_atlasGridSize;
 
-        def.atlasX = atlasX;
-        def.atlasY = atlasY;
-
         // Copy texture pixels into atlas
-        LoadedTexture& tex = textures[atlasIndex];
         for (int y = 0; y < 64; y++) {
             for (int x = 0; x < 64; x++) {
                 int srcIdx = (y * 64 + x) * 4;
@@ -238,18 +315,34 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
                 atlasPixels[dstIdx + 3] = tex.pixels[srcIdx + 3];  // A
             }
         }
+    }
 
-        atlasIndex++;
+    // Second pass: Convert atlas indices to atlas grid coordinates
+    for (size_t i = 1; i < m_defs.size(); i++) {
+        BlockDefinition& def = m_defs[i];
+        if (!def.hasTexture) continue;
+
+        auto convertFace = [&](BlockDefinition::FaceTexture& face) {
+            int atlasIndex = face.atlasX;  // We stored the index here temporarily
+            face.atlasX = atlasIndex % m_atlasGridSize;
+            face.atlasY = atlasIndex / m_atlasGridSize;
+        };
+
+        if (def.useCubeMap) {
+            convertFace(def.top);
+            convertFace(def.bottom);
+            convertFace(def.front);
+            convertFace(def.back);
+            convertFace(def.left);
+            convertFace(def.right);
+        } else {
+            convertFace(def.all);
+        }
     }
 
     // Free individual texture memory
     for (auto& tex : textures) {
         if (tex.pixels) {
-            // Was loaded with stbi or malloc, check if we need to free differently
-            // Since loadAndResizeTexture can return either stbi or malloc'd memory,
-            // we'll use free() for resized and stbi_image_free() won't work here
-            // Actually, loadAndResizeTexture always frees stbi memory and returns malloc'd or stbi
-            // Let's just use stbi_image_free which works for both
             stbi_image_free(tex.pixels);
         }
     }

@@ -32,8 +32,23 @@ struct BlockDefinition {
     float textureVariation = 1.0f;  // Zoom factor for random texture sampling (1.0 = no variation)
 
     // Texture atlas position (coordinates in the atlas grid)
-    int atlasX = 0;  // X position in atlas grid (0, 1, 2, ...)
-    int atlasY = 0;  // Y position in atlas grid (0, 1, 2, ...)
+    // Each face can have its own texture in the atlas
+    struct FaceTexture {
+        int atlasX = 0;  // X position in atlas grid (0, 1, 2, ...)
+        int atlasY = 0;  // Y position in atlas grid (0, 1, 2, ...)
+    };
+
+    // Cube map: texture coordinates for each face
+    // If not using cube map, all faces use the 'all' texture
+    FaceTexture all;      // Default texture for all faces (backwards compatibility)
+    FaceTexture top;      // +Y face
+    FaceTexture bottom;   // -Y face
+    FaceTexture front;    // -Z face
+    FaceTexture back;     // +Z face
+    FaceTexture left;     // -X face
+    FaceTexture right;    // +X face
+
+    bool useCubeMap = false;  // True if using different textures per face
 
     // Block properties
     int durability = 0;

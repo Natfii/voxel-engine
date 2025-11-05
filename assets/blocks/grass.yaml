@@ -1,5 +1,8 @@
 name: "Grass"
-texture: "grass.png"
+cube_map:
+  top: "grass.png"       # Grass texture on top
+  bottom: "dirt.png"     # Dirt texture on bottom
+  sides: "grass.png"     # Grass texture on all 4 sides (could use grass_side.png if available)
 texture_variation: 1.5  # Zoom factor for random texture sampling (1.0 = no variation, higher = more variation)
 durability: 3
 liquid: false

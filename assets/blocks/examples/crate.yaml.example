@@ -1,0 +1,11 @@
+# Example: Crate/box block with different top, bottom, and sides
+name: "Crate"
+cube_map:
+  top: "crate_top.png"      # Top of crate (possibly with logo)
+  bottom: "crate_bottom.png" # Bottom of crate
+  sides: "crate_side.png"    # Wooden planks on sides
+durability: 6
+liquid: false
+affected_by_gravity: false
+flammability: 3
+transparency: 0.0

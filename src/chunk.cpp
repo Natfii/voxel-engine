@@ -197,48 +197,51 @@ void Chunk::generate() {
                     cr = cg = cb = 1.0f;
                 }
 
-                // Calculate atlas UV offset for this block's texture
-                float uMin = def.atlasX * uvScale;
-                float vMin = def.atlasY * uvScale;
+                // Helper to get UV coordinates for a specific face with texture variation
+                auto getUVsForFace = [&](const BlockDefinition::FaceTexture& face) -> std::pair<float, float> {
+                    float uMin = face.atlasX * uvScale;
+                    float vMin = face.atlasY * uvScale;
 
-                // Texture variation: zoom in on random portions of the texture
-                // Use world position as seed for deterministic randomness
-                float zoomFactor = def.textureVariation;  // Get zoom factor from block definition
-                float uvScaleZoomed = uvScale;
+                    // Apply texture variation if enabled
+                    float zoomFactor = def.textureVariation;
+                    if (zoomFactor > 1.0f) {
+                        int worldX = m_x * WIDTH + X;
+                        int worldY = m_y * HEIGHT + Y;
+                        int worldZ = m_z * DEPTH + Z;
 
-                if (zoomFactor > 1.0f) {
-                    // Only apply variation if zoom factor > 1.0
-                    int worldX = m_x * WIDTH + X;
-                    int worldY = m_y * HEIGHT + Y;
-                    int worldZ = m_z * DEPTH + Z;
+                        // Simple hash function for pseudo-random offset
+                        unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
+                        float randU = ((seed >> 0) & 0xFF) / 255.0f;
+                        float randV = ((seed >> 8) & 0xFF) / 255.0f;
 
-                    // Simple hash function for pseudo-random offset
-                    unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
-                    float randU = ((seed >> 0) & 0xFF) / 255.0f;  // Random value 0-1
-                    float randV = ((seed >> 8) & 0xFF) / 255.0f;  // Random value 0-1
+                        // Calculate how much space we can shift within
+                        float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
+                        float uShift = randU * maxShift;
+                        float vShift = randV * maxShift;
 
-                    // Calculate how much space we can shift within (to keep UVs in bounds)
-                    float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
+                        uMin += uShift;
+                        vMin += vShift;
+                    }
 
-                    // Random offset for this block
-                    float uShift = randU * maxShift;
-                    float vShift = randV * maxShift;
-
-                    // Adjust base coordinates and scale
-                    uvScaleZoomed = uvScale / zoomFactor;
-                    uMin += uShift;
-                    vMin += vShift;
-                }
+                    return {uMin, vMin};
+                };
 
                 // Calculate world position for this block
-                // Convert from chunk-local coordinates to world coordinates
                 float bx = float(m_x * WIDTH + X) * 0.5f;
                 float by = float(m_y * HEIGHT + Y) * 0.5f;
                 float bz = float(m_z * DEPTH + Z) * 0.5f;
 
-                // Front face (z=0, facing -Z direction)
-                if (!isSolid(X, Y, Z - 1)) {
-                    for (int i = 0, uv = 0; i < 18; i += 3, uv += 2) {
+                // Helper to render a face with the appropriate texture
+                auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart) {
+                    auto [uMin, vMin] = getUVsForFace(faceTexture);
+                    float uvScaleZoomed = uvScale;
+
+                    // Recalculate uvScaleZoomed if texture variation is enabled
+                    if (def.textureVariation > 1.0f) {
+                        uvScaleZoomed = uvScale / def.textureVariation;
+                    }
+
+                    for (int i = cubeStart, uv = uvStart; i < cubeStart + 18; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
@@ -248,76 +251,44 @@ void Chunk::generate() {
                         v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
+                };
+
+                // Select appropriate texture for each face
+                const BlockDefinition::FaceTexture& frontTex = def.useCubeMap ? def.front : def.all;
+                const BlockDefinition::FaceTexture& backTex = def.useCubeMap ? def.back : def.all;
+                const BlockDefinition::FaceTexture& leftTex = def.useCubeMap ? def.left : def.all;
+                const BlockDefinition::FaceTexture& rightTex = def.useCubeMap ? def.right : def.all;
+                const BlockDefinition::FaceTexture& topTex = def.useCubeMap ? def.top : def.all;
+                const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
+
+                // Front face (z=0, facing -Z direction)
+                if (!isSolid(X, Y, Z - 1)) {
+                    renderFace(frontTex, 0, 0);
                 }
 
                 // Back face (z=0.5, facing +Z direction)
                 if (!isSolid(X, Y, Z + 1)) {
-                    for (int i = 18, uv = 12; i < 36; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(backTex, 18, 12);
                 }
 
                 // Left face (x=0, facing -X direction)
                 if (!isSolid(X - 1, Y, Z)) {
-                    for (int i = 36, uv = 24; i < 54; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(leftTex, 36, 24);
                 }
 
                 // Right face (x=0.5, facing +X direction)
                 if (!isSolid(X + 1, Y, Z)) {
-                    for (int i = 54, uv = 36; i < 72; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(rightTex, 54, 36);
                 }
 
                 // Top face (y=0.5, facing +Y direction)
                 if (!isSolid(X, Y + 1, Z)) {
-                    for (int i = 72, uv = 48; i < 90; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(topTex, 72, 48);
                 }
 
                 // Bottom face (y=0, facing -Y direction)
                 if (!isSolid(X, Y - 1, Z)) {
-                    for (int i = 90, uv = 60; i < 108; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(bottomTex, 90, 60);
                 }
             }
         }
@@ -413,48 +384,51 @@ void Chunk::generateMesh(World* world) {
                     cr = cg = cb = 1.0f;
                 }
 
-                // Calculate atlas UV offset for this block's texture
-                float uMin = def.atlasX * uvScale;
-                float vMin = def.atlasY * uvScale;
+                // Helper to get UV coordinates for a specific face with texture variation
+                auto getUVsForFace = [&](const BlockDefinition::FaceTexture& face) -> std::pair<float, float> {
+                    float uMin = face.atlasX * uvScale;
+                    float vMin = face.atlasY * uvScale;
 
-                // Texture variation: zoom in on random portions of the texture
-                // Use world position as seed for deterministic randomness
-                float zoomFactor = def.textureVariation;  // Get zoom factor from block definition
-                float uvScaleZoomed = uvScale;
+                    // Apply texture variation if enabled
+                    float zoomFactor = def.textureVariation;
+                    if (zoomFactor > 1.0f) {
+                        int worldX = m_x * WIDTH + X;
+                        int worldY = m_y * HEIGHT + Y;
+                        int worldZ = m_z * DEPTH + Z;
 
-                if (zoomFactor > 1.0f) {
-                    // Only apply variation if zoom factor > 1.0
-                    int worldX = m_x * WIDTH + X;
-                    int worldY = m_y * HEIGHT + Y;
-                    int worldZ = m_z * DEPTH + Z;
+                        // Simple hash function for pseudo-random offset
+                        unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
+                        float randU = ((seed >> 0) & 0xFF) / 255.0f;
+                        float randV = ((seed >> 8) & 0xFF) / 255.0f;
 
-                    // Simple hash function for pseudo-random offset
-                    unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
-                    float randU = ((seed >> 0) & 0xFF) / 255.0f;  // Random value 0-1
-                    float randV = ((seed >> 8) & 0xFF) / 255.0f;  // Random value 0-1
+                        // Calculate how much space we can shift within
+                        float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
+                        float uShift = randU * maxShift;
+                        float vShift = randV * maxShift;
 
-                    // Calculate how much space we can shift within (to keep UVs in bounds)
-                    float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
+                        uMin += uShift;
+                        vMin += vShift;
+                    }
 
-                    // Random offset for this block
-                    float uShift = randU * maxShift;
-                    float vShift = randV * maxShift;
-
-                    // Adjust base coordinates and scale
-                    uvScaleZoomed = uvScale / zoomFactor;
-                    uMin += uShift;
-                    vMin += vShift;
-                }
+                    return {uMin, vMin};
+                };
 
                 // Calculate world position for this block
-                // Convert from chunk-local coordinates to world coordinates
                 float bx = float(m_x * WIDTH + X) * 0.5f;
                 float by = float(m_y * HEIGHT + Y) * 0.5f;
                 float bz = float(m_z * DEPTH + Z) * 0.5f;
 
-                // Front face (z=0, facing -Z direction)
-                if (!isSolid(X, Y, Z - 1)) {
-                    for (int i = 0, uv = 0; i < 18; i += 3, uv += 2) {
+                // Helper to render a face with the appropriate texture
+                auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart) {
+                    auto [uMin, vMin] = getUVsForFace(faceTexture);
+                    float uvScaleZoomed = uvScale;
+
+                    // Recalculate uvScaleZoomed if texture variation is enabled
+                    if (def.textureVariation > 1.0f) {
+                        uvScaleZoomed = uvScale / def.textureVariation;
+                    }
+
+                    for (int i = cubeStart, uv = uvStart; i < cubeStart + 18; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
@@ -464,76 +438,44 @@ void Chunk::generateMesh(World* world) {
                         v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
+                };
+
+                // Select appropriate texture for each face
+                const BlockDefinition::FaceTexture& frontTex = def.useCubeMap ? def.front : def.all;
+                const BlockDefinition::FaceTexture& backTex = def.useCubeMap ? def.back : def.all;
+                const BlockDefinition::FaceTexture& leftTex = def.useCubeMap ? def.left : def.all;
+                const BlockDefinition::FaceTexture& rightTex = def.useCubeMap ? def.right : def.all;
+                const BlockDefinition::FaceTexture& topTex = def.useCubeMap ? def.top : def.all;
+                const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
+
+                // Front face (z=0, facing -Z direction)
+                if (!isSolid(X, Y, Z - 1)) {
+                    renderFace(frontTex, 0, 0);
                 }
 
                 // Back face (z=0.5, facing +Z direction)
                 if (!isSolid(X, Y, Z + 1)) {
-                    for (int i = 18, uv = 12; i < 36; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(backTex, 18, 12);
                 }
 
                 // Left face (x=0, facing -X direction)
                 if (!isSolid(X - 1, Y, Z)) {
-                    for (int i = 36, uv = 24; i < 54; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(leftTex, 36, 24);
                 }
 
                 // Right face (x=0.5, facing +X direction)
                 if (!isSolid(X + 1, Y, Z)) {
-                    for (int i = 54, uv = 36; i < 72; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(rightTex, 54, 36);
                 }
 
                 // Top face (y=0.5, facing +Y direction)
                 if (!isSolid(X, Y + 1, Z)) {
-                    for (int i = 72, uv = 48; i < 90; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(topTex, 72, 48);
                 }
 
                 // Bottom face (y=0, facing -Y direction)
                 if (!isSolid(X, Y - 1, Z)) {
-                    for (int i = 90, uv = 60; i < 108; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(bottomTex, 90, 60);
                 }
             }
         }
