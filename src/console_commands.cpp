@@ -14,7 +14,7 @@ Console* ConsoleCommands::s_console = nullptr;
 Player* ConsoleCommands::s_player = nullptr;
 World* ConsoleCommands::s_world = nullptr;
 VulkanRenderer* ConsoleCommands::s_renderer = nullptr;
-float ConsoleCommands::s_timeSpeed = 0.0f;      // Default: paused
+float ConsoleCommands::s_timeSpeed = 1.0f;      // Default: normal speed (time flows by default)
 float ConsoleCommands::s_currentSkyTime = 0.5f; // Default: noon
 
 void ConsoleCommands::registerAll(Console* console, Player* player, World* world, VulkanRenderer* renderer) {
@@ -334,9 +334,10 @@ void ConsoleCommands::updateSkyTime(float deltaTime) {
         return; // Don't update if paused or renderer not available
     }
 
-    // Update sky time (1 full cycle = 24 minutes at speed 1.0)
-    // deltaTime is in seconds, so we divide by 1440 (24 minutes * 60 seconds)
-    s_currentSkyTime += (deltaTime * s_timeSpeed) / 1440.0f;
+    // Update sky time (Minecraft-style: 1 full cycle = 20 minutes at speed 1.0)
+    // Minecraft: 24000 ticks per day, 20 ticks/second = 1200 seconds = 20 minutes
+    // deltaTime is in seconds, so we divide by 1200 (20 minutes * 60 seconds)
+    s_currentSkyTime += (deltaTime * s_timeSpeed) / 1200.0f;
 
     // Wrap around after full cycle
     s_currentSkyTime = std::fmod(s_currentSkyTime, 1.0f);
