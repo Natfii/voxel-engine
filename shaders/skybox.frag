@@ -38,8 +38,9 @@ vec3 stars(vec3 dir) {
     // Check multiple nearby cells to avoid gaps
     vec3 starColor = vec3(0.0);
 
-    // Near high elevations (theta > 0.8 radians ~45 degrees), only check current cell to avoid stretching
-    int phiRange = (abs(theta) > 0.8) ? 0 : 1;
+    // Near high elevations (theta > 0.5 radians ~30 degrees), only check current cell to avoid stretching
+    // This is aggressive but prevents the zenith singularity artifacts
+    int phiRange = (abs(theta) > 0.5) ? 0 : 1;
 
     for (int dx = -phiRange; dx <= phiRange; dx++) {
         for (int dy = -1; dy <= 1; dy++) {
@@ -67,8 +68,8 @@ vec3 stars(vec3 dir) {
                 // Angular distance to this star
                 float angularDist = acos(clamp(dot(dir, starDir), -1.0, 1.0));
 
-                // Tiny star size - 0.000005 to 0.000008 radians (100x smaller than original)
-                float starSize = 0.000005 + fract(h * 97.789) * 0.000003;
+                // Extremely tiny star size - 0.00000025 to 0.0000004 radians (2000x smaller than original)
+                float starSize = 0.00000025 + fract(h * 97.789) * 0.00000015;
 
                 if (angularDist < starSize) {
                     float brightness = (1.0 - angularDist / starSize);
