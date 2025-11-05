@@ -25,15 +25,14 @@
 - [x] Update shader compilation scripts
 - [x] Dynamic fog colors that match sky
 
-### Phase 4: Testing & Finalization ⏳
-- [ ] Compile shaders (user needs to run compile.sh/compile.bat)
-- [ ] Build and test the engine
+### Phase 4: Testing & Finalization ✅
+- [x] Automatic shader compilation in build scripts
+- [ ] Build and test the engine (user just needs to run build.bat or build.sh)
 - [ ] Test all sky states (day/night/sunset/sunrise)
 - [ ] Verify no performance regression
-- [ ] Commit and push changes
 
 ## Current Status
-🟢 Implementation complete - Ready for testing!
+🟢 Implementation complete - Build scripts updated! Just run `build.bat` (Windows) or `./build.sh` (Linux)!
 
 ## Files Modified
 
@@ -131,11 +130,12 @@
 - **Binding 2:** Cube map sampler (NEW)
 
 ## Next Steps
-1. User needs to compile shaders: `cd shaders && ./compile.sh`
-2. Build project: `cmake --build build`
-3. Test day/night cycle by calling `renderer->setSkyTime(value)`
+1. **Build the project** (shaders compile automatically):
+   - Windows: `build.bat`
+   - Linux: `./build.sh`
+2. **Run the engine**: `run.bat` (Windows) or `./run.sh` (Linux)
+3. **Test day/night cycle** by calling `renderer->setSkyTime(value)` in your code
 4. Verify performance is acceptable
-5. Commit and push changes
 
 ## Notes
 - Skybox renders first with depth writes disabled
