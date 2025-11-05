@@ -123,16 +123,27 @@ void main() {
     // Calculate moon direction (opposite to sun)
     vec3 moonDir = -sunDir;
 
-    // Add sun
+    // Add sun with dreamy colors
     float sunDot = dot(normalize(fragTexCoord), sunDir);
-    if (sunDot > 0.999 && sunIntensity > 0.01) {  // Sun is very bright and small
-        float sunGlow = smoothstep(0.999, 1.0, sunDot);
-        vec3 sunColor = vec3(1.0, 1.0, 0.9) * sunGlow * sunIntensity;
-        skyColor += sunColor * 3.0;  // Bright sun
-    } else if (sunDot > 0.99 && sunIntensity > 0.01) {
-        // Sun corona/glow
-        float coronaGlow = smoothstep(0.99, 0.999, sunDot);
-        skyColor += vec3(1.0, 0.9, 0.7) * coronaGlow * sunIntensity * 0.5;
+    if (sunDot > 0.996 && sunIntensity > 0.01) {
+        // Dreamy sun with orangey-purple gradient
+        if (sunDot > 0.998) {
+            // Bright core with warm orange-yellow
+            float coreGlow = smoothstep(0.998, 1.0, sunDot);
+            vec3 sunCore = vec3(1.0, 0.85, 0.6) * coreGlow * sunIntensity;  // Warm orange-yellow
+            skyColor += sunCore * 5.0;  // Very bright core
+        } else if (sunDot > 0.996) {
+            // Outer glow with orangey-purple gradient
+            float glowAmount = (sunDot - 0.996) / 0.002;  // 0 to 1
+            float glowFactor = smoothstep(0.0, 1.0, glowAmount);
+
+            // Gradient from purple outer edge to orange inner
+            vec3 outerColor = vec3(0.8, 0.4, 0.9);   // Purple
+            vec3 innerColor = vec3(1.0, 0.6, 0.4);   // Orange
+            vec3 glowColor = mix(outerColor, innerColor, glowFactor);
+
+            skyColor += glowColor * glowFactor * sunIntensity * 2.5;
+        }
     }
 
     // Add moon
