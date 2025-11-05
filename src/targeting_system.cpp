@@ -212,7 +212,7 @@ void TargetingSystem::updateOutlineBuffer(VulkanRenderer* renderer) {
 std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& position) {
     // Create a wireframe cube with 12 edges (24 vertices for lines)
     const float size = 0.5f;
-    const float offset = 0.005f; // Small offset to prevent z-fighting
+    const float inset = 0.002f; // Small inset to render on inside edges (prevents clipping)
 
     std::vector<float> vertices;
     vertices.reserve(24 * 8); // 24 vertices * 8 floats per vertex (x,y,z,r,g,b,u,v)
@@ -240,13 +240,13 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
         vertices.push_back(0.0f);
     };
 
-    // Slightly expand the outline to make it visible
-    float x0 = position.x - offset;
-    float y0 = position.y - offset;
-    float z0 = position.z - offset;
-    float x1 = position.x + size + offset;
-    float y1 = position.y + size + offset;
-    float z1 = position.z + size + offset;
+    // Slightly shrink the outline to render on inside edges
+    float x0 = position.x + inset;
+    float y0 = position.y + inset;
+    float z0 = position.z + inset;
+    float x1 = position.x + size - inset;
+    float y1 = position.y + size - inset;
+    float z1 = position.z + size - inset;
 
     // Bottom face edges
     addLine(x0, y0, z0, x1, y0, z0); // Front
