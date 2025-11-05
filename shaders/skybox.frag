@@ -29,38 +29,32 @@ vec3 stars(vec3 dir) {
 
     // Convert to spherical coordinates for even distribution
     float phi = atan(dir.z, dir.x);  // Azimuthal angle
-    float theta = asin(dir.y);        // Elevation angle
+    float theta = asin(clamp(dir.y, -1.0, 1.0));        // Elevation angle, clamped
 
     // Create grid in angular space (evenly distributed on sphere)
-    vec2 angleCoord = vec2(phi, theta) * 50.0;  // 50 cells per radian
+    // Use coarser grid density to reduce star count
+    vec2 angleCoord = vec2(phi, theta) * 30.0;  // 30 cells per radian (was 50)
     vec2 cellCoord = floor(angleCoord);
 
-    // Check multiple nearby cells to avoid gaps
     vec3 starColor = vec3(0.0);
 
-    // Near high elevations (theta > 0.5 radians ~30 degrees), only check current cell to avoid stretching
-    // This is aggressive but prevents the zenith singularity artifacts
-    int phiRange = (abs(theta) > 0.5) ? 0 : 1;
-
-    // Near zenith, search more theta cells to compensate for no phi searching
-    int thetaRange = (abs(theta) > 0.5) ? 3 : 1;
-
-    for (int dx = -phiRange; dx <= phiRange; dx++) {
-        for (int dy = -thetaRange; dy <= thetaRange; dy++) {
+    // Only check immediate neighbors - uniform 3x3 search everywhere
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
             vec2 checkCell = cellCoord + vec2(dx, dy);
             float h = hash(checkCell);
 
-            if (h > 0.99) {  // 1% chance per cell
+            if (h > 0.985) {  // 1.5% chance per cell
                 // Random offset within this cell
                 vec2 offset = vec2(
                     fract(h * 41.123),
                     fract(h * 73.456)
                 );
-                vec2 starAngle = (checkCell + offset) / 50.0;
+                vec2 starAngle = (checkCell + offset) / 30.0;
 
                 // Convert back to 3D direction
                 float starPhi = starAngle.x;
-                float starTheta = clamp(starAngle.y, -1.57, 1.57);  // Clamp to avoid invalid values
+                float starTheta = clamp(starAngle.y, -1.57, 1.57);
 
                 vec3 starDir = normalize(vec3(
                     cos(starTheta) * cos(starPhi),
@@ -71,8 +65,8 @@ vec3 stars(vec3 dir) {
                 // Angular distance to this star
                 float angularDist = acos(clamp(dot(dir, starDir), -1.0, 1.0));
 
-                // Extremely tiny star size - 0.00000025 to 0.0000004 radians (2000x smaller than original)
-                float starSize = 0.00000025 + fract(h * 97.789) * 0.00000015;
+                // Small but visible star size - 0.0001 to 0.00015 radians
+                float starSize = 0.0001 + fract(h * 97.789) * 0.00005;
 
                 if (angularDist < starSize) {
                     float brightness = (1.0 - angularDist / starSize);
