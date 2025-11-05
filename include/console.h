@@ -26,7 +26,12 @@ public:
     void render();
 
     // Toggle console visibility
-    void toggle() { m_isVisible = !m_isVisible; }
+    void toggle() {
+        m_isVisible = !m_isVisible;
+        if (m_isVisible) {
+            m_focusInput = true;  // Auto-focus input when opening console
+        }
+    }
     bool isVisible() const { return m_isVisible; }
     void setVisible(bool visible) { m_isVisible = visible; }
 

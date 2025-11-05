@@ -196,9 +196,9 @@ int main() {
                     f9Pressed = true;
                     console.toggle();
 
-                    // Enable/disable cursor based on console visibility
+                    // Hide cursor when console is visible (text input uses keyboard only)
                     if (console.isVisible()) {
-                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
                     } else if (!isPaused) {
                         requestMouseReset = true;
                     }
