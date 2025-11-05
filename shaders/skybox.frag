@@ -42,8 +42,11 @@ vec3 stars(vec3 dir) {
     // This is aggressive but prevents the zenith singularity artifacts
     int phiRange = (abs(theta) > 0.5) ? 0 : 1;
 
+    // Near zenith, search more theta cells to compensate for no phi searching
+    int thetaRange = (abs(theta) > 0.5) ? 3 : 1;
+
     for (int dx = -phiRange; dx <= phiRange; dx++) {
-        for (int dy = -1; dy <= 1; dy++) {
+        for (int dy = -thetaRange; dy <= thetaRange; dy++) {
             vec2 checkCell = cellCoord + vec2(dx, dy);
             float h = hash(checkCell);
 
