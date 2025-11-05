@@ -4,7 +4,8 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 projection;
-    vec4 cameraPos;  // .xyz = camera position, .w = render distance
+    vec4 cameraPos;    // .xyz = camera position, .w = render distance
+    vec4 skyTimeData;  // .x = time of day (0-1), .y = sun intensity, .z = moon intensity, .w = star intensity
 } ubo;
 
 layout(location = 0) in vec3 inPosition;

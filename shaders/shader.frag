@@ -4,7 +4,8 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 projection;
-    vec4 cameraPos;  // .xyz = camera position, .w = render distance
+    vec4 cameraPos;    // .xyz = camera position, .w = render distance
+    vec4 skyTimeData;  // .x = time of day (0-1), .y = sun intensity, .z = moon intensity, .w = star intensity
 } ubo;
 
 layout(binding = 1) uniform sampler2D texSampler;
@@ -21,20 +22,36 @@ void main() {
     // Colored blocks have colored vertex color → shows solid color (default white texture)
     vec4 texColor = texture(texSampler, fragTexCoord);
     vec3 baseColor = texColor.rgb * fragColor;
+
     // Extract camera position and render distance from packed vec4
     vec3 camPos = ubo.cameraPos.xyz;
     float renderDistance = ubo.cameraPos.w;
 
+    // Extract sky time data
+    float time = ubo.skyTimeData.x;
+    float sunIntensity = ubo.skyTimeData.y;
+    float moonIntensity = ubo.skyTimeData.z;
+
     // Calculate distance from camera to fragment
     float distance = length(fragWorldPos - camPos);
 
-    // Fog parameters (similar to classic OpenGL voxel engines)
-    const vec3 fogColor = vec3(0.6, 0.8, 1.0); // Light blue sky color
+    // Dynamic fog color based on time of day
+    vec3 dayFogColor = vec3(0.7, 0.85, 1.0);       // Light blue (day)
+    vec3 dawnDuskFogColor = vec3(1.0, 0.7, 0.5);   // Orange/pink (dawn/dusk)
+    vec3 nightFogColor = vec3(0.15, 0.2, 0.35);    // Dark blue (night)
+
+    // Calculate dawn/dusk factor
+    float dawnDuskFactor = smoothstep(0.2, 0.3, time) * (1.0 - smoothstep(0.35, 0.45, time));
+    dawnDuskFactor += smoothstep(0.65, 0.75, time) * (1.0 - smoothstep(0.8, 0.9, time));
+
+    // Blend fog colors based on time of day
+    vec3 fogColor = mix(dayFogColor, dawnDuskFogColor, dawnDuskFactor);
+    fogColor = mix(fogColor, nightFogColor, moonIntensity * 0.8);
+
     const float fogStart = renderDistance * 0.7;   // Fog starts at 70% of render distance
     const float fogEnd = renderDistance * 0.95;    // Full fog at 95% of render distance
 
     // Discard fragments well beyond fog end to avoid visible banding
-    // This happens after blocks are completely hidden by fog
     if (distance > renderDistance * 1.05) {
         discard;
     }
@@ -44,9 +61,13 @@ void main() {
     if (distance > fogStart) {
         // Calculate linear fog factor (1.0 = no fog, 0.0 = full fog)
         float fogFactor = clamp((fogEnd - distance) / (fogEnd - fogStart), 0.0, 1.0);
-        // Mix block color with fog color
+        // Mix block color with dynamic fog color
         finalColor = mix(fogColor, baseColor, fogFactor);
     }
+
+    // Apply time-of-day lighting
+    float ambientLight = 0.3 + 0.7 * sunIntensity + 0.15 * moonIntensity;
+    finalColor *= ambientLight;
 
     outColor = vec4(finalColor, 1.0);
 }
