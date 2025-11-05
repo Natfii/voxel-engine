@@ -128,11 +128,15 @@ if [[ "$SHADER_COMPILER" == *"glslc"* ]]; then
     $SHADER_COMPILER shader.frag -o frag.spv
     $SHADER_COMPILER line.vert -o line_vert.spv
     $SHADER_COMPILER line.frag -o line_frag.spv
+    $SHADER_COMPILER skybox.vert -o skybox_vert.spv
+    $SHADER_COMPILER skybox.frag -o skybox_frag.spv
 else
     $SHADER_COMPILER -V shader.vert -o vert.spv
     $SHADER_COMPILER -V shader.frag -o frag.spv
     $SHADER_COMPILER -V line.vert -o line_vert.spv
     $SHADER_COMPILER -V line.frag -o line_frag.spv
+    $SHADER_COMPILER -V skybox.vert -o skybox_vert.spv
+    $SHADER_COMPILER -V skybox.frag -o skybox_frag.spv
 fi
 
 if [ $? -eq 0 ]; then
@@ -141,6 +145,8 @@ if [ $? -eq 0 ]; then
     echo "  - frag.spv"
     echo "  - line_vert.spv"
     echo "  - line_frag.spv"
+    echo "  - skybox_vert.spv"
+    echo "  - skybox_frag.spv"
 else
     echo -e "${RED}[ERROR] Shader compilation failed!${NC}"
     cd ..
