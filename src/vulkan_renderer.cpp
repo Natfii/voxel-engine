@@ -1781,9 +1781,9 @@ void VulkanRenderer::createProceduralCubeMap() {
                 float t = v;  // 0 at top, 1 at bottom
 
                 // Sky colors - blend from zenith to horizon
-                // Use neutral gray as base - shader will add blue tint for day
-                glm::vec3 zenithColor = glm::vec3(0.4f, 0.4f, 0.4f);   // Neutral gray at top
-                glm::vec3 horizonColor = glm::vec3(0.55f, 0.55f, 0.55f); // Slightly lighter at horizon
+                // Use brighter neutral gray as base - shader will add blue tint for day
+                glm::vec3 zenithColor = glm::vec3(0.65f, 0.65f, 0.65f);   // Lighter neutral gray at top
+                glm::vec3 horizonColor = glm::vec3(0.75f, 0.75f, 0.75f); // Even lighter at horizon
 
                 // Interpolate based on vertical position
                 glm::vec3 skyColor = glm::mix(zenithColor, horizonColor, t);

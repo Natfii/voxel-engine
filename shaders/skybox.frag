@@ -73,8 +73,8 @@ void main() {
 
     // Add blue tint and dynamic tinting for day sky only
     if (dayNightBlend > 0.1) {
-        // Blue tint for day sky
-        skyColor *= vec3(0.9, 1.0, 1.2) * (0.8 + 0.2 * dayNightBlend);
+        // Brighter, more vibrant blue tint for day sky
+        skyColor *= vec3(0.85, 1.0, 1.35) * (1.0 + 0.15 * dayNightBlend);
 
         // Calculate whether we're in dawn/dusk period
         // Dawn: 0.15-0.35 (broader for longer effect)
