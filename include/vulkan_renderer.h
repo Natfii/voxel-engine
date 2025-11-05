@@ -129,6 +129,7 @@ private:
     void createSyncObjects();
     void createSkybox();
     void createProceduralCubeMap();
+    void createNightCubeMap();
 
     // Helper functions
     bool checkValidationLayerSupport();
@@ -217,11 +218,16 @@ private:
     VkImageView m_defaultTextureView;
     VkSampler m_defaultTextureSampler;
 
-    // Skybox cube map
+    // Skybox cube map (day)
     VkImage m_skyboxImage;
     VkDeviceMemory m_skyboxMemory;
     VkImageView m_skyboxView;
     VkSampler m_skyboxSampler;
+
+    // Night skybox cube map
+    VkImage m_nightSkyboxImage;
+    VkDeviceMemory m_nightSkyboxMemory;
+    VkImageView m_nightSkyboxView;
 
     // Skybox geometry (cube vertices)
     VkBuffer m_skyboxVertexBuffer;

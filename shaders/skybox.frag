@@ -8,7 +8,8 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 skyTimeData;  // .x = time of day (0-1), .y = sun intensity, .z = moon intensity, .w = star intensity
 } ubo;
 
-layout(binding = 2) uniform samplerCube skybox;
+layout(binding = 2) uniform samplerCube daySkybox;
+layout(binding = 3) uniform samplerCube nightSkybox;
 
 layout(location = 0) in vec3 fragTexCoord;
 
@@ -49,47 +50,31 @@ float stars(vec3 dir) {
 }
 
 void main() {
-    // Sample cube map for base sky color
-    vec3 skyColor = texture(skybox, fragTexCoord).rgb;
+    // Sample both day and night cube maps
+    vec3 daySkyColor = texture(daySkybox, fragTexCoord).rgb;
+    vec3 nightSkyColor = texture(nightSkybox, fragTexCoord).rgb;
 
-    // Time-based color adjustments
+    // Time-based data
     float time = ubo.skyTimeData.x;
     float sunIntensity = ubo.skyTimeData.y;
     float moonIntensity = ubo.skyTimeData.z;
     float starIntensity = ubo.skyTimeData.w;
 
-    // Calculate time-based sky tint
-    // Dawn/dusk: orange/red tint
-    // Noon: bright blue
-    // Night: nearly black with slight blue tint
-    vec3 dayTint = vec3(1.5, 1.8, 2.2);        // Bright blue day sky
-    vec3 dawnDuskTint = vec3(2.0, 1.2, 0.8);   // Warm orange/pink
-    vec3 nightTint = vec3(0.5, 0.6, 0.9);      // Transition blue
+    // Blend between day and night based on sun/moon intensity
+    // When sunIntensity is high (day), use day sky
+    // When moonIntensity is high (night), use night sky
+    float dayNightBlend = sunIntensity;  // 0 = night, 1 = day
+    vec3 skyColor = mix(nightSkyColor, daySkyColor, dayNightBlend);
 
-    // Calculate whether we're in dawn/dusk period
-    float dawnDuskFactor = smoothstep(0.2, 0.3, time) * (1.0 - smoothstep(0.35, 0.45, time));
-    dawnDuskFactor += smoothstep(0.65, 0.75, time) * (1.0 - smoothstep(0.8, 0.9, time));
+    // Add dynamic tinting for day sky during dawn/dusk
+    if (dayNightBlend > 0.3) {
+        // Calculate whether we're in dawn/dusk period
+        float dawnDuskFactor = smoothstep(0.2, 0.3, time) * (1.0 - smoothstep(0.35, 0.45, time));
+        dawnDuskFactor += smoothstep(0.65, 0.75, time) * (1.0 - smoothstep(0.8, 0.9, time));
 
-    vec3 timeTint = mix(dayTint, dawnDuskTint, dawnDuskFactor);
-    timeTint = mix(timeTint, nightTint, moonIntensity * 0.9);
-
-    skyColor *= timeTint;
-
-    // Aggressive darkening during night
-    skyColor *= (0.15 + 0.85 * sunIntensity + 0.15 * moonIntensity);
-
-    // NIGHT FILTER: Desaturate and darken dramatically at night
-    if (moonIntensity > 0.3) {
-        // Convert to grayscale
-        float luminance = dot(skyColor, vec3(0.299, 0.587, 0.114));
-        vec3 grayscale = vec3(luminance);
-
-        // Add slight blue tint to the darkness
-        vec3 nightColor = grayscale * vec3(0.4, 0.5, 0.7);
-
-        // Lerp towards very dark night color based on moon intensity
-        float nightFactor = (moonIntensity - 0.3) / 0.7;  // 0.3-1.0 mapped to 0-1
-        skyColor = mix(skyColor, nightColor * 0.15, nightFactor);
+        // Dawn/dusk warm tint
+        vec3 dawnDuskTint = vec3(1.3, 0.9, 0.7);  // Warm orange
+        skyColor = mix(skyColor, skyColor * dawnDuskTint, dawnDuskFactor * dayNightBlend);
     }
 
     // Calculate sun direction (moves across sky based on time)
