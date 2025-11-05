@@ -14,9 +14,11 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - Back-face culling for optimized rendering
 
 🌅 **Dynamic Sky System**
-- Hybrid cube map + procedural sky rendering
-- Dynamic day/night cycle with configurable speed
-- Procedural sun, moon, and star field
+- Natural blue sky cube map with dynamic day/night transitions
+- Minecraft-style 24000-tick day/night cycle (20 minutes)
+- Procedural square sun and moon (voxel aesthetic)
+- Baked star field with twinkling animation (red, blue, white stars)
+- Dreamy dawn/dusk gradients (orange, pink, purple)
 - Time-based fog and ambient lighting
 - Console commands for time control (`skytime`, `timespeed`)
 
@@ -182,8 +184,10 @@ voxel-engine/
 - ✅ Unified targeting system with rich block info
 - ✅ Input manager for context-aware controls
 - ✅ Tab completion for console commands
-- ✅ Hybrid sky system with cube map rendering
-- ✅ Dynamic day/night cycle with procedural sun/moon/stars
+- ✅ Dual cube map sky system (day: natural blue, night: black with stars)
+- ✅ Minecraft-compatible day/night cycle (24000 ticks = 20 minutes)
+- ✅ Procedural square sun and moon with dreamy dawn/dusk effects
+- ✅ Baked star textures with real-time twinkling shader
 - ✅ Time control console commands (`skytime`, `timespeed`)
 
 ## Troubleshooting

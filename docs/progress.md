@@ -1,8 +1,22 @@
 # Sky System Implementation Progress
 
 **Started:** 2025-11-05
+**Completed:** 2025-11-05
 **Branch:** claude/cube-map-info-011CUoXGVQq4orwwzEDmYhKj
-**Goal:** Implement hybrid sky system with cube map support + procedural day/night cycle
+**Goal:** Implement dual cube map sky system with baked stars + procedural sun/moon
+
+## Final Implementation
+
+The sky system features:
+- ✅ **Dual cube maps**: Natural blue sky (day) + black with stars (night)
+- ✅ **Baked stars**: 0.75% density, red/blue/white colors, pre-rendered into night texture
+- ✅ **Star twinkling**: Real-time shader effect (0-100% brightness)
+- ✅ **Square sun & moon**: Voxel aesthetic with dreamy gradients
+- ✅ **Minecraft-compatible timing**: 24000 ticks = 20 minutes = 1200 seconds
+- ✅ **Dawn/dusk effects**: Orange, pink, purple gradient transitions
+- ✅ **Dynamic fog**: Changes from blue (day) to black (night)
+- ✅ **Console commands**: skytime, timespeed with tab completion
+- ✅ **Default time**: Starts at 0.25 (morning) with timespeed=1.0 (flowing)
 
 ## Implementation Plan
 
@@ -95,48 +109,71 @@
 
 ## Implementation Details
 
-### Cube Map System
-- 256x256 per face procedural gradient cube map
-- Smooth gradients from zenith (blue) to horizon (lighter)
-- Bottom face has greenish ground color
-- Linear filtering for smooth sampling
+### Dual Cube Map System
+1. **Day Cube Map** (`createProceduralCubeMap`)
+   - 256x256 per face, 6 faces total (~1.5MB)
+   - Natural blue gradient: zenith (0.25, 0.5, 0.85) → horizon (0.65, 0.8, 0.95)
+   - Quadratic falloff for smooth gradient
+   - Linear filtering for smooth sampling
 
-### Procedural Sky Features
+2. **Night Cube Map** (`createNightCubeMap`)
+   - 256x256 per face, 6 faces total (~1.5MB)
+   - Nearly black base: zenith (0.01) → horizon (0.03)
+   - **Baked stars**: 0.75% of pixels (192 stars per face)
+   - Star colors: Red (15%), Blue (15%), White (70%)
+   - Variable brightness per star (70-100%)
+   - Hash-based deterministic placement
+   - Bottom face skipped (below horizon)
+
+### Sky Features
 1. **Time-Based Cycle**
-   - Time range: 0-1 (0 = midnight, 0.5 = noon)
-   - Smooth transitions between day/night
-   - Dynamic sun/moon/star intensities
+   - Time range: 0-1 (0 = midnight, 0.25 = morning, 0.5 = noon, 0.75 = sunset)
+   - Minecraft-compatible: 24000 ticks at 20 ticks/sec = 1200 seconds (20 min)
+   - Default: starts at 0.25 (morning) with timespeed=1.0
+   - Dynamic sun/moon/star intensities via smoothstep
 
-2. **Sun Rendering**
-   - Bright yellow-white sun disc
-   - Warm corona/glow effect
-   - Moves across sky based on time
+2. **Square Sun Rendering** (procedural in shader)
+   - Size: 0.025 units (half-width)
+   - Shape: Square (voxel aesthetic)
+   - Core: Bright yellow-white
+   - Glow: Dreamy purple-to-orange gradient
+   - Travels across sky based on time
 
-3. **Moon Rendering**
-   - Cool blue-white moon disc
-   - Positioned opposite to sun
-   - Visible during night
+3. **Square Moon Rendering** (procedural in shader)
+   - Size: 0.020 units (slightly smaller than sun)
+   - Shape: Square (voxel aesthetic)
+   - Color: Cool blue-white tint
+   - Movement: Independent path, 1.75x faster than sun
+   - Compensates for shorter night duration
 
-4. **Stars**
-   - Procedural hash-based generation
-   - Twinkling effect
-   - Only visible in upper hemisphere at night
+4. **Star Twinkling** (shader effect)
+   - Applied to bright pixels in night cube map
+   - Range: 0-100% brightness (can fade to black)
+   - Spatial hash for per-star variation
+   - Time-based animation (8.0x multiplier)
 
-5. **Dynamic Fog**
+5. **Dawn/Dusk Gradients**
+   - Horizon: Orange (1.0, 0.4, 0.2)
+   - Mid: Pink (1.0, 0.6, 0.7)
+   - Top: Purple (0.6, 0.4, 0.8)
+   - Applied only during transition periods
+
+6. **Dynamic Fog**
    - Day: Light blue (0.7, 0.85, 1.0)
    - Dawn/Dusk: Orange/pink (1.0, 0.7, 0.5)
-   - Night: Dark blue (0.15, 0.2, 0.35)
+   - Night: Nearly black (0.02, 0.02, 0.02)
    - Smooth blending between states
 
-6. **Ambient Lighting**
+7. **Ambient Lighting**
    - Base: 30%
    - Sun contribution: up to 70%
    - Moon contribution: up to 15%
 
-### Architecture
+### Vulkan Architecture
 - **Binding 0:** Uniform buffer (MVP + camera + sky time)
 - **Binding 1:** Block texture atlas
-- **Binding 2:** Cube map sampler (NEW)
+- **Binding 2:** Day skybox cube map sampler
+- **Binding 3:** Night skybox cube map sampler (NEW)
 
 ## Console Commands
 
@@ -149,9 +186,9 @@ Set the time of day instantly.
 
 ### `timespeed <value>`
 Control time progression speed.
-- `timespeed 0` - Pause (default)
-- `timespeed 1` - Normal (24 min cycle)
-- `timespeed 10` - 10x faster
+- `timespeed 0` - Pause time
+- `timespeed 1` - Normal (20 min cycle) - default
+- `timespeed 10` - 10x faster (2 min cycle)
 - `timespeed` - Show current speed
 
 ## Quick Start
@@ -189,6 +226,10 @@ Control time progression speed.
 ## Notes
 - Skybox renders first with depth writes disabled
 - Depth comparison uses LESS_OR_EQUAL for skybox
-- Procedural cube map is ~1.5MB (256x256x6x4 bytes)
+- Dual cube maps total ~3MB (256x256x6x4 bytes x 2)
+- Stars baked into texture for performance (zero cost per frame)
+- Twinkling applied via shader (affects only star pixels)
 - All shaders updated to use consistent UBO structure
 - Compatible with existing fog system
+- Moon speed 1.75x sun speed for proper night coverage
+- Time flows by default (timespeed=1.0, not paused)

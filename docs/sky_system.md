@@ -1,16 +1,17 @@
 # Sky System Guide
 
-The voxel engine features a **hybrid sky system** combining cube map skybox rendering with procedural effects for dynamic day/night cycles.
+The voxel engine features a **dual cube map sky system** with natural blue sky and star-filled night sky, combined with procedural sun/moon effects for dynamic day/night cycles.
 
 ## Overview
 
 The sky system provides:
-- ☀️ **Dynamic Day/Night Cycle** - Automatic time progression with configurable speed
-- 🌅 **Procedural Sun & Moon** - Realistic sun disc with corona and moon
-- ⭐ **Star Field** - Twinkling stars visible at night
+- ☀️ **Minecraft-Style Day/Night Cycle** - 24000 ticks (20 minutes real time)
+- 🟦 **Square Sun & Moon** - Voxel aesthetic with dreamy gradients
+- ⭐ **Baked Star Field** - Texture-based stars with real-time twinkling (red, blue, white)
 - 🌫️ **Dynamic Fog** - Fog color matches time of day
 - 💡 **Ambient Lighting** - World brightness changes with sun/moon
-- 🎨 **Smooth Transitions** - Beautiful dawn/dusk color gradients
+- 🎨 **Dreamy Dawn/Dusk** - Orange, pink, and purple gradient transitions
+- 🌌 **Dual Cube Maps** - Separate day (blue sky) and night (stars) textures
 
 ## Time System
 
@@ -27,10 +28,11 @@ The sky system provides:
 ### Time Progression
 
 At **timespeed = 1.0** (normal speed):
-- Full day/night cycle = **24 minutes** of real time
-- Each in-game hour = 1 minute of real time
-- Sunrise to sunset = ~12 minutes
-- Night duration = ~12 minutes
+- Full day/night cycle = **20 minutes** of real time (Minecraft-compatible)
+- **24000 ticks** = 1 full cycle (20 ticks/second)
+- Day time starts at **0.25** (sunrise/morning)
+- Day is longer than night for better gameplay
+- Time flows automatically by default
 
 ## Console Commands
 
@@ -65,10 +67,10 @@ Control how fast time progresses.
 
 **Usage:**
 ```
-timespeed 0      # Pause time (default)
-timespeed 1      # Normal speed (24 min cycle)
-timespeed 10     # 10x faster (2.4 min cycle)
-timespeed 0.1    # 10% speed (4 hour cycle)
+timespeed 0      # Pause time
+timespeed 1      # Normal speed (20 min cycle) - default
+timespeed 10     # 10x faster (2 min cycle)
+timespeed 0.1    # 10% speed (3.3 hour cycle)
 timespeed        # Show current speed
 ```
 
@@ -89,26 +91,31 @@ Press Tab after `timespeed ` to cycle through: `0`, `0.1`, `1`, `10`, `100`
 
 ### Sun
 
-- **Size:** Small, bright disc
-- **Color:** Warm yellow-white (255, 255, 230)
-- **Corona:** Soft glow around sun
-- **Movement:** Rises in east, sets in west
+- **Shape:** Square (voxel aesthetic)
+- **Size:** 0.025 units (half-width)
+- **Core:** Bright yellow-white center
+- **Gradient:** Dreamy purple-to-orange glow
+- **Movement:** Travels across sky based on time
 - **Intensity:** Peaks at noon (0.5)
 
 ### Moon
 
-- **Size:** Small disc (slightly larger than sun)
-- **Color:** Cool blue-white (200, 200, 255)
-- **Position:** Always opposite to sun
+- **Shape:** Square (voxel aesthetic)
+- **Size:** 0.020 units (slightly smaller than sun)
+- **Color:** Cool blue-white tint
+- **Movement:** Independent path, 1.75x faster than sun
+- **Speed:** Faster movement compensates for shorter night
 - **Visibility:** Strongest at midnight (0.0 / 1.0)
 
 ### Stars
 
-- **Type:** Procedural point field
-- **Distribution:** Random, hash-based
-- **Behavior:** Subtle twinkling effect
-- **Visibility:** Only visible at night (sun intensity < 0.1)
-- **Location:** Upper hemisphere only
+- **Type:** Baked into night cube map texture
+- **Density:** 0.75% of pixels (192 stars per 256x256 face)
+- **Colors:** Red (15%), blue (15%), white (70%)
+- **Brightness:** Variable (70-100% per star)
+- **Twinkling:** Real-time shader effect (0-100% brightness range)
+- **Distribution:** Even across all cube faces (except bottom)
+- **Performance:** Zero cost (pre-rendered into texture)
 
 ### Fog & Lighting
 
@@ -121,7 +128,7 @@ Press Tab after `timespeed ` to cycle through: `0`, `0.1`, `1`, `10`, `100`
 - Brightness: 60-80%
 
 **Night (0.0-0.2 and 0.8-1.0):**
-- Fog: Dark blue (0.15, 0.2, 0.35)
+- Fog: Nearly black (0.02, 0.02, 0.02)
 - Brightness: 45% (0.3 base + 0.15 from moon)
 
 ## Usage Examples
@@ -166,15 +173,18 @@ Test stars and moon rendering.
 ### Architecture
 
 **Rendering:**
-- Cube map: 256x256 per face (6 faces total)
-- Procedural gradient: Blue zenith → Lighter horizon
-- Memory: ~1.5MB for cube map texture
+- **Dual cube maps:** Day (blue sky) + Night (black with stars)
+- Resolution: 256x256 per face (6 faces each)
+- Day cube map: Natural blue gradient (zenith to horizon)
+- Night cube map: Nearly black with 0.75% baked star pixels
+- Memory: ~3MB total (1.5MB per cube map)
 - Shaders: `skybox.vert`, `skybox.frag`
 
 **Descriptor Bindings:**
 - Binding 0: Uniform buffer (MVP + camera + sky time)
 - Binding 1: Block texture atlas
-- Binding 2: Skybox cube map sampler
+- Binding 2: Day skybox cube map sampler
+- Binding 3: Night skybox cube map sampler
 
 **Performance:**
 - Skybox renders once per frame
@@ -188,9 +198,10 @@ Test stars and moon rendering.
 // Called every frame in main game loop
 ConsoleCommands::updateSkyTime(deltaTime);
 
-// Calculation:
-// time += (deltaTime * timeSpeed) / 1440.0
-// where 1440 = 24 minutes * 60 seconds
+// Calculation (Minecraft-compatible):
+// time += (deltaTime * timeSpeed) / 1200.0
+// where 1200 = 20 minutes * 60 seconds
+// Matches Minecraft: 24000 ticks at 20 ticks/second = 1200 seconds
 ```
 
 ### Sky Time Data (Shader Uniform)
@@ -217,13 +228,13 @@ Intensities are calculated using smooth step functions for natural transitions.
 
 ### Changing Cycle Duration
 
-Edit `src/console_commands.cpp`, line ~338:
+Edit `src/console_commands.cpp`, `updateSkyTime()`:
 ```cpp
-// Default: 1440 seconds (24 minutes)
-s_currentSkyTime += (deltaTime * s_timeSpeed) / 1440.0f;
+// Default: 1200 seconds (20 minutes, Minecraft-compatible)
+s_currentSkyTime += (deltaTime * s_timeSpeed) / 1200.0f;
 
-// For 12 minute cycle:
-s_currentSkyTime += (deltaTime * s_timeSpeed) / 720.0f;
+// For 10 minute cycle:
+s_currentSkyTime += (deltaTime * s_timeSpeed) / 600.0f;
 
 // For 1 hour cycle:
 s_currentSkyTime += (deltaTime * s_timeSpeed) / 3600.0f;
@@ -233,32 +244,47 @@ s_currentSkyTime += (deltaTime * s_timeSpeed) / 3600.0f;
 
 Edit `src/vulkan_renderer.cpp`, `createProceduralCubeMap()`:
 ```cpp
-// Line ~1608
-glm::vec3 zenithColor = glm::vec3(0.4f, 0.6f, 0.9f);   // Blue sky
-glm::vec3 horizonColor = glm::vec3(0.7f, 0.85f, 1.0f); // Lighter horizon
+// Day sky colors (line ~1784)
+glm::vec3 zenithColor = glm::vec3(0.25f, 0.5f, 0.85f);    // Deep blue
+glm::vec3 horizonColor = glm::vec3(0.65f, 0.8f, 0.95f);   // Light blue
+```
+
+Edit `src/vulkan_renderer.cpp`, `createNightCubeMap()`:
+```cpp
+// Night sky colors (line ~1914)
+glm::vec3 zenithColor = glm::vec3(0.01f, 0.01f, 0.01f);   // Nearly black
+glm::vec3 horizonColor = glm::vec3(0.03f, 0.03f, 0.03f);  // Slightly lighter
 ```
 
 Edit `shaders/shader.frag` for fog colors:
 ```glsl
 vec3 dayFogColor = vec3(0.7, 0.85, 1.0);       // Light blue
 vec3 dawnDuskFogColor = vec3(1.0, 0.7, 0.5);   // Orange/pink
-vec3 nightFogColor = vec3(0.15, 0.2, 0.35);    // Dark blue
+vec3 nightFogColor = vec3(0.02, 0.02, 0.02);   // Nearly black
 ```
 
 ### Changing Sun/Moon Properties
 
 Edit `shaders/skybox.frag`:
 ```glsl
-// Sun (line ~77)
-if (sunDot > 0.999 && sunIntensity > 0.01) {  // Sun size
-    vec3 sunColor = vec3(1.0, 1.0, 0.9);       // Sun color
-    skyColor += sunColor * 3.0;                 // Sun brightness
-}
+// Sun size and appearance (line ~112)
+float sunSize = 0.025;  // Half-width of square
 
-// Moon (line ~88)
-if (moonDot > 0.998 && moonIntensity > 0.01) { // Moon size
-    vec3 moonColor = vec3(0.8, 0.8, 1.0);      // Moon color
-    skyColor += moonColor * 1.5;                // Moon brightness
+// Moon size and appearance (line ~148)
+float moonSize = 0.020;  // Half-width of square
+
+// Moon speed (line ~99)
+float moonAngle = moonTime * 3.14159 * 3.5;  // 1.75x faster than sun
+```
+
+### Changing Star Density
+
+Edit `src/vulkan_renderer.cpp`, `createNightCubeMap()`:
+```cpp
+// Star probability (line ~1959)
+if (randVal < 0.0075f) {  // 0.75% density
+    // Change to 0.015f for 1.5% (twice as many)
+    // Change to 0.0037f for 0.37% (half as many)
 }
 ```
 
@@ -279,10 +305,12 @@ if (moonDot > 0.998 && moonIntensity > 0.01) { // Moon size
 - Try: `skytime 0.5` for noon or `skytime 0.0` for midnight
 
 **Stars not appearing:**
-- Stars only visible when sun is down
+- Stars are baked into night cube map texture
+- Only visible when night sky is rendered (sun down)
 - Set to night: `skytime 0.0`
-- Enable time: `timespeed 0` (freeze at night)
-- Stars are subtle - look at upper hemisphere
+- Pause time: `timespeed 0` (freeze at night)
+- Stars twinkle - may fade to black periodically
+- Look at upper hemisphere (not below horizon)
 
 **Fog color doesn't match sky:**
 - Both should update together automatically
