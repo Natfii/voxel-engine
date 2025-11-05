@@ -180,7 +180,7 @@ void Chunk::generate() {
 
         float uMin = faceTexture->atlasX * uvScale;
         float vMin = faceTexture->atlasY * uvScale;
-        // Note: Texture variation disabled for merged quads for simplicity
+        // Note: Texture will stretch across merged quad (standard for atlas-based greedy meshing)
 
         uint32_t baseIndex = static_cast<uint32_t>(verts.size());
         float blockSize = 0.5f;
@@ -214,17 +214,17 @@ void Chunk::generate() {
             v[3].x = bx;                v[3].y = by + h * blockSize; v[3].z = bz + zOffset;
         }
 
-        // UV coordinates - tile the texture across merged quad
+        // UV coordinates - clamp to single atlas cell (texture stretches across merged quad)
         if (flipV) {
-            v[0].u = uMin;             v[0].v = vMin + h * uvScale;
-            v[1].u = uMin + w * uvScale; v[1].v = vMin + h * uvScale;
-            v[2].u = uMin + w * uvScale; v[2].v = vMin;
-            v[3].u = uMin;             v[3].v = vMin;
+            v[0].u = uMin;           v[0].v = vMin + uvScale;
+            v[1].u = uMin + uvScale; v[1].v = vMin + uvScale;
+            v[2].u = uMin + uvScale; v[2].v = vMin;
+            v[3].u = uMin;           v[3].v = vMin;
         } else {
-            v[0].u = uMin;             v[0].v = vMin;
-            v[1].u = uMin + w * uvScale; v[1].v = vMin;
-            v[2].u = uMin + w * uvScale; v[2].v = vMin + h * uvScale;
-            v[3].u = uMin;             v[3].v = vMin + h * uvScale;
+            v[0].u = uMin;           v[0].v = vMin;
+            v[1].u = uMin + uvScale; v[1].v = vMin;
+            v[2].u = uMin + uvScale; v[2].v = vMin + uvScale;
+            v[3].u = uMin;           v[3].v = vMin + uvScale;
         }
 
         for (int i = 0; i < 4; i++) verts.push_back(v[i]);
@@ -427,16 +427,17 @@ void Chunk::generateMesh(World* world) {
             v[3].x = bx;                v[3].y = by + h * blockSize; v[3].z = bz + zOffset;
         }
 
+        // UV coordinates - clamp to single atlas cell (texture stretches across merged quad)
         if (flipV) {
-            v[0].u = uMin;             v[0].v = vMin + h * uvScale;
-            v[1].u = uMin + w * uvScale; v[1].v = vMin + h * uvScale;
-            v[2].u = uMin + w * uvScale; v[2].v = vMin;
-            v[3].u = uMin;             v[3].v = vMin;
+            v[0].u = uMin;           v[0].v = vMin + uvScale;
+            v[1].u = uMin + uvScale; v[1].v = vMin + uvScale;
+            v[2].u = uMin + uvScale; v[2].v = vMin;
+            v[3].u = uMin;           v[3].v = vMin;
         } else {
-            v[0].u = uMin;             v[0].v = vMin;
-            v[1].u = uMin + w * uvScale; v[1].v = vMin;
-            v[2].u = uMin + w * uvScale; v[2].v = vMin + h * uvScale;
-            v[3].u = uMin;             v[3].v = vMin + h * uvScale;
+            v[0].u = uMin;           v[0].v = vMin;
+            v[1].u = uMin + uvScale; v[1].v = vMin;
+            v[2].u = uMin + uvScale; v[2].v = vMin + uvScale;
+            v[3].u = uMin;           v[3].v = vMin + uvScale;
         }
 
         for (int i = 0; i < 4; i++) verts.push_back(v[i]);
