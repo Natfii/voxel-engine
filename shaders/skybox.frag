@@ -16,64 +16,80 @@ layout(location = 0) in vec3 fragTexCoord;
 layout(location = 0) out vec4 outColor;
 
 // Hash function for procedural stars - better distribution
-float hash(vec3 p) {
-    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
-    p += dot(p, p.yxz + 33.33);
-    return fract((p.x + p.y) * p.z);
+float hash(vec2 p) {
+    p = fract(p * vec2(123.45, 456.78));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
 }
 
-// Generate procedural stars with colors
+// Generate procedural stars with colors - spherical coordinate approach
 vec3 stars(vec3 dir) {
     // Only render stars in upper hemisphere
     if (dir.y < 0.0) return vec3(0.0);
 
-    // Much denser grid for better distribution
-    vec3 starCoord = dir * 300.0;  // Increased from 100 to 300
-    vec3 cellCoord = floor(starCoord);
+    // Convert to spherical coordinates for even distribution
+    float phi = atan(dir.z, dir.x);  // Azimuthal angle
+    float theta = asin(dir.y);        // Elevation angle
 
-    // Generate a star in each cell with some probability
-    float h = hash(cellCoord);
+    // Create grid in angular space (evenly distributed on sphere)
+    vec2 angleCoord = vec2(phi, theta) * 50.0;  // 50 cells per radian
+    vec2 cellCoord = floor(angleCoord);
 
-    if (h > 0.985) {  // 1.5% of cells have stars
-        // Randomize position within cell for less grid-like appearance
-        vec3 offset = vec3(
-            fract(h * 41.123),
-            fract(h * 73.456),
-            fract(h * 97.789)
-        );
-        vec3 starPos = cellCoord + offset;
-        float dist = distance(normalize(starPos), dir);
+    // Check multiple nearby cells to avoid gaps
+    vec3 starColor = vec3(0.0);
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            vec2 checkCell = cellCoord + vec2(dx, dy);
+            float h = hash(checkCell);
 
-        // Vary star sizes - some bigger, some smaller
-        float starSize = 0.004 + (h - 0.985) * 0.08;  // Smaller to match denser grid
+            if (h > 0.98) {  // 2% chance per cell
+                // Random offset within this cell
+                vec2 offset = vec2(
+                    fract(h * 41.123),
+                    fract(h * 73.456)
+                );
+                vec2 starAngle = (checkCell + offset) / 50.0;
 
-        // Make stars twinkle slightly
-        float twinkle = 0.7 + 0.3 * sin(h * 100.0 + ubo.skyTimeData.x * 6.28);
+                // Convert back to 3D direction
+                float starPhi = starAngle.x;
+                float starTheta = starAngle.y;
+                vec3 starDir = vec3(
+                    cos(starTheta) * cos(starPhi),
+                    sin(starTheta),
+                    cos(starTheta) * sin(starPhi)
+                );
 
-        if (dist < starSize) {
-            float brightness = (1.0 - dist / starSize) * twinkle;
-            // Vary brightness - some stars brighter than others
-            brightness *= (0.5 + (h - 0.985) * 33.33);  // 0.5 to 1.0 brightness
+                // Angular distance to this star
+                float angularDist = acos(clamp(dot(dir, starDir), -1.0, 1.0));
 
-            // Determine star color based on hash value
-            float colorHash = fract(h * 43.7584);  // Different hash for color
-            vec3 starColor;
-            if (colorHash < 0.15) {
-                // Red stars (15%)
-                starColor = vec3(1.0, 0.6, 0.6);
-            } else if (colorHash < 0.30) {
-                // Blue stars (15%)
-                starColor = vec3(0.6, 0.7, 1.0);
-            } else {
-                // White stars (70%)
-                starColor = vec3(0.95, 0.95, 1.0);
+                // Star size in radians
+                float starSize = 0.005 + fract(h * 97.789) * 0.003;
+
+                if (angularDist < starSize) {
+                    float brightness = (1.0 - angularDist / starSize);
+
+                    // Twinkle
+                    float twinkle = 0.7 + 0.3 * sin(h * 100.0 + ubo.skyTimeData.x * 6.28);
+                    brightness *= twinkle;
+
+                    // Determine star color
+                    float colorHash = fract(h * 43.7584);
+                    vec3 color;
+                    if (colorHash < 0.15) {
+                        color = vec3(1.0, 0.6, 0.6);  // Red
+                    } else if (colorHash < 0.30) {
+                        color = vec3(0.6, 0.7, 1.0);  // Blue
+                    } else {
+                        color = vec3(0.95, 0.95, 1.0);  // White
+                    }
+
+                    starColor = max(starColor, color * brightness);
+                }
             }
-
-            return starColor * brightness;
         }
     }
 
-    return vec3(0.0);
+    return starColor;
 }
 
 void main() {
