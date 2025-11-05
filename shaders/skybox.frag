@@ -71,12 +71,37 @@ void main() {
         skyColor *= vec3(0.9, 1.0, 1.2) * (0.8 + 0.2 * dayNightBlend);
 
         // Calculate whether we're in dawn/dusk period
-        float dawnDuskFactor = smoothstep(0.2, 0.3, time) * (1.0 - smoothstep(0.35, 0.45, time));
-        dawnDuskFactor += smoothstep(0.65, 0.75, time) * (1.0 - smoothstep(0.8, 0.9, time));
+        // Dawn: 0.15-0.35 (broader for longer effect)
+        float dawnFactor = smoothstep(0.15, 0.25, time) * (1.0 - smoothstep(0.3, 0.4, time));
+        // Dusk: 0.6-0.85 (broader for longer effect)
+        float duskFactor = smoothstep(0.6, 0.7, time) * (1.0 - smoothstep(0.8, 0.9, time));
+        float dawnDuskFactor = dawnFactor + duskFactor;
 
-        // Dawn/dusk warm tint
-        vec3 dawnDuskTint = vec3(1.3, 0.9, 0.7);  // Warm orange
-        skyColor = mix(skyColor, skyColor * dawnDuskTint, dawnDuskFactor * dayNightBlend);
+        if (dawnDuskFactor > 0.01) {
+            // Gradient based on vertical position (y coordinate)
+            float verticalGradient = normalize(fragTexCoord).y;
+            verticalGradient = clamp(verticalGradient, -0.3, 1.0); // Clamp to avoid weird colors below horizon
+
+            // Dreamy color palette for dawn/dusk
+            vec3 horizonColor = vec3(1.0, 0.4, 0.2);    // Vibrant orange at horizon
+            vec3 midColor = vec3(1.0, 0.6, 0.7);        // Pink/salmon in middle
+            vec3 topColor = vec3(0.6, 0.4, 0.8);        // Purple at top
+
+            // Blend colors based on vertical gradient
+            vec3 dawnDuskColor;
+            if (verticalGradient < 0.3) {
+                // Horizon to mid: orange -> pink
+                float t = smoothstep(-0.3, 0.3, verticalGradient);
+                dawnDuskColor = mix(horizonColor, midColor, t);
+            } else {
+                // Mid to top: pink -> purple
+                float t = smoothstep(0.3, 1.0, verticalGradient);
+                dawnDuskColor = mix(midColor, topColor, t);
+            }
+
+            // Apply dreamy dawn/dusk tint
+            skyColor = mix(skyColor, skyColor * dawnDuskColor * 1.5, dawnDuskFactor * dayNightBlend);
+        }
     }
 
     // Calculate sun direction (moves across sky based on time)

@@ -235,7 +235,7 @@ private:
     VkDeviceMemory m_skyboxVertexBufferMemory;
 
     // Sky time for day/night cycle
-    float m_skyTime = 0.5f;  // 0.5 = noon
+    float m_skyTime = 0.25f;  // 0.25 = morning (sunrise)
 
     // Synchronization
     std::vector<VkSemaphore> m_imageAvailableSemaphores;

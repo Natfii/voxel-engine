@@ -15,7 +15,7 @@ Player* ConsoleCommands::s_player = nullptr;
 World* ConsoleCommands::s_world = nullptr;
 VulkanRenderer* ConsoleCommands::s_renderer = nullptr;
 float ConsoleCommands::s_timeSpeed = 1.0f;      // Default: normal speed (time flows by default)
-float ConsoleCommands::s_currentSkyTime = 0.5f; // Default: noon
+float ConsoleCommands::s_currentSkyTime = 0.25f; // Default: morning (sunrise)
 
 void ConsoleCommands::registerAll(Console* console, Player* player, World* world, VulkanRenderer* renderer) {
     s_console = console;
