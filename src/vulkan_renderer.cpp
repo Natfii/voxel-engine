@@ -1955,8 +1955,8 @@ void VulkanRenderer::createNightCubeMap() {
                 uint32_t h = hash(x, y, face);
                 float randVal = (float)(h % 10000) / 10000.0f;
 
-                // 1.5% chance of a star at this pixel
-                if (randVal < 0.015f) {
+                // 0.75% chance of a star at this pixel (half of previous density)
+                if (randVal < 0.0075f) {
                     uint32_t index = (y * size + x) * 4;
 
                     // Determine star color based on hash

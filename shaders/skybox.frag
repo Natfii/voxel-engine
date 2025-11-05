@@ -20,6 +20,17 @@ void main() {
     vec3 daySkyColor = texture(daySkybox, fragTexCoord).rgb;
     vec3 nightSkyColor = texture(nightSkybox, fragTexCoord).rgb;
 
+    // Add subtle twinkling to stars in night sky
+    // Use spatial hash based on texture coordinates for variation
+    float twinklePhase = fract(sin(dot(fragTexCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    float twinkle = 0.85 + 0.15 * sin(twinklePhase * 6.28 + ubo.skyTimeData.x * 8.0);
+
+    // Only twinkle the bright pixels (stars) in the night sky
+    float starBrightness = max(max(nightSkyColor.r, nightSkyColor.g), nightSkyColor.b);
+    if (starBrightness > 0.1) {
+        nightSkyColor *= twinkle;
+    }
+
     // Time-based data
     float time = ubo.skyTimeData.x;
     float sunIntensity = ubo.skyTimeData.y;
@@ -98,7 +109,7 @@ void main() {
         float sunY = dot(toView, sunUp);
 
         // Square sun (check if within square bounds)
-        float sunSize = 0.015;  // Half-width of square
+        float sunSize = 0.025;  // Half-width of square
         if (abs(sunX) < sunSize && abs(sunY) < sunSize) {
             // Distance from center for glow effect
             float distFromCenter = max(abs(sunX), abs(sunY)) / sunSize;
@@ -134,7 +145,7 @@ void main() {
         float moonY = dot(toViewMoon, moonUp);
 
         // Square moon (check if within square bounds)
-        float moonSize = 0.012;  // Half-width of square (slightly smaller than sun)
+        float moonSize = 0.020;  // Half-width of square (slightly smaller than sun)
         if (abs(moonX) < moonSize && abs(moonY) < moonSize) {
             vec3 moonColor = vec3(0.8, 0.8, 1.0) * moonIntensity;
             skyColor += moonColor * 1.5;  // Dimmer than sun
