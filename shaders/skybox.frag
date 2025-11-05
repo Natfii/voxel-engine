@@ -15,11 +15,11 @@ layout(location = 0) in vec3 fragTexCoord;
 
 layout(location = 0) out vec4 outColor;
 
-// Hash function for procedural stars
+// Hash function for procedural stars - better distribution
 float hash(vec3 p) {
-    p = fract(p * 0.3183099 + 0.1);
-    p *= 17.0;
-    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return fract((p.x + p.y) * p.z);
 }
 
 // Generate procedural stars with colors
@@ -27,19 +27,25 @@ vec3 stars(vec3 dir) {
     // Only render stars in upper hemisphere
     if (dir.y < 0.0) return vec3(0.0);
 
-    vec3 starCoord = dir * 100.0;
+    // Much denser grid for better distribution
+    vec3 starCoord = dir * 300.0;  // Increased from 100 to 300
     vec3 cellCoord = floor(starCoord);
 
     // Generate a star in each cell with some probability
     float h = hash(cellCoord);
 
-    if (h > 0.985) {  // 1.5% of cells have stars (less clustered!)
-        vec3 starPos = cellCoord + vec3(0.5);
-        vec3 toStar = normalize(starPos - starCoord);
+    if (h > 0.985) {  // 1.5% of cells have stars
+        // Randomize position within cell for less grid-like appearance
+        vec3 offset = vec3(
+            fract(h * 41.123),
+            fract(h * 73.456),
+            fract(h * 97.789)
+        );
+        vec3 starPos = cellCoord + offset;
         float dist = distance(normalize(starPos), dir);
 
         // Vary star sizes - some bigger, some smaller
-        float starSize = 0.012 + (h - 0.985) * 0.27;  // 0.012 to 0.016
+        float starSize = 0.004 + (h - 0.985) * 0.08;  // Smaller to match denser grid
 
         // Make stars twinkle slightly
         float twinkle = 0.7 + 0.3 * sin(h * 100.0 + ubo.skyTimeData.x * 6.28);
@@ -138,35 +144,62 @@ void main() {
     // Calculate moon direction (opposite to sun)
     vec3 moonDir = -sunDir;
 
-    // Add sun with dreamy colors
-    float sunDot = dot(normalize(fragTexCoord), sunDir);
-    if (sunDot > 0.996 && sunIntensity > 0.01) {
-        // Dreamy sun with orangey-purple gradient
-        if (sunDot > 0.998) {
-            // Bright core with warm orange-yellow
-            float coreGlow = smoothstep(0.998, 1.0, sunDot);
-            vec3 sunCore = vec3(1.0, 0.85, 0.6) * coreGlow * sunIntensity;  // Warm orange-yellow
-            skyColor += sunCore * 5.0;  // Very bright core
-        } else if (sunDot > 0.996) {
-            // Outer glow with orangey-purple gradient
-            float glowAmount = (sunDot - 0.996) / 0.002;  // 0 to 1
-            float glowFactor = smoothstep(0.0, 1.0, glowAmount);
+    // Create perpendicular basis vectors for sun (for square rendering)
+    vec3 sunRight = normalize(cross(sunDir, vec3(0.0, 1.0, 0.0)));
+    vec3 sunUp = normalize(cross(sunRight, sunDir));
 
-            // Gradient from purple outer edge to orange inner
-            vec3 outerColor = vec3(0.8, 0.4, 0.9);   // Purple
-            vec3 innerColor = vec3(1.0, 0.6, 0.4);   // Orange
-            vec3 glowColor = mix(outerColor, innerColor, glowFactor);
+    // Add square sun with dreamy colors
+    vec3 viewDir = normalize(fragTexCoord);
+    float sunDot = dot(viewDir, sunDir);
 
-            skyColor += glowColor * glowFactor * sunIntensity * 2.5;
+    if (sunDot > 0.99 && sunIntensity > 0.01) {
+        // Project view direction onto sun's perpendicular plane
+        vec3 toView = viewDir - sunDir * sunDot;
+        float sunX = dot(toView, sunRight);
+        float sunY = dot(toView, sunUp);
+
+        // Square sun (check if within square bounds)
+        float sunSize = 0.015;  // Half-width of square
+        if (abs(sunX) < sunSize && abs(sunY) < sunSize) {
+            // Distance from center for glow effect
+            float distFromCenter = max(abs(sunX), abs(sunY)) / sunSize;
+
+            if (distFromCenter < 0.5) {
+                // Bright core
+                vec3 sunCore = vec3(1.0, 0.85, 0.6) * sunIntensity;
+                skyColor += sunCore * 5.0 * (1.0 - distFromCenter * 2.0);
+            } else {
+                // Outer glow with orangey-purple gradient
+                float glowFactor = 1.0 - (distFromCenter - 0.5) * 2.0;
+
+                // Gradient from purple outer edge to orange inner
+                vec3 outerColor = vec3(0.8, 0.4, 0.9);   // Purple
+                vec3 innerColor = vec3(1.0, 0.6, 0.4);   // Orange
+                vec3 glowColor = mix(outerColor, innerColor, 1.0 - distFromCenter);
+
+                skyColor += glowColor * glowFactor * sunIntensity * 2.5;
+            }
         }
     }
 
-    // Add moon
-    float moonDot = dot(normalize(fragTexCoord), moonDir);
-    if (moonDot > 0.998 && moonIntensity > 0.01) {
-        float moonGlow = smoothstep(0.998, 1.0, moonDot);
-        vec3 moonColor = vec3(0.8, 0.8, 1.0) * moonGlow * moonIntensity;
-        skyColor += moonColor * 1.5;  // Dimmer than sun
+    // Create perpendicular basis vectors for moon (for square rendering)
+    vec3 moonRight = normalize(cross(moonDir, vec3(0.0, 1.0, 0.0)));
+    vec3 moonUp = normalize(cross(moonRight, moonDir));
+
+    // Add square moon
+    float moonDot = dot(viewDir, moonDir);
+    if (moonDot > 0.99 && moonIntensity > 0.01) {
+        // Project view direction onto moon's perpendicular plane
+        vec3 toViewMoon = viewDir - moonDir * moonDot;
+        float moonX = dot(toViewMoon, moonRight);
+        float moonY = dot(toViewMoon, moonUp);
+
+        // Square moon (check if within square bounds)
+        float moonSize = 0.012;  // Half-width of square (slightly smaller than sun)
+        if (abs(moonX) < moonSize && abs(moonY) < moonSize) {
+            vec3 moonColor = vec3(0.8, 0.8, 1.0) * moonIntensity;
+            skyColor += moonColor * 1.5;  // Dimmer than sun
+        }
     }
 
     // Add stars at night
