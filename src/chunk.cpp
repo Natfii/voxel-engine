@@ -155,7 +155,8 @@ void Chunk::generate() {
     };
 
     // Helper to create a merged quad
-    auto createQuad = [&](int x, int y, int z, int w, int h, int axis, bool positive, int blockID) {
+    // w and h are in u-v space (tangent to the face), need to map to XYZ
+    auto createQuad = [&](int x, int y, int z, int w, int h, int axis, bool positive, int blockID, int u, int v) {
         const BlockDefinition& def = registry.get(blockID);
         float cr, cg, cb;
         if (def.hasColor) {
@@ -188,30 +189,35 @@ void Chunk::generate() {
         float by = float(m_y * HEIGHT + y) * blockSize;
         float bz = float(m_z * DEPTH + z) * blockSize;
 
+        // Map w and h to actual dimensions using u and v
+        float size[3] = {blockSize, blockSize, blockSize};
+        size[u] = w * blockSize;  // width along u axis
+        size[v] = h * blockSize;  // height along v axis
+
         // Create 4 vertices for merged quad
         Vertex v[4];
         for (int i = 0; i < 4; i++) {
             v[i].r = cr; v[i].g = cg; v[i].b = cb;
         }
 
-        if (axis == 0) {  // X axis (left/right faces)
-            float xOffset = positive ? blockSize : 0.0f;
-            v[0].x = bx + xOffset; v[0].y = by;                v[0].z = bz;
-            v[1].x = bx + xOffset; v[1].y = by;                v[1].z = bz + h * blockSize;
-            v[2].x = bx + xOffset; v[2].y = by + w * blockSize; v[2].z = bz + h * blockSize;
-            v[3].x = bx + xOffset; v[3].y = by + w * blockSize; v[3].z = bz;
-        } else if (axis == 1) {  // Y axis (top/bottom faces)
-            float yOffset = positive ? blockSize : 0.0f;
-            v[0].x = bx;                v[0].y = by + yOffset; v[0].z = bz;
-            v[1].x = bx + w * blockSize; v[1].y = by + yOffset; v[1].z = bz;
-            v[2].x = bx + w * blockSize; v[2].y = by + yOffset; v[2].z = bz + h * blockSize;
-            v[3].x = bx;                v[3].y = by + yOffset; v[3].z = bz + h * blockSize;
-        } else {  // Z axis (front/back faces)
-            float zOffset = positive ? blockSize : 0.0f;
-            v[0].x = bx;                v[0].y = by;                v[0].z = bz + zOffset;
-            v[1].x = bx + w * blockSize; v[1].y = by;                v[1].z = bz + zOffset;
-            v[2].x = bx + w * blockSize; v[2].y = by + h * blockSize; v[2].z = bz + zOffset;
-            v[3].x = bx;                v[3].y = by + h * blockSize; v[3].z = bz + zOffset;
+        // Calculate vertex positions based on axis
+        float offset = positive ? blockSize : 0.0f;
+
+        if (axis == 0) {  // X axis (left/right faces), YZ plane
+            v[0].x = bx + offset; v[0].y = by;        v[0].z = bz;
+            v[1].x = bx + offset; v[1].y = by;        v[1].z = bz + size[2];
+            v[2].x = bx + offset; v[2].y = by + size[1]; v[2].z = bz + size[2];
+            v[3].x = bx + offset; v[3].y = by + size[1]; v[3].z = bz;
+        } else if (axis == 1) {  // Y axis (top/bottom faces), XZ plane
+            v[0].x = bx;        v[0].y = by + offset; v[0].z = bz;
+            v[1].x = bx + size[0]; v[1].y = by + offset; v[1].z = bz;
+            v[2].x = bx + size[0]; v[2].y = by + offset; v[2].z = bz + size[2];
+            v[3].x = bx;        v[3].y = by + offset; v[3].z = bz + size[2];
+        } else {  // Z axis (front/back faces), XY plane
+            v[0].x = bx;        v[0].y = by;        v[0].z = bz + offset;
+            v[1].x = bx + size[0]; v[1].y = by;        v[1].z = bz + offset;
+            v[2].x = bx + size[0]; v[2].y = by + size[1]; v[2].z = bz + offset;
+            v[3].x = bx;        v[3].y = by + size[1]; v[3].z = bz + offset;
         }
 
         // UV coordinates - clamp to single atlas cell (texture stretches across merged quad)
@@ -323,7 +329,7 @@ void Chunk::generate() {
                         pos[axis] = slice;
                         pos[u] = iu;
                         pos[v] = iv;
-                        createQuad(pos[0], pos[1], pos[2], w, h, axis, positive != 0, blockID);
+                        createQuad(pos[0], pos[1], pos[2], w, h, axis, positive != 0, blockID, u, v);
 
                         // Mark as processed
                         for (int dv = 0; dv < h; dv++) {
@@ -371,7 +377,8 @@ void Chunk::generateMesh(World* world) {
     };
 
     // Helper to create a merged quad (same as generate() but with world-aware culling)
-    auto createQuad = [&](int x, int y, int z, int w, int h, int axis, bool positive, int blockID) {
+    // w and h are in u-v space (tangent to the face), need to map to XYZ
+    auto createQuad = [&](int x, int y, int z, int w, int h, int axis, bool positive, int blockID, int u, int v) {
         const BlockDefinition& def = registry.get(blockID);
         float cr, cg, cb;
         if (def.hasColor) {
@@ -402,29 +409,34 @@ void Chunk::generateMesh(World* world) {
         float by = float(m_y * HEIGHT + y) * blockSize;
         float bz = float(m_z * DEPTH + z) * blockSize;
 
+        // Map w and h to actual dimensions using u and v
+        float size[3] = {blockSize, blockSize, blockSize};
+        size[u] = w * blockSize;  // width along u axis
+        size[v] = h * blockSize;  // height along v axis
+
         Vertex v[4];
         for (int i = 0; i < 4; i++) {
             v[i].r = cr; v[i].g = cg; v[i].b = cb;
         }
 
-        if (axis == 0) {
-            float xOffset = positive ? blockSize : 0.0f;
-            v[0].x = bx + xOffset; v[0].y = by;                v[0].z = bz;
-            v[1].x = bx + xOffset; v[1].y = by;                v[1].z = bz + h * blockSize;
-            v[2].x = bx + xOffset; v[2].y = by + w * blockSize; v[2].z = bz + h * blockSize;
-            v[3].x = bx + xOffset; v[3].y = by + w * blockSize; v[3].z = bz;
-        } else if (axis == 1) {
-            float yOffset = positive ? blockSize : 0.0f;
-            v[0].x = bx;                v[0].y = by + yOffset; v[0].z = bz;
-            v[1].x = bx + w * blockSize; v[1].y = by + yOffset; v[1].z = bz;
-            v[2].x = bx + w * blockSize; v[2].y = by + yOffset; v[2].z = bz + h * blockSize;
-            v[3].x = bx;                v[3].y = by + yOffset; v[3].z = bz + h * blockSize;
-        } else {
-            float zOffset = positive ? blockSize : 0.0f;
-            v[0].x = bx;                v[0].y = by;                v[0].z = bz + zOffset;
-            v[1].x = bx + w * blockSize; v[1].y = by;                v[1].z = bz + zOffset;
-            v[2].x = bx + w * blockSize; v[2].y = by + h * blockSize; v[2].z = bz + zOffset;
-            v[3].x = bx;                v[3].y = by + h * blockSize; v[3].z = bz + zOffset;
+        // Calculate vertex positions based on axis
+        float offset = positive ? blockSize : 0.0f;
+
+        if (axis == 0) {  // X axis (left/right faces), YZ plane
+            v[0].x = bx + offset; v[0].y = by;        v[0].z = bz;
+            v[1].x = bx + offset; v[1].y = by;        v[1].z = bz + size[2];
+            v[2].x = bx + offset; v[2].y = by + size[1]; v[2].z = bz + size[2];
+            v[3].x = bx + offset; v[3].y = by + size[1]; v[3].z = bz;
+        } else if (axis == 1) {  // Y axis (top/bottom faces), XZ plane
+            v[0].x = bx;        v[0].y = by + offset; v[0].z = bz;
+            v[1].x = bx + size[0]; v[1].y = by + offset; v[1].z = bz;
+            v[2].x = bx + size[0]; v[2].y = by + offset; v[2].z = bz + size[2];
+            v[3].x = bx;        v[3].y = by + offset; v[3].z = bz + size[2];
+        } else {  // Z axis (front/back faces), XY plane
+            v[0].x = bx;        v[0].y = by;        v[0].z = bz + offset;
+            v[1].x = bx + size[0]; v[1].y = by;        v[1].z = bz + offset;
+            v[2].x = bx + size[0]; v[2].y = by + size[1]; v[2].z = bz + offset;
+            v[3].x = bx;        v[3].y = by + size[1]; v[3].z = bz + offset;
         }
 
         // UV coordinates - clamp to single atlas cell (texture stretches across merged quad)
@@ -528,7 +540,7 @@ void Chunk::generateMesh(World* world) {
                         pos[axis] = slice;
                         pos[u] = iu;
                         pos[v] = iv;
-                        createQuad(pos[0], pos[1], pos[2], w, h, axis, positive != 0, blockID);
+                        createQuad(pos[0], pos[1], pos[2], w, h, axis, positive != 0, blockID, u, v);
 
                         for (int dv = 0; dv < h; dv++) {
                             for (int du = 0; du < w; du++) {
