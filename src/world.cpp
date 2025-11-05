@@ -75,6 +75,13 @@ void World::createBuffers(VulkanRenderer* renderer) {
     }
 }
 
+void World::cleanup(VulkanRenderer* renderer) {
+    // Destroy all chunk buffers before deleting chunks
+    for (Chunk* chunk : m_chunks) {
+        chunk->destroyBuffers(renderer);
+    }
+}
+
 void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, const glm::mat4& viewProj, float renderDistance) {
     // Validate camera position for NaN/Inf to prevent rendering errors
     if (!std::isfinite(cameraPos.x) || !std::isfinite(cameraPos.y) || !std::isfinite(cameraPos.z)) {

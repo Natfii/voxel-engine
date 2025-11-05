@@ -417,6 +417,9 @@ int main() {
         // Wait for device to finish before cleanup
         vkDeviceWaitIdle(renderer.getDevice());
 
+        // Cleanup world chunk buffers
+        world.cleanup(&renderer);
+
         // Cleanup ImGui
         ImGui_ImplVulkan_Shutdown();
         ImGui_ImplGlfw_Shutdown();
