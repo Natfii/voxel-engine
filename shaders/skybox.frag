@@ -20,10 +20,10 @@ void main() {
     vec3 daySkyColor = texture(daySkybox, fragTexCoord).rgb;
     vec3 nightSkyColor = texture(nightSkybox, fragTexCoord).rgb;
 
-    // Add subtle twinkling to stars in night sky
+    // Add twinkling to stars in night sky (can fade all the way to black)
     // Use spatial hash based on texture coordinates for variation
     float twinklePhase = fract(sin(dot(fragTexCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
-    float twinkle = 0.85 + 0.15 * sin(twinklePhase * 6.28 + ubo.skyTimeData.x * 8.0);
+    float twinkle = 0.5 + 0.5 * sin(twinklePhase * 6.28 + ubo.skyTimeData.x * 8.0);  // Range: 0.0 to 1.0
 
     // Only twinkle the bright pixels (stars) in the night sky
     float starBrightness = max(max(nightSkyColor.r, nightSkyColor.g), nightSkyColor.b);
@@ -91,8 +91,17 @@ void main() {
         cos(sunAngle)
     ));
 
-    // Calculate moon direction (opposite to sun)
-    vec3 moonDir = -sunDir;
+    // Calculate moon direction (independent, moves faster for shorter night)
+    // Moon needs to traverse the sky during the shorter night period
+    // Moon visible from ~0.85-1.0 and 0.0-0.25 (0.4 of cycle vs sun's 0.6)
+    // So moon needs to move 1.5x faster than sun (0.6/0.4 = 1.5)
+    float moonTime = time < 0.5 ? time : time - 1.0;  // Center at 0.0 (midnight)
+    float moonAngle = moonTime * 3.14159 * 3.5;  // 1.75x sun speed for faster night traversal
+    vec3 moonDir = normalize(vec3(
+        0.0,
+        sin(moonAngle),
+        cos(moonAngle)
+    ));
 
     // Create perpendicular basis vectors for sun (for square rendering)
     vec3 sunRight = normalize(cross(sunDir, vec3(0.0, 1.0, 0.0)));
