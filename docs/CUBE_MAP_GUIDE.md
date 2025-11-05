@@ -13,11 +13,46 @@ The voxel engine now supports **cube maps** - the ability to assign different te
 
 ## YAML Format
 
+The cube map system supports multiple formats with intelligent defaults:
+
+### Auto-Detection (Simplest)
+
+If you don't specify any texture, the system automatically loads `{blockname}.png`:
+
+```yaml
+name: "Stone"
+# No texture field needed - automatically loads stone.png
+durability: 10
+affected_by_gravity: false
+```
+
 ### Simple Texture (Backwards Compatible)
 
 ```yaml
 name: "Stone"
 texture: "stone.png"
+durability: 10
+affected_by_gravity: false
+```
+
+### Single Texture Cube Map (All Faces)
+
+If you define only one texture in cube_map, it's used for all faces:
+
+```yaml
+name: "Stone"
+cube_map:
+  all: "stone.png"    # Same as texture: "stone.png"
+durability: 10
+affected_by_gravity: false
+```
+
+Or define just one face - it applies to all:
+
+```yaml
+name: "Stone"
+cube_map:
+  top: "stone.png"    # Will be used for all 6 faces
 durability: 10
 affected_by_gravity: false
 ```
@@ -78,6 +113,43 @@ cube_map:
 - **Back** (`back`): +Z direction
 - **Left** (`left`): -X direction
 - **Right** (`right`): +X direction
+
+## Smart Fallback System
+
+The texture system uses intelligent fallbacks to minimize configuration:
+
+### For each face, the system checks (in priority order):
+
+1. **Face-specific texture** - e.g., `top: "grass.png"`
+2. **"sides" shortcut** - for horizontal faces (front, back, left, right)
+3. **"all" fallback** - universal default for all faces
+4. **Single texture detection** - if only one texture is defined in the entire cube_map, use it for all faces
+5. **Auto-detection** - if no texture/cube_map is defined, try to load `{blockname}.png`
+
+### Examples:
+
+```yaml
+# Only top defined - system detects single texture and uses it for all faces
+cube_map:
+  top: "stone.png"
+# Result: All 6 faces use stone.png
+```
+
+```yaml
+# Multiple textures with fallback
+cube_map:
+  top: "grass.png"
+  bottom: "dirt.png"
+  sides: "grass_side.png"
+# Result: top=grass.png, bottom=dirt.png, front/back/left/right=grass_side.png
+```
+
+```yaml
+# No texture specified at all
+name: "Dirt"
+durability: 5
+# Result: Automatically tries to load dirt.png
+```
 
 ## Texture Atlas
 

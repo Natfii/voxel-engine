@@ -226,16 +226,46 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
 
             YAML::Node cubeMap = doc["cube_map"];
 
-            // Helper to load a face texture, with fallback to "sides" or "all"
+            // Collect all explicitly defined textures to detect single-texture mode
+            std::vector<std::string> definedTextures;
+            std::vector<std::string> faceNames = {"top", "bottom", "front", "back", "left", "right", "sides", "all"};
+            for (const auto& faceName : faceNames) {
+                if (cubeMap[faceName]) {
+                    std::string texName = cubeMap[faceName].as<std::string>();
+                    if (std::find(definedTextures.begin(), definedTextures.end(), texName) == definedTextures.end()) {
+                        definedTextures.push_back(texName);
+                    }
+                }
+            }
+
+            // If only one texture is defined, use it as the universal default
+            std::string defaultTexture;
+            if (definedTextures.size() == 1) {
+                defaultTexture = definedTextures[0];
+                std::cout << "  Single texture detected for " << def.name << ", using '" << defaultTexture << "' for all faces" << std::endl;
+            }
+
+            // Helper to load a face texture with smart fallback logic
             auto loadFace = [&](const std::string& faceName, BlockDefinition::FaceTexture& face) {
                 std::string texName;
+
+                // Priority 1: Face-specific texture
                 if (cubeMap[faceName]) {
                     texName = cubeMap[faceName].as<std::string>();
-                } else if (cubeMap["sides"] && (faceName == "front" || faceName == "back" || faceName == "left" || faceName == "right")) {
+                }
+                // Priority 2: "sides" for horizontal faces
+                else if (cubeMap["sides"] && (faceName == "front" || faceName == "back" || faceName == "left" || faceName == "right")) {
                     texName = cubeMap["sides"].as<std::string>();
-                } else if (cubeMap["all"]) {
+                }
+                // Priority 3: "all" fallback
+                else if (cubeMap["all"]) {
                     texName = cubeMap["all"].as<std::string>();
-                } else {
+                }
+                // Priority 4: Use the single defined texture if only one exists
+                else if (!defaultTexture.empty()) {
+                    texName = defaultTexture;
+                }
+                else {
                     return;
                 }
 
@@ -271,6 +301,19 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
                 // Store atlas index temporarily
                 def.all.atlasX = atlasIndex;
                 def.all.atlasY = 0;
+            }
+        } else {
+            // No texture or cube_map defined - try to load {blockname}.png automatically
+            std::string defaultTexName = lowerName + ".png";
+            std::cout << "  No texture defined for " << def.name << ", attempting to load " << defaultTexName << std::endl;
+
+            int atlasIndex = addTextureToAtlas(defaultTexName, def.name);
+            if (atlasIndex >= 0) {
+                def.hasTexture = true;
+                def.useCubeMap = false;
+                def.all.atlasX = atlasIndex;
+                def.all.atlasY = 0;
+                std::cout << "  Auto-loaded default texture for " << def.name << std::endl;
             }
         }
     }
