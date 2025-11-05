@@ -29,13 +29,13 @@ struct BlockDefinition {
     bool hasTexture = false;        // True if texture loaded successfully
     bool hasColor = false;          // True if using solid color
     glm::vec3 color = glm::vec3(0.0f);
-    float textureVariation = 1.0f;  // Zoom factor for random texture sampling (1.0 = no variation)
 
     // Texture atlas position (coordinates in the atlas grid)
-    // Each face can have its own texture in the atlas
+    // Each face can have its own texture and variation
     struct FaceTexture {
-        int atlasX = 0;  // X position in atlas grid (0, 1, 2, ...)
-        int atlasY = 0;  // Y position in atlas grid (0, 1, 2, ...)
+        int atlasX = 0;       // X position in atlas grid (0, 1, 2, ...)
+        int atlasY = 0;       // Y position in atlas grid (0, 1, 2, ...)
+        float variation = 1.0f;  // Zoom factor for random texture sampling (1.0 = no variation)
     };
 
     // Cube map: texture coordinates for each face

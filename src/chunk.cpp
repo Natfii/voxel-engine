@@ -202,8 +202,8 @@ void Chunk::generate() {
                     float uMin = face.atlasX * uvScale;
                     float vMin = face.atlasY * uvScale;
 
-                    // Apply texture variation if enabled
-                    float zoomFactor = def.textureVariation;
+                    // Apply texture variation if enabled (per-face variation)
+                    float zoomFactor = face.variation;
                     if (zoomFactor > 1.0f) {
                         int worldX = m_x * WIDTH + X;
                         int worldY = m_y * HEIGHT + Y;
@@ -236,9 +236,9 @@ void Chunk::generate() {
                     auto [uMin, vMin] = getUVsForFace(faceTexture);
                     float uvScaleZoomed = uvScale;
 
-                    // Recalculate uvScaleZoomed if texture variation is enabled
-                    if (def.textureVariation > 1.0f) {
-                        uvScaleZoomed = uvScale / def.textureVariation;
+                    // Recalculate uvScaleZoomed if texture variation is enabled (per-face)
+                    if (faceTexture.variation > 1.0f) {
+                        uvScaleZoomed = uvScale / faceTexture.variation;
                     }
 
                     for (int i = cubeStart, uv = uvStart; i < cubeStart + 18; i += 3, uv += 2) {
@@ -390,8 +390,8 @@ void Chunk::generateMesh(World* world) {
                     float uMin = face.atlasX * uvScale;
                     float vMin = face.atlasY * uvScale;
 
-                    // Apply texture variation if enabled
-                    float zoomFactor = def.textureVariation;
+                    // Apply texture variation if enabled (per-face variation)
+                    float zoomFactor = face.variation;
                     if (zoomFactor > 1.0f) {
                         int worldX = m_x * WIDTH + X;
                         int worldY = m_y * HEIGHT + Y;
@@ -424,9 +424,9 @@ void Chunk::generateMesh(World* world) {
                     auto [uMin, vMin] = getUVsForFace(faceTexture);
                     float uvScaleZoomed = uvScale;
 
-                    // Recalculate uvScaleZoomed if texture variation is enabled
-                    if (def.textureVariation > 1.0f) {
-                        uvScaleZoomed = uvScale / def.textureVariation;
+                    // Recalculate uvScaleZoomed if texture variation is enabled (per-face)
+                    if (faceTexture.variation > 1.0f) {
+                        uvScaleZoomed = uvScale / faceTexture.variation;
                     }
 
                     for (int i = cubeStart, uv = uvStart; i < cubeStart + 18; i += 3, uv += 2) {

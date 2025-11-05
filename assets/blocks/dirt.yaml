@@ -1,6 +1,6 @@
 name: "Dirt"
-# Auto-loads dirt.png
-texture_variation: 1.5  # Zoom factor for random texture sampling (1.0 = no variation, higher = more variation)
+# Automatically loads dirt.png with variation
+texture: "dirt.png,1.5"  # filename,variation (omit ,variation for no variation)
 durability: 5
 liquid: false
 affected_by_gravity: false

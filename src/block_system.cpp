@@ -226,14 +226,32 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
 
             YAML::Node cubeMap = doc["cube_map"];
 
+            // Helper to parse texture string with optional variation: "texture.png,1.5"
+            auto parseTexture = [](const std::string& texString) -> std::pair<std::string, float> {
+                size_t commaPos = texString.find(',');
+                if (commaPos != std::string::npos) {
+                    std::string filename = texString.substr(0, commaPos);
+                    std::string variationStr = texString.substr(commaPos + 1);
+                    try {
+                        float variation = std::stof(variationStr);
+                        return {filename, variation};
+                    } catch (...) {
+                        std::cerr << "Warning: Invalid variation value '" << variationStr << "', using 1.0" << std::endl;
+                        return {filename, 1.0f};
+                    }
+                }
+                return {texString, 1.0f};  // Default: no variation
+            };
+
             // Collect all explicitly defined textures to detect single-texture mode
             std::vector<std::string> definedTextures;
             std::vector<std::string> faceNames = {"top", "bottom", "front", "back", "left", "right", "sides", "all"};
             for (const auto& faceName : faceNames) {
                 if (cubeMap[faceName]) {
-                    std::string texName = cubeMap[faceName].as<std::string>();
-                    if (std::find(definedTextures.begin(), definedTextures.end(), texName) == definedTextures.end()) {
-                        definedTextures.push_back(texName);
+                    std::string texString = cubeMap[faceName].as<std::string>();
+                    auto [filename, variation] = parseTexture(texString);
+                    if (std::find(definedTextures.begin(), definedTextures.end(), texString) == definedTextures.end()) {
+                        definedTextures.push_back(texString);
                     }
                 }
             }
@@ -242,38 +260,43 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
             std::string defaultTexture;
             if (definedTextures.size() == 1) {
                 defaultTexture = definedTextures[0];
-                std::cout << "  Single texture detected for " << def.name << ", using '" << defaultTexture << "' for all faces" << std::endl;
+                auto [filename, variation] = parseTexture(defaultTexture);
+                std::cout << "  Single texture detected for " << def.name << ", using '" << filename << "' (variation=" << variation << ") for all faces" << std::endl;
             }
 
             // Helper to load a face texture with smart fallback logic
             auto loadFace = [&](const std::string& faceName, BlockDefinition::FaceTexture& face) {
-                std::string texName;
+                std::string texString;
 
                 // Priority 1: Face-specific texture
                 if (cubeMap[faceName]) {
-                    texName = cubeMap[faceName].as<std::string>();
+                    texString = cubeMap[faceName].as<std::string>();
                 }
                 // Priority 2: "sides" for horizontal faces
                 else if (cubeMap["sides"] && (faceName == "front" || faceName == "back" || faceName == "left" || faceName == "right")) {
-                    texName = cubeMap["sides"].as<std::string>();
+                    texString = cubeMap["sides"].as<std::string>();
                 }
                 // Priority 3: "all" fallback
                 else if (cubeMap["all"]) {
-                    texName = cubeMap["all"].as<std::string>();
+                    texString = cubeMap["all"].as<std::string>();
                 }
                 // Priority 4: Use the single defined texture if only one exists
                 else if (!defaultTexture.empty()) {
-                    texName = defaultTexture;
+                    texString = defaultTexture;
                 }
                 else {
                     return;
                 }
 
-                int atlasIndex = addTextureToAtlas(texName, def.name);
+                // Parse texture filename and variation
+                auto [filename, variation] = parseTexture(texString);
+
+                int atlasIndex = addTextureToAtlas(filename, def.name);
                 if (atlasIndex >= 0) {
                     // Atlas coordinates will be calculated after we know the grid size
                     face.atlasX = atlasIndex;  // Temporarily store atlas index
                     face.atlasY = 0;
+                    face.variation = variation;  // Store per-face variation
                 }
             };
 
@@ -287,20 +310,36 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
             std::cout << "  Loaded cube map for " << def.name << std::endl;
         } else if (doc["texture"]) {
             // Simple texture mode (backwards compatibility)
-            std::string texName = doc["texture"].as<std::string>();
+            std::string texString = doc["texture"].as<std::string>();
 
             // Skip hex colors
-            if (!texName.empty() && texName[0] == '#') {
+            if (!texString.empty() && texString[0] == '#') {
                 continue;
             }
 
-            int atlasIndex = addTextureToAtlas(texName, def.name);
+            // Parse texture filename and variation
+            size_t commaPos = texString.find(',');
+            std::string filename = texString;
+            float variation = 1.0f;
+
+            if (commaPos != std::string::npos) {
+                filename = texString.substr(0, commaPos);
+                std::string variationStr = texString.substr(commaPos + 1);
+                try {
+                    variation = std::stof(variationStr);
+                } catch (...) {
+                    std::cerr << "Warning: Invalid variation value '" << variationStr << "', using 1.0" << std::endl;
+                }
+            }
+
+            int atlasIndex = addTextureToAtlas(filename, def.name);
             if (atlasIndex >= 0) {
                 def.hasTexture = true;
                 def.useCubeMap = false;
-                // Store atlas index temporarily
+                // Store atlas index and variation temporarily
                 def.all.atlasX = atlasIndex;
                 def.all.atlasY = 0;
+                def.all.variation = variation;
             }
         } else {
             // No texture or cube_map defined - try to load {blockname}.png automatically
@@ -313,6 +352,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
                 def.useCubeMap = false;
                 def.all.atlasX = atlasIndex;
                 def.all.atlasY = 0;
+                def.all.variation = 1.0f;  // No variation by default
                 std::cout << "  Auto-loaded default texture for " << def.name << std::endl;
             }
         }

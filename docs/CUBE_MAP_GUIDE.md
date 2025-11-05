@@ -7,9 +7,10 @@ The voxel engine now supports **cube maps** - the ability to assign different te
 ## Features
 
 - **Per-face textures**: Assign different textures to each of the 6 faces of a cube
+- **Per-face texture variation**: Control variation independently for each face
 - **Flexible configuration**: Use simplified shortcuts like "sides" for all 4 horizontal faces
 - **Backwards compatible**: Existing single-texture blocks still work
-- **Texture variation**: All cube map textures support the texture variation feature
+- **Simple variation syntax**: Add variation using `"texture.png,1.5"` format
 
 ## YAML Format
 
@@ -34,6 +35,21 @@ texture: "stone.png"
 durability: 10
 affected_by_gravity: false
 ```
+
+### Texture with Variation
+
+Add variation by appending `,variation_value` to the texture filename:
+
+```yaml
+name: "Dirt"
+texture: "dirt.png,1.5"  # 1.5x zoom for natural variation
+durability: 5
+affected_by_gravity: false
+```
+
+- **No comma**: No variation (1.0x zoom, texture repeats exactly)
+- **With comma**: Random zoom/offset applied per block
+- **Variation value**: Higher = more variation (e.g., 1.5, 2.0, etc.)
 
 ### Single Texture Cube Map (All Faces)
 
@@ -62,12 +78,14 @@ affected_by_gravity: false
 ```yaml
 name: "Grass"
 cube_map:
-  top: "grass.png"       # Top face (+Y)
-  bottom: "dirt.png"     # Bottom face (-Y)
-  sides: "grass.png"     # All 4 side faces (front, back, left, right)
+  top: "grass.png,1.5"       # Top with variation
+  bottom: "dirt.png,1.2"     # Bottom with slight variation
+  sides: "grass_side.png"    # Sides with no variation
 durability: 3
 affected_by_gravity: false
 ```
+
+**Per-Face Variation**: Each face can have its own variation value, giving you fine-grained control over texture randomness.
 
 ### Cube Map with Individual Faces
 
@@ -113,6 +131,52 @@ cube_map:
 - **Back** (`back`): +Z direction
 - **Left** (`left`): -X direction
 - **Right** (`right`): +X direction
+
+## Texture Variation
+
+Texture variation adds natural randomness by zooming into random portions of each texture per block.
+
+### Syntax
+
+Append `,variation` to any texture filename:
+- `"texture.png"` - No variation (default, 1.0x zoom)
+- `"texture.png,1.5"` - 1.5x zoom with random offset per block
+- `"texture.png,2.0"` - 2.0x zoom with random offset per block
+
+### How It Works
+
+1. **Zoom Factor**: The variation value (e.g., 1.5) zooms into the texture
+2. **Random Offset**: Each block gets a random UV offset based on its world position
+3. **Deterministic**: Same block position = same offset (consistent across reloads)
+4. **Per-Face**: Each face can have different variation settings
+
+### When to Use Variation
+
+**Use variation (1.5-2.0) for:**
+- Natural materials (dirt, stone, grass)
+- Organic textures that benefit from randomness
+- Avoiding repetitive tiling patterns
+
+**Don't use variation (1.0 or omit) for:**
+- Crafted/manufactured blocks (planks, bricks)
+- Textures with specific patterns (furnace face, chest)
+- Side textures where alignment matters
+
+### Example Comparison
+
+```yaml
+# No variation - perfect repeating pattern
+texture: "bricks.png"
+
+# With variation - natural, less repetitive
+texture: "stone.png,1.8"
+
+# Per-face control
+cube_map:
+  top: "grass.png,1.5"      # Varied grass on top
+  bottom: "dirt.png,1.2"    # Slightly varied dirt
+  sides: "planks.png"       # Crisp, aligned planks
+```
 
 ## Smart Fallback System
 
@@ -167,8 +231,9 @@ The cube map system integrates seamlessly with the texture atlas:
 ```cpp
 struct BlockDefinition {
     struct FaceTexture {
-        int atlasX;  // X position in atlas grid
-        int atlasY;  // Y position in atlas grid
+        int atlasX;       // X position in atlas grid
+        int atlasY;       // Y position in atlas grid
+        float variation;  // Zoom factor for texture variation (1.0 = no variation)
     };
 
     FaceTexture all;      // Default for all faces
@@ -183,6 +248,8 @@ struct BlockDefinition {
     // ... other properties
 };
 ```
+
+Each face stores its own variation value, allowing fine-grained control over texture randomness.
 
 ### Mesh Generation
 
@@ -202,10 +269,9 @@ This ensures backwards compatibility - blocks without cube maps use the "all" te
 ```yaml
 name: "Grass"
 cube_map:
-  top: "grass.png"
-  bottom: "dirt.png"
-  sides: "grass_side.png"  # Dirt texture with grass on top edge
-texture_variation: 1.5
+  top: "grass.png,1.5"       # Top with variation
+  bottom: "dirt.png,1.2"     # Bottom with slight variation
+  sides: "grass_side.png"    # Sides with no variation (crisp edges)
 durability: 3
 affected_by_gravity: false
 ```
