@@ -236,11 +236,22 @@ void ConsoleCommands::cmdListConVars(const std::vector<std::string>& args) {
 
 void ConsoleCommands::cmdSkyTime(const std::vector<std::string>& args) {
     if (args.size() < 2) {
-        // Show current sky time
+        // Show current sky time and calculated intensities
         std::ostringstream oss;
         oss << std::fixed << std::setprecision(3);
         oss << "Current sky time: " << s_currentSkyTime;
         s_console->addMessage(oss.str(), ConsoleMessageType::INFO);
+
+        // Calculate and show intensities (same calculation as in renderer)
+        float sunIntensity = glm::smoothstep(0.2f, 0.3f, s_currentSkyTime) * (1.0f - glm::smoothstep(0.7f, 0.8f, s_currentSkyTime));
+        float moonIntensity = 1.0f - glm::smoothstep(0.15f, 0.25f, s_currentSkyTime) + glm::smoothstep(0.75f, 0.85f, s_currentSkyTime);
+        moonIntensity = glm::clamp(moonIntensity, 0.0f, 1.0f);
+        float starIntensity = moonIntensity;
+
+        std::ostringstream debugOss;
+        debugOss << "DEBUG: sun=" << sunIntensity << " moon=" << moonIntensity << " stars=" << starIntensity;
+        s_console->addMessage(debugOss.str(), ConsoleMessageType::INFO);
+
         s_console->addMessage("Usage: skytime <0-1> (0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset)", ConsoleMessageType::INFO);
         return;
     }
@@ -275,6 +286,15 @@ void ConsoleCommands::cmdSkyTime(const std::vector<std::string>& args) {
         }
 
         s_console->addMessage(oss.str(), ConsoleMessageType::INFO);
+
+        // Show calculated intensities for debugging
+        float sunIntensity = glm::smoothstep(0.2f, 0.3f, time) * (1.0f - glm::smoothstep(0.7f, 0.8f, time));
+        float moonIntensity = 1.0f - glm::smoothstep(0.15f, 0.25f, time) + glm::smoothstep(0.75f, 0.85f, time);
+        moonIntensity = glm::clamp(moonIntensity, 0.0f, 1.0f);
+
+        std::ostringstream debugOss;
+        debugOss << "DEBUG: sun=" << sunIntensity << " moon=" << moonIntensity;
+        s_console->addMessage(debugOss.str(), ConsoleMessageType::INFO);
     } catch (const std::exception& e) {
         s_console->addMessage("Error: Invalid time value", ConsoleMessageType::ERROR);
     }
