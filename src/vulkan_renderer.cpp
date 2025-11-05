@@ -1777,24 +1777,25 @@ void VulkanRenderer::createProceduralCubeMap() {
                 float u = (float)x / (float)(size - 1);
                 float v = (float)y / (float)(size - 1);
 
-                // Create gradient from top (sky blue) to bottom (horizon white)
+                // Create gradient from top (zenith) to bottom (horizon)
                 float t = v;  // 0 at top, 1 at bottom
 
-                // Sky colors - blend from zenith to horizon
-                // Use brighter neutral gray as base - shader will add blue tint for day
-                glm::vec3 zenithColor = glm::vec3(0.65f, 0.65f, 0.65f);   // Lighter neutral gray at top
-                glm::vec3 horizonColor = glm::vec3(0.75f, 0.75f, 0.75f); // Even lighter at horizon
+                // Sky colors - natural blue sky gradient (neutral, not overly saturated)
+                glm::vec3 zenithColor = glm::vec3(0.25f, 0.5f, 0.85f);    // Deep blue at zenith
+                glm::vec3 horizonColor = glm::vec3(0.65f, 0.8f, 0.95f);   // Light blue/white at horizon
 
-                // Interpolate based on vertical position
-                glm::vec3 skyColor = glm::mix(zenithColor, horizonColor, t);
+                // Interpolate based on vertical position with slight curve
+                float curvedT = t * t;  // Quadratic falloff for smoother gradient
+                glm::vec3 skyColor = glm::mix(zenithColor, horizonColor, curvedT);
 
-                // For +Y face (top), make it more uniform blue
-                // For -Y face (bottom), fade to ground color
+                // For +Y face (top), make it uniform zenith color
+                // For -Y face (bottom), fade to darker blue
                 if (face == 2) {  // +Y (top)
                     skyColor = zenithColor;
                 } else if (face == 3) {  // -Y (bottom)
-                    glm::vec3 groundColor = glm::vec3(0.3f, 0.5f, 0.3f);  // Greenish ground
-                    skyColor = glm::mix(horizonColor, groundColor, t);
+                    // Below horizon - slightly darker blue
+                    glm::vec3 belowColor = glm::vec3(0.4f, 0.6f, 0.75f);
+                    skyColor = glm::mix(horizonColor, belowColor, t);
                 }
 
                 // Write pixel (convert from [0,1] to [0,255])
