@@ -60,14 +60,16 @@ void main() {
     float moonIntensity = ubo.skyTimeData.z;
     float starIntensity = ubo.skyTimeData.w;
 
-    // Blend between day and night based on sun/moon intensity
-    // When sunIntensity is high (day), use day sky
-    // When moonIntensity is high (night), use night sky
-    float dayNightBlend = sunIntensity;  // 0 = night, 1 = day
+    // Sharper blend between day and night
+    // Use smoothstep to make transitions cleaner
+    float dayNightBlend = smoothstep(0.0, 0.15, sunIntensity);  // Sharp transition
     vec3 skyColor = mix(nightSkyColor, daySkyColor, dayNightBlend);
 
-    // Add dynamic tinting for day sky during dawn/dusk
-    if (dayNightBlend > 0.3) {
+    // Add blue tint and dynamic tinting for day sky only
+    if (dayNightBlend > 0.1) {
+        // Blue tint for day sky
+        skyColor *= vec3(0.9, 1.0, 1.2) * (0.8 + 0.2 * dayNightBlend);
+
         // Calculate whether we're in dawn/dusk period
         float dawnDuskFactor = smoothstep(0.2, 0.3, time) * (1.0 - smoothstep(0.35, 0.45, time));
         dawnDuskFactor += smoothstep(0.65, 0.75, time) * (1.0 - smoothstep(0.8, 0.9, time));
