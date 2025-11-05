@@ -33,16 +33,22 @@ float stars(vec3 dir) {
     // Generate a star in each cell with some probability
     float h = hash(cellCoord);
 
-    if (h > 0.98) {  // Only 2% of cells have stars
+    if (h > 0.95) {  // 5% of cells have stars (more stars!)
         vec3 starPos = cellCoord + vec3(0.5);
         vec3 toStar = normalize(starPos - starCoord);
         float dist = distance(normalize(starPos), dir);
 
-        // Make stars twinkle slightly
-        float twinkle = 0.8 + 0.2 * sin(h * 100.0 + ubo.skyTimeData.x * 6.28);
+        // Vary star sizes - some bigger, some smaller
+        float starSize = 0.012 + (h - 0.95) * 0.08;  // 0.012 to 0.016
 
-        if (dist < 0.01) {
-            return (1.0 - dist / 0.01) * twinkle;
+        // Make stars twinkle slightly
+        float twinkle = 0.7 + 0.3 * sin(h * 100.0 + ubo.skyTimeData.x * 6.28);
+
+        if (dist < starSize) {
+            float brightness = (1.0 - dist / starSize) * twinkle;
+            // Vary brightness - some stars brighter than others
+            brightness *= (0.5 + (h - 0.95) * 10.0);  // 0.5 to 1.0 brightness
+            return brightness;
         }
     }
 
@@ -140,7 +146,8 @@ void main() {
     // Add stars at night
     if (starIntensity > 0.01) {
         float starBrightness = stars(fragTexCoord);
-        skyColor += vec3(1.0) * starBrightness * starIntensity * 0.8;
+        // Brighter stars with slight blue tint
+        skyColor += vec3(0.9, 0.95, 1.0) * starBrightness * starIntensity * 2.0;
     }
 
     outColor = vec4(skyColor, 1.0);
