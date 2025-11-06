@@ -153,17 +153,17 @@ int main() {
         float spawnX = 0.0f;
         float spawnZ = 0.0f;
         int terrainHeight = Chunk::getTerrainHeightAt(spawnX, spawnZ);
-        // Convert terrain height (in blocks) to world units, add 3 blocks clearance, then add eye height
+        // Convert terrain height (in blocks) to world units, add 5 blocks clearance, then add eye height
         // Player position is at eye level, not feet level
-        float spawnY = (terrainHeight + 3) * 0.5f + 0.8f;  // terrain + 3 blocks + eye height from feet
+        float spawnY = (terrainHeight + 5) * 0.5f + 0.8f;  // terrain + 5 blocks clearance + eye height
 
-        // Ensure player never spawns below world (minimum y = 2.0)
-        if (spawnY < 2.0f) {
-            std::cout << "Warning: Calculated spawn Y (" << spawnY << ") is too low, setting to 2.0" << std::endl;
-            spawnY = 2.0f;
+        // Ensure player never spawns below safe height (minimum y = 35.0 - well above terrain)
+        if (spawnY < 35.0f) {
+            std::cout << "Warning: Calculated spawn Y (" << spawnY << ") from terrain height " << terrainHeight << " is too low, setting to 35.0" << std::endl;
+            spawnY = 35.0f;
         }
 
-        std::cout << "Spawning player at world center (" << spawnX << ", " << spawnY << ", " << spawnZ << ")" << std::endl;
+        std::cout << "Spawning player at (" << spawnX << ", " << spawnY << ", " << spawnZ << ") - terrain height: " << terrainHeight << " blocks" << std::endl;
         Player player(glm::vec3(spawnX, spawnY, spawnZ), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
 
         PauseMenu pauseMenu(window);
