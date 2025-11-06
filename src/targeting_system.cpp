@@ -172,6 +172,12 @@ void TargetingSystem::renderBlockOutline(VkCommandBuffer commandBuffer) {
         return;
     }
 
+    // Don't render outline for liquid blocks
+    const BlockDefinition& blockDef = BlockRegistry::instance().get(m_currentTarget.blockID);
+    if (blockDef.isLiquid) {
+        return;
+    }
+
     VkBuffer vertexBuffers[] = {m_outlineVertexBuffer};
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);

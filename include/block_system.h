@@ -56,6 +56,7 @@ struct BlockDefinition {
     int flammability = 0;
     float transparency = 0.0f;
     bool redstone = false;
+    bool isLiquid = false;  // True if this is a liquid block (no outline)
 
     // Additional custom data (raw YAML node)
     YAML::Node metadata;

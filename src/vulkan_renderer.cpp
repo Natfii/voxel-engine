@@ -613,9 +613,9 @@ void VulkanRenderer::createLinePipeline() {
 
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthTestEnable = VK_FALSE; // Disable depth test - always render on top!
     depthStencil.depthWriteEnable = VK_FALSE; // Don't write to depth buffer for outlines
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL; // Render on top of blocks
+    depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS; // Always pass depth test
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
 

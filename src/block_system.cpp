@@ -113,12 +113,15 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         if (doc["affected_by_gravity"]) {
             def.affectedByGravity = doc["affected_by_gravity"].as<bool>();
         }
-        // Optional: flammability, transparency, redstone
+        // Optional: flammability, transparency, redstone, liquid
         if (doc["flammability"]) {
             def.flammability = doc["flammability"].as<int>();
         }
         if (doc["transparency"]) {
             def.transparency = doc["transparency"].as<float>();
+        }
+        if (doc["liquid"]) {
+            def.isLiquid = doc["liquid"].as<bool>();
         }
         // Store metadata node if exists
         if (doc["metadata"]) {
