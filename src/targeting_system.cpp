@@ -212,7 +212,7 @@ void TargetingSystem::updateOutlineBuffer(VulkanRenderer* renderer) {
 std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& position) {
     // Create a wireframe cube with 12 edges (24 vertices for lines)
     const float size = 0.5f;
-    const float inset = 0.002f; // Small inset to render on inside edges (prevents clipping)
+    const float inset = 0.001f; // Small inset to render on inside edges (prevents clipping)
 
     std::vector<float> vertices;
     vertices.reserve(24 * 8); // 24 vertices * 8 floats per vertex (x,y,z,r,g,b,u,v)
@@ -223,9 +223,9 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
         vertices.push_back(x1);
         vertices.push_back(y1);
         vertices.push_back(z1);
-        vertices.push_back(0.0f); // Black outline color
-        vertices.push_back(0.0f);
-        vertices.push_back(0.0f);
+        vertices.push_back(1.0f); // White outline color (more visible)
+        vertices.push_back(1.0f);
+        vertices.push_back(1.0f);
         vertices.push_back(0.0f); // UV coordinates
         vertices.push_back(0.0f);
 
@@ -233,9 +233,9 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
         vertices.push_back(x2);
         vertices.push_back(y2);
         vertices.push_back(z2);
-        vertices.push_back(0.0f); // Black outline color
-        vertices.push_back(0.0f);
-        vertices.push_back(0.0f);
+        vertices.push_back(1.0f); // White outline color (more visible)
+        vertices.push_back(1.0f);
+        vertices.push_back(1.0f);
         vertices.push_back(0.0f); // UV coordinates
         vertices.push_back(0.0f);
     };
