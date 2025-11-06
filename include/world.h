@@ -14,6 +14,7 @@ public:
 
     void generateWorld();
     void createBuffers(VulkanRenderer* renderer);
+    void cleanup(VulkanRenderer* renderer);  // Clean up all chunk buffers
     void renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, const glm::mat4& viewProj, float renderDistance = 50.0f);
 
     // Block querying and modification

@@ -40,6 +40,13 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
     registry.registerCommand("noclip", "Toggle noclip mode",
                            "noclip", cmdNoclip);
 
+    registry.registerCommand("wireframe", "Toggle wireframe rendering mode",
+                           "wireframe", [](const std::vector<std::string>& args) {
+        bool newValue = !DebugState::instance().wireframeMode.getValue();
+        DebugState::instance().wireframeMode.setValue(newValue);
+        s_console->addMessage("Wireframe mode: " + std::string(newValue ? "ON" : "OFF"), ConsoleMessageType::INFO);
+    });
+
     registry.registerCommand("debug", "Toggle debug rendering modes (render, drawfps, targetinfo)",
                            "debug <render|drawfps|targetinfo>", [](const std::vector<std::string>& args) {
         if (args.size() < 2) {

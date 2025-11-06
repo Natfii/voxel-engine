@@ -1,6 +1,6 @@
 name: "Stone"
-texture: "stone.png"
-texture_variation: 1.5  # Zoom factor for random texture sampling (1.0 = no variation, higher = more variation)
+# Automatically loads stone.png with no variation (1.0)
+# For variation, use: texture: "stone.png,1.5"
 durability: 5
 liquid: false
 affected_by_gravity: false

@@ -38,7 +38,10 @@ int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
 }
 
 // Constructor: Initialize chunk at world grid coordinates (x, y, z)
-Chunk::Chunk(int x, int y, int z) : m_x(x), m_y(y), m_z(z), m_vertexBuffer(VK_NULL_HANDLE), m_vertexBufferMemory(VK_NULL_HANDLE), m_vertexCount(0), m_visible(false) {
+Chunk::Chunk(int x, int y, int z) : m_x(x), m_y(y), m_z(z),
+    m_vertexBuffer(VK_NULL_HANDLE), m_vertexBufferMemory(VK_NULL_HANDLE),
+    m_indexBuffer(VK_NULL_HANDLE), m_indexBufferMemory(VK_NULL_HANDLE),
+    m_vertexCount(0), m_indexCount(0), m_visible(false) {
     // Calculate world-space bounds (blocks are 0.5 units in size)
     // No epsilon - exact bounds prevent chunk overlap
     m_minBounds = glm::vec3(
@@ -128,42 +131,45 @@ void Chunk::setBlock(int x, int y, int z, int blockID) {
 }
 
 void Chunk::generate() {
-    // Define a 0.5-unit cube (36 vertices) - scaled for smaller blocks
-    static constexpr std::array<float, 108> cube = {{
-        // front face (z = 0)
-        0,0,0,  0.5f,0,0,  0.5f,0.5f,0,   0,0,0,  0.5f,0.5f,0,  0,0.5f,0,
-        // back face (z = 0.5)
-        0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,   0.5f,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
-        // left face (x = 0)
-        0,0,0.5f,  0,0,0,  0,0.5f,0,   0,0,0.5f,  0,0.5f,0,  0,0.5f,0.5f,
-        // right face (x = 0.5)
-        0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,   0.5f,0,0,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
-        // top face (y = 0.5)
-        0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,   0,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
-        // bottom face (y = 0)
-        0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,   0,0,0.5f,  0.5f,0,0,  0,0,0
+    // Define a 0.5-unit cube (4 vertices per face, 24 total) - indexed rendering
+    static constexpr std::array<float, 72> cube = {{
+        // front face (z = 0) - 4 vertices
+        0,0,0,  0.5f,0,0,  0.5f,0.5f,0,  0,0.5f,0,
+        // back face (z = 0.5) - 4 vertices
+        0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
+        // left face (x = 0) - 4 vertices
+        0,0,0.5f,  0,0,0,  0,0.5f,0,  0,0.5f,0.5f,
+        // right face (x = 0.5) - 4 vertices
+        0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
+        // top face (y = 0.5) - 4 vertices
+        0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
+        // bottom face (y = 0) - 4 vertices
+        0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,  0,0,0
     }};
 
-    // UV coordinates for each vertex (matches cube structure above)
-    // Each face gets standard UV mapping: (0,0) bottom-left to (1,1) top-right
-    static constexpr std::array<float, 72> cubeUVs = {{
-        // front face: 6 vertices (2 triangles)
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // back face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // left face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // right face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // top face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // bottom face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1
+    // UV coordinates for each vertex (4 per face)
+    // Note: V coordinates are flipped for side faces to prevent upside-down textures
+    static constexpr std::array<float, 48> cubeUVs = {{
+        // front face: 4 vertices - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // back face - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // left face - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // right face - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // top face - normal orientation
+        0,0,  1,0,  1,1,  0,1,
+        // bottom face - normal orientation
+        0,0,  1,0,  1,1,  0,1
     }};
 
     std::vector<Vertex> verts;
+    std::vector<uint32_t> indices;
     // Reserve space for estimated visible faces (roughly 30% of blocks visible, 3 faces each on average)
-    verts.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10);
+    // With indexed rendering: 4 vertices per face instead of 6
+    verts.reserve(WIDTH * HEIGHT * DEPTH * 12 / 10);  // 4 vertices per face
+    indices.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10); // 6 indices per face (same as before)
 
     // Helper lambda to check if a block is solid (non-air)
     auto isSolid = [this](int x, int y, int z) -> bool {
@@ -197,48 +203,55 @@ void Chunk::generate() {
                     cr = cg = cb = 1.0f;
                 }
 
-                // Calculate atlas UV offset for this block's texture
-                float uMin = def.atlasX * uvScale;
-                float vMin = def.atlasY * uvScale;
+                // Helper to get UV coordinates for a specific face with texture variation
+                auto getUVsForFace = [&](const BlockDefinition::FaceTexture& face) -> std::pair<float, float> {
+                    float uMin = face.atlasX * uvScale;
+                    float vMin = face.atlasY * uvScale;
 
-                // Texture variation: zoom in on random portions of the texture
-                // Use world position as seed for deterministic randomness
-                float zoomFactor = def.textureVariation;  // Get zoom factor from block definition
-                float uvScaleZoomed = uvScale;
+                    // Apply texture variation if enabled (per-face variation)
+                    float zoomFactor = face.variation;
+                    if (zoomFactor > 1.0f) {
+                        int worldX = m_x * WIDTH + X;
+                        int worldY = m_y * HEIGHT + Y;
+                        int worldZ = m_z * DEPTH + Z;
 
-                if (zoomFactor > 1.0f) {
-                    // Only apply variation if zoom factor > 1.0
-                    int worldX = m_x * WIDTH + X;
-                    int worldY = m_y * HEIGHT + Y;
-                    int worldZ = m_z * DEPTH + Z;
+                        // Simple hash function for pseudo-random offset
+                        unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
+                        float randU = ((seed >> 0) & 0xFF) / 255.0f;
+                        float randV = ((seed >> 8) & 0xFF) / 255.0f;
 
-                    // Simple hash function for pseudo-random offset
-                    unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
-                    float randU = ((seed >> 0) & 0xFF) / 255.0f;  // Random value 0-1
-                    float randV = ((seed >> 8) & 0xFF) / 255.0f;  // Random value 0-1
+                        // Calculate how much space we can shift within
+                        float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
+                        float uShift = randU * maxShift;
+                        float vShift = randV * maxShift;
 
-                    // Calculate how much space we can shift within (to keep UVs in bounds)
-                    float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
+                        uMin += uShift;
+                        vMin += vShift;
+                    }
 
-                    // Random offset for this block
-                    float uShift = randU * maxShift;
-                    float vShift = randV * maxShift;
-
-                    // Adjust base coordinates and scale
-                    uvScaleZoomed = uvScale / zoomFactor;
-                    uMin += uShift;
-                    vMin += vShift;
-                }
+                    return {uMin, vMin};
+                };
 
                 // Calculate world position for this block
-                // Convert from chunk-local coordinates to world coordinates
                 float bx = float(m_x * WIDTH + X) * 0.5f;
                 float by = float(m_y * HEIGHT + Y) * 0.5f;
                 float bz = float(m_z * DEPTH + Z) * 0.5f;
 
-                // Front face (z=0, facing -Z direction)
-                if (!isSolid(X, Y, Z - 1)) {
-                    for (int i = 0, uv = 0; i < 18; i += 3, uv += 2) {
+                // Helper to render a face with the appropriate texture (indexed rendering)
+                auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart) {
+                    auto [uMin, vMin] = getUVsForFace(faceTexture);
+                    float uvScaleZoomed = uvScale;
+
+                    // Recalculate uvScaleZoomed if texture variation is enabled (per-face)
+                    if (faceTexture.variation > 1.0f) {
+                        uvScaleZoomed = uvScale / faceTexture.variation;
+                    }
+
+                    // Get the base index for these vertices
+                    uint32_t baseIndex = static_cast<uint32_t>(verts.size());
+
+                    // Create 4 vertices for this face (corners of the quad)
+                    for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
@@ -248,121 +261,103 @@ void Chunk::generate() {
                         v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
+
+                    // Create 6 indices for 2 triangles (0,1,2 and 0,2,3)
+                    indices.push_back(baseIndex + 0);
+                    indices.push_back(baseIndex + 1);
+                    indices.push_back(baseIndex + 2);
+                    indices.push_back(baseIndex + 0);
+                    indices.push_back(baseIndex + 2);
+                    indices.push_back(baseIndex + 3);
+                };
+
+                // Select appropriate texture for each face
+                const BlockDefinition::FaceTexture& frontTex = def.useCubeMap ? def.front : def.all;
+                const BlockDefinition::FaceTexture& backTex = def.useCubeMap ? def.back : def.all;
+                const BlockDefinition::FaceTexture& leftTex = def.useCubeMap ? def.left : def.all;
+                const BlockDefinition::FaceTexture& rightTex = def.useCubeMap ? def.right : def.all;
+                const BlockDefinition::FaceTexture& topTex = def.useCubeMap ? def.top : def.all;
+                const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
+
+                // Front face (z=0, facing -Z direction)
+                if (!isSolid(X, Y, Z - 1)) {
+                    renderFace(frontTex, 0, 0);
                 }
 
                 // Back face (z=0.5, facing +Z direction)
                 if (!isSolid(X, Y, Z + 1)) {
-                    for (int i = 18, uv = 12; i < 36; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(backTex, 12, 8);
                 }
 
                 // Left face (x=0, facing -X direction)
                 if (!isSolid(X - 1, Y, Z)) {
-                    for (int i = 36, uv = 24; i < 54; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(leftTex, 24, 16);
                 }
 
                 // Right face (x=0.5, facing +X direction)
                 if (!isSolid(X + 1, Y, Z)) {
-                    for (int i = 54, uv = 36; i < 72; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(rightTex, 36, 24);
                 }
 
                 // Top face (y=0.5, facing +Y direction)
                 if (!isSolid(X, Y + 1, Z)) {
-                    for (int i = 72, uv = 48; i < 90; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(topTex, 48, 32);
                 }
 
                 // Bottom face (y=0, facing -Y direction)
                 if (!isSolid(X, Y - 1, Z)) {
-                    for (int i = 90, uv = 60; i < 108; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(bottomTex, 60, 40);
                 }
             }
         }
     }
 
     m_vertexCount = static_cast<uint32_t>(verts.size());
+    m_indexCount = static_cast<uint32_t>(indices.size());
     m_vertices = std::move(verts);
+    m_indices = std::move(indices);
 }
 
 void Chunk::generateMesh(World* world) {
-    // Define a 0.5-unit cube (36 vertices) - scaled for smaller blocks
-    static constexpr std::array<float, 108> cube = {{
-        // front face (z = 0)
-        0,0,0,  0.5f,0,0,  0.5f,0.5f,0,   0,0,0,  0.5f,0.5f,0,  0,0.5f,0,
-        // back face (z = 0.5)
-        0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,   0.5f,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
-        // left face (x = 0)
-        0,0,0.5f,  0,0,0,  0,0.5f,0,   0,0,0.5f,  0,0.5f,0,  0,0.5f,0.5f,
-        // right face (x = 0.5)
-        0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,   0.5f,0,0,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
-        // top face (y = 0.5)
-        0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,   0,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
-        // bottom face (y = 0)
-        0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,   0,0,0.5f,  0.5f,0,0,  0,0,0
+    // Define a 0.5-unit cube (4 vertices per face, 24 total) - indexed rendering
+    static constexpr std::array<float, 72> cube = {{
+        // front face (z = 0) - 4 vertices
+        0,0,0,  0.5f,0,0,  0.5f,0.5f,0,  0,0.5f,0,
+        // back face (z = 0.5) - 4 vertices
+        0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
+        // left face (x = 0) - 4 vertices
+        0,0,0.5f,  0,0,0,  0,0.5f,0,  0,0.5f,0.5f,
+        // right face (x = 0.5) - 4 vertices
+        0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
+        // top face (y = 0.5) - 4 vertices
+        0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
+        // bottom face (y = 0) - 4 vertices
+        0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,  0,0,0
     }};
 
-    // UV coordinates for each vertex (matches cube structure above)
-    static constexpr std::array<float, 72> cubeUVs = {{
-        // front face: 6 vertices (2 triangles)
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // back face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // left face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // right face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // top face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1,
-        // bottom face
-        0,0,  1,0,  1,1,   0,0,  1,1,  0,1
+    // UV coordinates for each vertex (4 per face)
+    // Note: V coordinates are flipped for side faces to prevent upside-down textures
+    static constexpr std::array<float, 48> cubeUVs = {{
+        // front face: 4 vertices - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // back face - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // left face - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // right face - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // top face - normal orientation
+        0,0,  1,0,  1,1,  0,1,
+        // bottom face - normal orientation
+        0,0,  1,0,  1,1,  0,1
     }};
 
     std::vector<Vertex> verts;
+    std::vector<uint32_t> indices;
     // Reserve space for estimated visible faces (roughly 30% of blocks visible, 3 faces each on average)
-    verts.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10);
+    // With indexed rendering: 4 vertices per face instead of 6
+    verts.reserve(WIDTH * HEIGHT * DEPTH * 12 / 10);  // 4 vertices per face
+    indices.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10); // 6 indices per face (same as before)
 
     // Helper lambda to check if a block is solid (non-air)
     // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
@@ -413,48 +408,55 @@ void Chunk::generateMesh(World* world) {
                     cr = cg = cb = 1.0f;
                 }
 
-                // Calculate atlas UV offset for this block's texture
-                float uMin = def.atlasX * uvScale;
-                float vMin = def.atlasY * uvScale;
+                // Helper to get UV coordinates for a specific face with texture variation
+                auto getUVsForFace = [&](const BlockDefinition::FaceTexture& face) -> std::pair<float, float> {
+                    float uMin = face.atlasX * uvScale;
+                    float vMin = face.atlasY * uvScale;
 
-                // Texture variation: zoom in on random portions of the texture
-                // Use world position as seed for deterministic randomness
-                float zoomFactor = def.textureVariation;  // Get zoom factor from block definition
-                float uvScaleZoomed = uvScale;
+                    // Apply texture variation if enabled (per-face variation)
+                    float zoomFactor = face.variation;
+                    if (zoomFactor > 1.0f) {
+                        int worldX = m_x * WIDTH + X;
+                        int worldY = m_y * HEIGHT + Y;
+                        int worldZ = m_z * DEPTH + Z;
 
-                if (zoomFactor > 1.0f) {
-                    // Only apply variation if zoom factor > 1.0
-                    int worldX = m_x * WIDTH + X;
-                    int worldY = m_y * HEIGHT + Y;
-                    int worldZ = m_z * DEPTH + Z;
+                        // Simple hash function for pseudo-random offset
+                        unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
+                        float randU = ((seed >> 0) & 0xFF) / 255.0f;
+                        float randV = ((seed >> 8) & 0xFF) / 255.0f;
 
-                    // Simple hash function for pseudo-random offset
-                    unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
-                    float randU = ((seed >> 0) & 0xFF) / 255.0f;  // Random value 0-1
-                    float randV = ((seed >> 8) & 0xFF) / 255.0f;  // Random value 0-1
+                        // Calculate how much space we can shift within
+                        float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
+                        float uShift = randU * maxShift;
+                        float vShift = randV * maxShift;
 
-                    // Calculate how much space we can shift within (to keep UVs in bounds)
-                    float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
+                        uMin += uShift;
+                        vMin += vShift;
+                    }
 
-                    // Random offset for this block
-                    float uShift = randU * maxShift;
-                    float vShift = randV * maxShift;
-
-                    // Adjust base coordinates and scale
-                    uvScaleZoomed = uvScale / zoomFactor;
-                    uMin += uShift;
-                    vMin += vShift;
-                }
+                    return {uMin, vMin};
+                };
 
                 // Calculate world position for this block
-                // Convert from chunk-local coordinates to world coordinates
                 float bx = float(m_x * WIDTH + X) * 0.5f;
                 float by = float(m_y * HEIGHT + Y) * 0.5f;
                 float bz = float(m_z * DEPTH + Z) * 0.5f;
 
-                // Front face (z=0, facing -Z direction)
-                if (!isSolid(X, Y, Z - 1)) {
-                    for (int i = 0, uv = 0; i < 18; i += 3, uv += 2) {
+                // Helper to render a face with the appropriate texture (indexed rendering)
+                auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart) {
+                    auto [uMin, vMin] = getUVsForFace(faceTexture);
+                    float uvScaleZoomed = uvScale;
+
+                    // Recalculate uvScaleZoomed if texture variation is enabled (per-face)
+                    if (faceTexture.variation > 1.0f) {
+                        uvScaleZoomed = uvScale / faceTexture.variation;
+                    }
+
+                    // Get the base index for these vertices
+                    uint32_t baseIndex = static_cast<uint32_t>(verts.size());
+
+                    // Create 4 vertices for this face (corners of the quad)
+                    for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
@@ -464,114 +466,147 @@ void Chunk::generateMesh(World* world) {
                         v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
                     }
+
+                    // Create 6 indices for 2 triangles (0,1,2 and 0,2,3)
+                    indices.push_back(baseIndex + 0);
+                    indices.push_back(baseIndex + 1);
+                    indices.push_back(baseIndex + 2);
+                    indices.push_back(baseIndex + 0);
+                    indices.push_back(baseIndex + 2);
+                    indices.push_back(baseIndex + 3);
+                };
+
+                // Select appropriate texture for each face
+                const BlockDefinition::FaceTexture& frontTex = def.useCubeMap ? def.front : def.all;
+                const BlockDefinition::FaceTexture& backTex = def.useCubeMap ? def.back : def.all;
+                const BlockDefinition::FaceTexture& leftTex = def.useCubeMap ? def.left : def.all;
+                const BlockDefinition::FaceTexture& rightTex = def.useCubeMap ? def.right : def.all;
+                const BlockDefinition::FaceTexture& topTex = def.useCubeMap ? def.top : def.all;
+                const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
+
+                // Front face (z=0, facing -Z direction)
+                if (!isSolid(X, Y, Z - 1)) {
+                    renderFace(frontTex, 0, 0);
                 }
 
                 // Back face (z=0.5, facing +Z direction)
                 if (!isSolid(X, Y, Z + 1)) {
-                    for (int i = 18, uv = 12; i < 36; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(backTex, 12, 8);
                 }
 
                 // Left face (x=0, facing -X direction)
                 if (!isSolid(X - 1, Y, Z)) {
-                    for (int i = 36, uv = 24; i < 54; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(leftTex, 24, 16);
                 }
 
                 // Right face (x=0.5, facing +X direction)
                 if (!isSolid(X + 1, Y, Z)) {
-                    for (int i = 54, uv = 36; i < 72; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(rightTex, 36, 24);
                 }
 
                 // Top face (y=0.5, facing +Y direction)
                 if (!isSolid(X, Y + 1, Z)) {
-                    for (int i = 72, uv = 48; i < 90; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(topTex, 48, 32);
                 }
 
                 // Bottom face (y=0, facing -Y direction)
                 if (!isSolid(X, Y - 1, Z)) {
-                    for (int i = 90, uv = 60; i < 108; i += 3, uv += 2) {
-                        Vertex v;
-                        v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
-                        v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
-                    }
+                    renderFace(bottomTex, 60, 40);
                 }
             }
         }
     }
 
     m_vertexCount = static_cast<uint32_t>(verts.size());
+    m_indexCount = static_cast<uint32_t>(indices.size());
     m_vertices = std::move(verts);
+    m_indices = std::move(indices);
 }
 
 void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
+    // Destroy old buffers if they exist (prevents memory leak when recreating buffers)
+    destroyBuffers(renderer);
+
     if (m_vertices.empty()) return;
 
-    VkDeviceSize bufferSize = sizeof(Vertex) * m_vertices.size();
+    // Create vertex buffer
+    VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
 
-    // Create staging buffer
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
-    renderer->createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    // Create staging buffer for vertices
+    VkBuffer vertexStagingBuffer;
+    VkDeviceMemory vertexStagingBufferMemory;
+    renderer->createBuffer(vertexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                          stagingBuffer, stagingBufferMemory);
+                          vertexStagingBuffer, vertexStagingBufferMemory);
 
     // Copy vertex data to staging buffer
     void* data;
-    vkMapMemory(renderer->getDevice(), stagingBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, m_vertices.data(), (size_t)bufferSize);
-    vkUnmapMemory(renderer->getDevice(), stagingBufferMemory);
+    vkMapMemory(renderer->getDevice(), vertexStagingBufferMemory, 0, vertexBufferSize, 0, &data);
+    memcpy(data, m_vertices.data(), (size_t)vertexBufferSize);
+    vkUnmapMemory(renderer->getDevice(), vertexStagingBufferMemory);
 
     // Create vertex buffer on device
-    renderer->createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+    renderer->createBuffer(vertexBufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                           m_vertexBuffer, m_vertexBufferMemory);
 
     // Copy from staging to device
-    renderer->copyBuffer(stagingBuffer, m_vertexBuffer, bufferSize);
+    renderer->copyBuffer(vertexStagingBuffer, m_vertexBuffer, vertexBufferSize);
 
-    // Cleanup staging buffer
-    vkDestroyBuffer(renderer->getDevice(), stagingBuffer, nullptr);
-    vkFreeMemory(renderer->getDevice(), stagingBufferMemory, nullptr);
+    // Cleanup vertex staging buffer
+    vkDestroyBuffer(renderer->getDevice(), vertexStagingBuffer, nullptr);
+    vkFreeMemory(renderer->getDevice(), vertexStagingBufferMemory, nullptr);
+
+    // Create index buffer (if we have indices)
+    if (!m_indices.empty()) {
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_indices.size();
+
+        // Create staging buffer for indices
+        VkBuffer indexStagingBuffer;
+        VkDeviceMemory indexStagingBufferMemory;
+        renderer->createBuffer(indexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              indexStagingBuffer, indexStagingBufferMemory);
+
+        // Copy index data to staging buffer
+        vkMapMemory(renderer->getDevice(), indexStagingBufferMemory, 0, indexBufferSize, 0, &data);
+        memcpy(data, m_indices.data(), (size_t)indexBufferSize);
+        vkUnmapMemory(renderer->getDevice(), indexStagingBufferMemory);
+
+        // Create index buffer on device
+        renderer->createBuffer(indexBufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                              m_indexBuffer, m_indexBufferMemory);
+
+        // Copy from staging to device
+        renderer->copyBuffer(indexStagingBuffer, m_indexBuffer, indexBufferSize);
+
+        // Cleanup index staging buffer
+        vkDestroyBuffer(renderer->getDevice(), indexStagingBuffer, nullptr);
+        vkFreeMemory(renderer->getDevice(), indexStagingBufferMemory, nullptr);
+    }
+}
+
+void Chunk::destroyBuffers(VulkanRenderer* renderer) {
+    // Destroy vertex buffer
+    if (m_vertexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(renderer->getDevice(), m_vertexBuffer, nullptr);
+        m_vertexBuffer = VK_NULL_HANDLE;
+    }
+    if (m_vertexBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(renderer->getDevice(), m_vertexBufferMemory, nullptr);
+        m_vertexBufferMemory = VK_NULL_HANDLE;
+    }
+
+    // Destroy index buffer
+    if (m_indexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(renderer->getDevice(), m_indexBuffer, nullptr);
+        m_indexBuffer = VK_NULL_HANDLE;
+    }
+    if (m_indexBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(renderer->getDevice(), m_indexBufferMemory, nullptr);
+        m_indexBufferMemory = VK_NULL_HANDLE;
+    }
 }
 
 void Chunk::render(VkCommandBuffer commandBuffer) {
@@ -580,5 +615,13 @@ void Chunk::render(VkCommandBuffer commandBuffer) {
     VkBuffer vertexBuffers[] = {m_vertexBuffer};
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-    vkCmdDraw(commandBuffer, m_vertexCount, 1, 0, 0);
+
+    // Use indexed rendering if we have an index buffer
+    if (m_indexCount > 0 && m_indexBuffer != VK_NULL_HANDLE) {
+        vkCmdBindIndexBuffer(commandBuffer, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(commandBuffer, m_indexCount, 1, 0, 0, 0);
+    } else {
+        // Fallback to non-indexed rendering (shouldn't happen with current implementation)
+        vkCmdDraw(commandBuffer, m_vertexCount, 1, 0, 0);
+    }
 }

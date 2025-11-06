@@ -37,6 +37,7 @@ public:
     void generate();
     void generateMesh(class World* world);  // Generate mesh after all chunks exist
     void createVertexBuffer(VulkanRenderer* renderer);
+    void destroyBuffers(VulkanRenderer* renderer);  // Clean up Vulkan buffers
     void render(VkCommandBuffer commandBuffer);
 
     // Get terrain height at world coordinates (returns height in blocks)
@@ -67,9 +68,13 @@ private:
     int m_x, m_y, m_z;
     int m_blocks[WIDTH][HEIGHT][DEPTH];
     std::vector<Vertex> m_vertices;
+    std::vector<uint32_t> m_indices;
     VkBuffer m_vertexBuffer;
     VkDeviceMemory m_vertexBufferMemory;
+    VkBuffer m_indexBuffer;
+    VkDeviceMemory m_indexBufferMemory;
     uint32_t m_vertexCount;
+    uint32_t m_indexCount;
 
     // Chunk bounds in world space
     glm::vec3 m_minBounds;

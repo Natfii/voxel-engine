@@ -172,6 +172,12 @@ void TargetingSystem::renderBlockOutline(VkCommandBuffer commandBuffer) {
         return;
     }
 
+    // Don't render outline for liquid blocks
+    const BlockDefinition& blockDef = BlockRegistry::instance().get(m_currentTarget.blockID);
+    if (blockDef.isLiquid) {
+        return;
+    }
+
     VkBuffer vertexBuffers[] = {m_outlineVertexBuffer};
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
@@ -212,7 +218,7 @@ void TargetingSystem::updateOutlineBuffer(VulkanRenderer* renderer) {
 std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& position) {
     // Create a wireframe cube with 12 edges (24 vertices for lines)
     const float size = 0.5f;
-    const float offset = 0.005f; // Small offset to prevent z-fighting
+    const float offset = 0.003f; // Minimal offset (Minecraft-style thin outline)
 
     std::vector<float> vertices;
     vertices.reserve(24 * 8); // 24 vertices * 8 floats per vertex (x,y,z,r,g,b,u,v)
@@ -223,7 +229,7 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
         vertices.push_back(x1);
         vertices.push_back(y1);
         vertices.push_back(z1);
-        vertices.push_back(0.0f); // Black outline color
+        vertices.push_back(0.0f); // Black outline color (cartoonish)
         vertices.push_back(0.0f);
         vertices.push_back(0.0f);
         vertices.push_back(0.0f); // UV coordinates
@@ -233,14 +239,14 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
         vertices.push_back(x2);
         vertices.push_back(y2);
         vertices.push_back(z2);
-        vertices.push_back(0.0f); // Black outline color
+        vertices.push_back(0.0f); // Black outline color (cartoonish)
         vertices.push_back(0.0f);
         vertices.push_back(0.0f);
         vertices.push_back(0.0f); // UV coordinates
         vertices.push_back(0.0f);
     };
 
-    // Slightly expand the outline to make it visible
+    // Slightly expand the outline outward for cartoonish effect
     float x0 = position.x - offset;
     float y0 = position.y - offset;
     float z0 = position.z - offset;

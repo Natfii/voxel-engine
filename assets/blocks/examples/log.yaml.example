@@ -1,0 +1,13 @@
+# Example: Tree log block with different textures for top/bottom and sides
+# Demonstrates the "sides" shortcut for all 4 horizontal faces
+name: "Log"
+cube_map:
+  top: "log_top.png"      # Tree ring pattern on top
+  bottom: "log_top.png"   # Tree ring pattern on bottom
+  sides: "log_bark.png"   # Bark texture on all 4 sides
+texture_variation: 1.2    # Slight variation for natural look
+durability: 8
+liquid: false
+affected_by_gravity: false
+flammability: 5
+transparency: 0.0

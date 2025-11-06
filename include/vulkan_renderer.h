@@ -66,6 +66,7 @@ public:
     VkQueue getGraphicsQueue() const { return m_graphicsQueue; }
     VkRenderPass getRenderPass() const { return m_renderPass; }
     VkPipeline getGraphicsPipeline() const { return m_graphicsPipeline; }
+    VkPipeline getWireframePipeline() const { return m_wireframePipeline; }
     VkPipeline getLinePipeline() const { return m_linePipeline; }
     VkPipelineLayout getPipelineLayout() const { return m_pipelineLayout; }
     VkCommandBuffer getCurrentCommandBuffer() const { return m_commandBuffers[m_currentFrame]; }
@@ -118,6 +119,7 @@ private:
     void createRenderPass();
     void createDescriptorSetLayout();
     void createGraphicsPipeline();
+    void createWireframePipeline();
     void createLinePipeline();
     void createSkyboxPipeline();
     void createFramebuffers();
@@ -192,6 +194,7 @@ private:
     VkDescriptorSetLayout m_descriptorSetLayout;
     VkPipelineLayout m_pipelineLayout;
     VkPipeline m_graphicsPipeline;
+    VkPipeline m_wireframePipeline;
     VkPipeline m_linePipeline;
     VkPipeline m_skyboxPipeline;
 

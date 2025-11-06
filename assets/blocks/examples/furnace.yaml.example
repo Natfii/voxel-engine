@@ -1,0 +1,15 @@
+# Example: Furnace block with unique texture on each face
+# Demonstrates full control over all 6 faces individually
+name: "Furnace"
+cube_map:
+  top: "furnace_top.png"
+  bottom: "furnace_bottom.png"
+  front: "furnace_front.png"   # Front with opening/face
+  back: "furnace_back.png"
+  left: "furnace_side.png"
+  right: "furnace_side.png"
+durability: 15
+liquid: false
+affected_by_gravity: false
+flammability: 0
+transparency: 0.0

@@ -14,6 +14,7 @@ public:
     ConVar<bool> showCullingStats;
     ConVar<bool> debugCollision;
     ConVar<bool> noclip;
+    ConVar<bool> wireframeMode;
 
     // FPS tracking
     float lastFPS = 0.0f;
