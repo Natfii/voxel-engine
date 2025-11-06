@@ -157,6 +157,12 @@ int main() {
         // Player position is at eye level, not feet level
         float spawnY = (terrainHeight + 3) * 0.5f + 0.8f;  // terrain + 3 blocks + eye height from feet
 
+        // Ensure player never spawns below world (minimum y = 2.0)
+        if (spawnY < 2.0f) {
+            std::cout << "Warning: Calculated spawn Y (" << spawnY << ") is too low, setting to 2.0" << std::endl;
+            spawnY = 2.0f;
+        }
+
         std::cout << "Spawning player at world center (" << spawnX << ", " << spawnY << ", " << spawnZ << ")" << std::endl;
         Player player(glm::vec3(spawnX, spawnY, spawnZ), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
 
