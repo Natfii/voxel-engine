@@ -319,8 +319,10 @@ int main() {
             // Render skybox first (renders behind everything)
             renderer.renderSkybox();
 
-            // Render world with normal pipeline
-            vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getGraphicsPipeline());
+            // Render world with normal or wireframe pipeline based on debug mode
+            VkPipeline worldPipeline = DebugState::instance().wireframeMode.getValue() ?
+                renderer.getWireframePipeline() : renderer.getGraphicsPipeline();
+            vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipeline);
             vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, 80.0f);
