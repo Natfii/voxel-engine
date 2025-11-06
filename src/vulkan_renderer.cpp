@@ -597,7 +597,7 @@ void VulkanRenderer::createLinePipeline() {
     rasterizer.depthClampEnable = VK_FALSE;
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_LINE; // Line rendering mode
-    rasterizer.lineWidth = 2.0f; // Thicker lines for better visibility
+    rasterizer.lineWidth = 4.0f; // Thick black cartoonish outline
     rasterizer.cullMode = VK_CULL_MODE_NONE; // No culling for lines
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     // Enable depth bias to prevent z-fighting with block geometry
