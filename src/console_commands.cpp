@@ -44,7 +44,7 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
                            "wireframe", [](const std::vector<std::string>& args) {
         bool newValue = !DebugState::instance().wireframeMode.getValue();
         DebugState::instance().wireframeMode.setValue(newValue);
-        s_console->addMessage("Wireframe mode: " + std::string(newValue ? "ON" : "OFF"), ConsoleMessageType::SUCCESS);
+        s_console->addMessage("Wireframe mode: " + std::string(newValue ? "ON" : "OFF"), ConsoleMessageType::INFO);
     });
 
     registry.registerCommand("debug", "Toggle debug rendering modes (render, drawfps, targetinfo)",
