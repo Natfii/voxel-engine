@@ -8,12 +8,43 @@
 #pragma once
 #include <vector>
 #include <memory>
+#include <unordered_map>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 #include "chunk.h"
 
 // Forward declaration
 class VulkanRenderer;
+
+/**
+ * @brief Chunk coordinate key for spatial hash map
+ *
+ * Used as key in unordered_map for O(1) chunk lookup instead of O(n) linear search.
+ */
+struct ChunkCoord {
+    int x, y, z;
+
+    bool operator==(const ChunkCoord& other) const {
+        return x == other.x && y == other.y && z == other.z;
+    }
+};
+
+/**
+ * @brief Hash function for ChunkCoord to enable use in unordered_map
+ */
+namespace std {
+    template<>
+    struct hash<ChunkCoord> {
+        size_t operator()(const ChunkCoord& coord) const {
+            // Cantor pairing function variation for 3D coordinates
+            // Mix coordinates to distribute hash values evenly
+            size_t h1 = hash<int>()(coord.x);
+            size_t h2 = hash<int>()(coord.y);
+            size_t h3 = hash<int>()(coord.z);
+            return h1 ^ (h2 << 1) ^ (h3 << 2);
+        }
+    };
+}
 
 /**
  * @brief Manages the voxel world including chunk generation, rendering, and block operations
@@ -226,15 +257,6 @@ public:
 
 private:
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
-    std::vector<std::unique_ptr<Chunk>> m_chunks;  ///< All chunks in the world (RAII managed)
-
-    /**
-     * @brief Converts 3D chunk coordinates to linear array index
-     *
-     * @param x Chunk X coordinate
-     * @param y Chunk Y coordinate
-     * @param z Chunk Z coordinate
-     * @return Linear index into m_chunks array
-     */
-    int index(int x, int y, int z) const;
+    std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_chunkMap;  ///< Fast O(1) chunk lookup by coordinates
+    std::vector<Chunk*> m_chunks;  ///< All chunks for iteration (does not own memory)
 };

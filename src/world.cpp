@@ -36,10 +36,19 @@ World::World(int width, int height, int depth)
     Logger::info() << "Chunk coordinates range: X[" << -halfWidth << " to " << (width - halfWidth - 1)
                    << "], Y[0 to " << (height - 1) << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]";
 
+    // Reserve space for chunks
+    m_chunks.reserve(width * height * depth);
+
     for (int x = -halfWidth; x < width - halfWidth; ++x) {
         for (int y = 0; y < height; ++y) {
             for (int z = -halfDepth; z < depth - halfDepth; ++z) {
-                m_chunks.push_back(std::make_unique<Chunk>(x, y, z));
+                // Create chunk and store in hash map for O(1) lookup
+                auto chunk = std::make_unique<Chunk>(x, y, z);
+                Chunk* chunkPtr = chunk.get();
+                m_chunkMap[ChunkCoord{x, y, z}] = std::move(chunk);
+
+                // Also store raw pointer in vector for fast iteration
+                m_chunks.push_back(chunkPtr);
             }
         }
     }
@@ -48,11 +57,8 @@ World::World(int width, int height, int depth)
 }
 
 World::~World() {
-    // unique_ptr automatically cleans up - no manual delete needed
-}
-
-int World::index(int x, int y, int z) const {
-    return x + m_width * (y + m_height * z);
+    // unique_ptr in m_chunkMap automatically cleans up - no manual delete needed
+    // m_chunks vector only contains non-owning pointers, so no cleanup needed
 }
 
 void World::generateWorld() {
@@ -194,13 +200,10 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
 }
 
 Chunk* World::getChunkAt(int chunkX, int chunkY, int chunkZ) {
-    // Find chunk with matching coordinates
-    for (auto& chunk : m_chunks) {
-        if (chunk->getChunkX() == chunkX &&
-            chunk->getChunkY() == chunkY &&
-            chunk->getChunkZ() == chunkZ) {
-            return chunk.get();  // Return raw pointer from unique_ptr
-        }
+    // O(1) hash map lookup instead of O(n) linear search
+    auto it = m_chunkMap.find(ChunkCoord{chunkX, chunkY, chunkZ});
+    if (it != m_chunkMap.end()) {
+        return it->second.get();
     }
     return nullptr;
 }
