@@ -573,11 +573,15 @@ bool Player::checkCollision(const glm::vec3& position, World* world) {
                                     << ") = " << blockID;
                 }
 
-                if (blockID > 0) {  // Solid block (not air)
-                    if (shouldDebugCollision) {
-                        Logger::debug() << "  COLLISION at block (" << x << "," << y << "," << z << ")!";
+                // Check if block is solid (not air and not liquid)
+                if (blockID > 0) {
+                    const auto& blockDef = BlockRegistry::instance().get(blockID);
+                    if (!blockDef.isLiquid) {  // Only collide with solid blocks, not liquids
+                        if (shouldDebugCollision) {
+                            Logger::debug() << "  COLLISION at block (" << x << "," << y << "," << z << ")!";
+                        }
+                        return true;  // Collision detected
                     }
-                    return true;  // Collision detected
                 }
             }
         }
@@ -684,8 +688,12 @@ bool Player::checkHorizontalCollision(const glm::vec3& position, World* world) {
                 float worldZ = z * 0.5f;
 
                 int blockID = world->getBlockAt(worldX, worldY, worldZ);
-                if (blockID > 0) {  // Solid block (not air)
-                    return true;  // Collision detected
+                // Check if block is solid (not air and not liquid)
+                if (blockID > 0) {
+                    const auto& blockDef = BlockRegistry::instance().get(blockID);
+                    if (!blockDef.isLiquid) {  // Only collide with solid blocks, not liquids
+                        return true;  // Collision detected
+                    }
                 }
             }
         }

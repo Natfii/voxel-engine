@@ -313,16 +313,18 @@ void Chunk::generateMesh(World* world) {
 
     // Helper lambda to check if a block is solid (non-air)
     // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
-    auto isSolid = [this, world, &localToWorldPos](int x, int y, int z) -> bool {
+    auto isSolid = [this, world, &registry, &localToWorldPos](int x, int y, int z) -> bool {
+        int blockID;
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
             // Inside this chunk
-            return m_blocks[x][y][z] != 0;
+            blockID = m_blocks[x][y][z];
+        } else {
+            // Out of bounds - check neighboring chunk via World
+            glm::vec3 worldPos = localToWorldPos(x, y, z);
+            blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         }
-
-        // Out of bounds - check neighboring chunk via World
-        glm::vec3 worldPos = localToWorldPos(x, y, z);
-        int blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
-        return blockID != 0;
+        if (blockID == 0) return false;
+        return !registry.get(blockID).isLiquid;  // Solid = not air and not liquid
     };
 
     // Helper lambda to check if a block is liquid
