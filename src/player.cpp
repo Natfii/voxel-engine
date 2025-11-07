@@ -2,11 +2,11 @@
 #include "world.h"
 #include "block_system.h"
 #include "debug_state.h"
+#include "logger.h"
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cmath>
-#include <iostream>
 
 Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     : Position(position), WorldUp(up), Yaw(yaw), Pitch(pitch),
@@ -23,7 +23,7 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
         if (!NKeyPressed) {
             NoclipMode = !NoclipMode;
             NKeyPressed = true;
-            std::cout << "Noclip mode: " << (NoclipMode ? "ON" : "OFF") << std::endl;
+            Logger::info() << "Noclip mode: " << (NoclipMode ? "ON" : "OFF");
             if (!NoclipMode) {
                 // Reset velocity when entering physics mode
                 Velocity = glm::vec3(0.0f);
@@ -282,7 +282,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
             Velocity.y = 0.0f; // Stop vertical velocity when unsticking
 
             if (shouldDebug && debugCounter % 60 == 0) {
-                std::cout << "DEBUG: Player stuck in block! Pushing up by " << correctionY << std::endl;
+                Logger::debug() << "Player stuck in block! Pushing up by " << correctionY;
             }
         }
     }
@@ -292,7 +292,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     bool yCollision = checkCollision(testPos, world);
 
     if (shouldDebug && debugCounter % 60 == 0 && std::abs(Velocity.y) > 0.1f) {
-        std::cout << "DEBUG: Y collision check at testPos.y=" << testPos.y << " result=" << yCollision << std::endl;
+        Logger::debug() << "Y collision check at testPos.y=" << testPos.y << " result=" << yCollision;
     }
 
     if (yCollision) {
@@ -378,7 +378,7 @@ bool Player::checkCollision(const glm::vec3& position, World* world) {
 
                 if (blockID > 0) {  // Solid block (not air)
                     if (shouldDebugCollision) {
-                        std::cout << "  COLLISION at block (" << x << "," << y << "," << z << ")!" << std::endl;
+                        Logger::debug() << "  COLLISION at block (" << x << "," << y << "," << z << ")!";
                     }
                     return true;  // Collision detected
                 }

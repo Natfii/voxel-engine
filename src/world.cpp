@@ -4,11 +4,11 @@
 #include "vulkan_renderer.h"
 #include "frustum.h"
 #include "debug_state.h"
+#include "logger.h"
 #include <glm/glm.hpp>
 #include <thread>
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 
 World::World(int width, int height, int depth)
     : m_width(width), m_height(height), m_depth(depth) {
@@ -16,9 +16,9 @@ World::World(int width, int height, int depth)
     int halfWidth = width / 2;
     int halfDepth = depth / 2;
 
-    std::cout << "Creating world with " << width << "x" << height << "x" << depth << " chunks" << std::endl;
-    std::cout << "Chunk coordinates range: X[" << -halfWidth << " to " << (width - halfWidth - 1)
-              << "], Y[0 to " << (height - 1) << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]" << std::endl;
+    Logger::info() << "Creating world with " << width << "x" << height << "x" << depth << " chunks";
+    Logger::info() << "Chunk coordinates range: X[" << -halfWidth << " to " << (width - halfWidth - 1)
+                   << "], Y[0 to " << (height - 1) << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]";
 
     for (int x = -halfWidth; x < width - halfWidth; ++x) {
         for (int y = 0; y < height; ++y) {
@@ -28,7 +28,7 @@ World::World(int width, int height, int depth)
         }
     }
 
-    std::cout << "Total chunks created: " << m_chunks.size() << std::endl;
+    Logger::info() << "Total chunks created: " << m_chunks.size();
 }
 
 World::~World() {
@@ -148,10 +148,10 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     // Debug output periodically (roughly once per second at 60 FPS)
     static int frameCount = 0;
     if (frameCount++ % WorldConstants::DEBUG_OUTPUT_INTERVAL == 0) {
-        std::cout << "Rendered: " << renderedCount << " chunks | "
-                  << "Distance culled: " << distanceCulled << " | "
-                  << "Frustum culled: " << frustumCulled << " | "
-                  << "Total: " << m_chunks.size() << " chunks" << std::endl;
+        Logger::debug() << "Rendered: " << renderedCount << " chunks | "
+                        << "Distance culled: " << distanceCulled << " | "
+                        << "Frustum culled: " << frustumCulled << " | "
+                        << "Total: " << m_chunks.size() << " chunks";
     }
 }
 
