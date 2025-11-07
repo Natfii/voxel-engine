@@ -37,6 +37,23 @@ struct BlockCoordinates {
  * 2. Compute chunk coords (divide block coords by 32)
  * 3. Compute local coords (modulo 32, handling negatives correctly)
  *
+ * Usage Example:
+ * @code
+ * // Get block at player's feet position
+ * glm::vec3 playerPos = player.Position;
+ * auto coords = worldToBlockCoords(playerPos.x, playerPos.y, playerPos.z);
+ *
+ * // Query the chunk and get the block
+ * Chunk* chunk = world->getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
+ * if (chunk) {
+ *     int blockID = chunk->getBlock(coords.localX, coords.localY, coords.localZ);
+ *     std::cout << "Block at player position: " << blockID << std::endl;
+ * }
+ *
+ * // Or use the convenience method
+ * int blockID = world->getBlockAt(playerPos.x, playerPos.y, playerPos.z);
+ * @endcode
+ *
  * @param worldX World X coordinate
  * @param worldY World Y coordinate
  * @param worldZ World Z coordinate

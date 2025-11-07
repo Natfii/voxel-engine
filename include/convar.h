@@ -1,3 +1,75 @@
+/**
+ * @file convar.h
+ * @brief Console variable (ConVar) system for runtime configuration
+ *
+ * This system provides console variables (cvars) that can be modified at runtime
+ * via the in-game console. ConVars support multiple types (bool, int, float, string)
+ * and can be persisted to config files.
+ *
+ * Features:
+ * - Type-safe variables with automatic conversion
+ * - Automatic registration with global registry
+ * - Optional persistence (FCVAR_ARCHIVE saves to config.ini)
+ * - Console notifications on value change (FCVAR_NOTIFY)
+ * - Convenient operator overloads for easy access
+ *
+ * Usage Example:
+ * @code
+ * // 1. Declare a ConVar member variable
+ * class MyClass {
+ * public:
+ *     // Archived bool (saved to config.ini)
+ *     ConVar<bool> enableFeature;
+ *
+ *     // Non-archived float with notification
+ *     ConVar<float> sensitivity;
+ *
+ *     MyClass() :
+ *         enableFeature("my_feature", "Enable my feature", false, FCVAR_ARCHIVE),
+ *         sensitivity("my_sensitivity", "Mouse sensitivity", 1.0f, FCVAR_NOTIFY)
+ *     {}
+ * };
+ *
+ * // 2. Access ConVar values
+ * if (myClass.enableFeature.getValue()) {
+ *     // Feature is enabled
+ * }
+ *
+ * // Or use implicit conversion
+ * if (myClass.enableFeature) {
+ *     // Also works!
+ * }
+ *
+ * // 3. Modify ConVar values programmatically
+ * myClass.sensitivity.setValue(2.5f);
+ *
+ * // Or use assignment operator
+ * myClass.sensitivity = 2.5f;
+ *
+ * // 4. Modify via console command (user types in console)
+ * // "my_sensitivity 3.0"
+ * // This calls: ConVarManager::findConVar("my_sensitivity")->setValueFromString("3.0")
+ *
+ * // 5. List all ConVars (console command "cvarlist")
+ * for (const auto& [name, cvar] : ConVarManager::instance().getConVars()) {
+ *     std::cout << name << " = " << cvar->getValueAsString() << std::endl;
+ * }
+ *
+ * // 6. Persistence (automatic on shutdown if FCVAR_ARCHIVE is set)
+ * ConVarManager::instance().saveToConfig();  // Saves to config.ini
+ * ConVarManager::instance().loadFromConfig();  // Loads from config.ini
+ * @endcode
+ *
+ * Common ConVar Flags:
+ * - FCVAR_NONE: No special behavior
+ * - FCVAR_ARCHIVE: Save to config.ini for persistence across sessions
+ * - FCVAR_NOTIFY: Print notification when value changes
+ * - FCVAR_CHEAT: Only works in cheat mode (not yet implemented)
+ * - Combine with bitwise OR: FCVAR_ARCHIVE | FCVAR_NOTIFY
+ *
+ * Created by original author
+ */
+
 #pragma once
 
 #include <string>
@@ -6,7 +78,9 @@
 #include <sstream>
 #include <iostream>
 
-// ConVar flags
+/**
+ * @brief Flags controlling ConVar behavior
+ */
 enum ConVarFlags {
     FCVAR_NONE = 0,
     FCVAR_ARCHIVE = (1 << 0),  // Save to config file
