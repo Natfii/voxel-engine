@@ -23,10 +23,13 @@ FastNoiseLite* Chunk::s_noise = nullptr;
 
 void Chunk::initNoise(int seed) {
     if (s_noise == nullptr) {
-        s_noise = new FastNoiseLite();
+        s_noise = new FastNoiseLite(seed);
         s_noise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-        s_noise->SetSeed(seed);
-        s_noise->SetFrequency(0.01f); // Lower frequency = larger terrain features
+        s_noise->SetFractalType(FastNoiseLite::FractalType_FBm);
+        s_noise->SetFractalOctaves(4);
+        s_noise->SetFractalLacunarity(2.0f);
+        s_noise->SetFractalGain(0.5f);
+        s_noise->SetFrequency(0.015f);  // Lower frequency for larger, smoother hills
     }
 }
 
@@ -80,9 +83,14 @@ Chunk::~Chunk() {
  *
  * Terrain Generation Algorithm:
  * 1. Sample 2D Perlin noise at (worldX, worldZ)
- * 2. Scale noise from [-1,1] to [0,1] range
- * 3. Map to height range: baseHeight (10) to maxHeight (20)
- * 4. This creates rolling hills with 10 blocks of variation
+ * 2. Noise returns value in range [-1, 1]
+ * 3. Multiply by amplitude (12.0) to get variation
+ * 4. Add to base height (64) to center terrain at Y=64
+ * 5. This creates rolling hills with height range [52, 76]
+ *
+ * The base height of 64 centers the terrain in the middle of the
+ * second layer of chunks (Y chunk index 2), which is visible from
+ * the default spawn point.
  *
  * @param worldX World X coordinate
  * @param worldZ World Z coordinate
@@ -90,13 +98,12 @@ Chunk::~Chunk() {
  */
 int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
     if (s_noise == nullptr) {
-        return 10; // Fallback to flat terrain if noise not initialized
+        return 64; // Fallback to flat terrain if noise not initialized
     }
 
-    // Sample noise and map to height range [10, 20]
-    float noiseValue = s_noise->GetNoise(worldX, worldZ);
-    float normalized = (noiseValue + 1.0f) * 0.5f;  // Map [-1,1] to [0,1]
-    int height = 10 + static_cast<int>(normalized * 10);  // Map to [10,20]
+    // Sample noise and map to height range [52, 76]
+    float noise = s_noise->GetNoise(worldX, worldZ);
+    int height = 64 + (int)(noise * 12.0f);  // Base 64 ± 12 blocks variation
 
     return height;
 }
