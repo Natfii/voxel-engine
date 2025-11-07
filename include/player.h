@@ -100,29 +100,29 @@ public:
 
 private:
     // ========== Mouse Tracking ==========
-    bool FirstMouse;       ///< True until first mouse movement (prevents camera jump)
-    float LastX;           ///< Last mouse X position
-    float LastY;           ///< Last mouse Y position
+    bool m_firstMouse;       ///< True until first mouse movement (prevents camera jump)
+    float m_lastX;           ///< Last mouse X position
+    float m_lastY;           ///< Last mouse Y position
 
     // ========== Physics State ==========
-    glm::vec3 Velocity;    ///< Current velocity vector (world units/second)
-    bool OnGround;         ///< True if player is standing on a solid block
-    bool InLiquid;         ///< True if player is submerged in liquid (reserved for future)
-    bool NKeyPressed;      ///< Tracks N key state for noclip toggle
-    bool IsSprinting;      ///< True if currently sprinting
-    bool SprintKeyPressed; ///< Tracks sprint key state for toggle mode (reserved)
+    glm::vec3 m_velocity;    ///< Current velocity vector (world units/second)
+    bool m_onGround;         ///< True if player is standing on a solid block
+    bool m_inLiquid;         ///< True if player is submerged in liquid (reserved for future)
+    bool m_nKeyPressed;      ///< Tracks N key state for noclip toggle
+    bool m_isSprinting;      ///< True if currently sprinting
+    bool m_sprintKeyPressed; ///< Tracks sprint key state for toggle mode (reserved)
 
     // ========== Player Dimensions ==========
-    // All dimensions in world units (blocks are 0.5 units)
-    static constexpr float PLAYER_WIDTH = 0.25f;      ///< Player width (0.5 blocks, tighter than Minecraft)
-    static constexpr float PLAYER_HEIGHT = 0.9f;      ///< Player height (1.8 blocks, like Minecraft)
-    static constexpr float PLAYER_EYE_HEIGHT = 0.8f;  ///< Eye height from feet (1.62 blocks)
+    // All dimensions in world units (blocks are 0.5 world units)
+    static constexpr float PLAYER_WIDTH = 0.25f;      ///< Player width (0.5 blocks wide, tighter than Minecraft)
+    static constexpr float PLAYER_HEIGHT = 0.9f;      ///< Player height (1.8 blocks tall, like Minecraft)
+    static constexpr float PLAYER_EYE_HEIGHT = 0.8f;  ///< Eye height from feet (1.6 blocks, 0.8 world units)
 
     // ========== Physics Constants ==========
-    static constexpr float GRAVITY = 16.0f;            ///< Gravity acceleration (blocks/s²)
-    static constexpr float JUMP_VELOCITY = 4.2f;       ///< Initial jump velocity (1.25 block jump)
-    static constexpr float WALK_SPEED = 2.15f;         ///< Base walk speed (4.3 blocks/s)
-    static constexpr float SPRINT_MULTIPLIER = 1.5f;   ///< Sprint speed multiplier
+    static constexpr float GRAVITY = 16.0f;            ///< Gravity acceleration (32 blocks/s², 16 world units/s²)
+    static constexpr float JUMP_VELOCITY = 4.2f;       ///< Initial jump velocity (~1.1 block jump height)
+    static constexpr float WALK_SPEED = 2.15f;         ///< Base walk speed (4.3 blocks/s, 2.15 world units/s)
+    static constexpr float SPRINT_MULTIPLIER = 1.5f;   ///< Sprint speed multiplier (6.45 blocks/s when sprinting)
     static constexpr float SWIM_SPEED = 1.5f;          ///< Swimming speed (reserved for future)
 
     // ========== Private Methods ==========

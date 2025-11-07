@@ -9,6 +9,7 @@
 
 #include <vector>
 #include <array>
+#include <memory>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include "voxelmath.h"
@@ -97,7 +98,7 @@ struct Vertex {
  */
 class Chunk {
 
- static FastNoiseLite* s_noise;  ///< Shared noise generator for terrain
+ static std::unique_ptr<FastNoiseLite> s_noise;  ///< Shared noise generator for terrain (RAII managed)
 
 public:
     // ========== Static Configuration ==========

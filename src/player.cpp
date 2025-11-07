@@ -10,6 +10,7 @@
 #include "block_system.h"
 #include "debug_state.h"
 #include "logger.h"
+#include "terrain_constants.h"
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -17,9 +18,9 @@
 
 Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     : Position(position), WorldUp(up), Yaw(yaw), Pitch(pitch),
-      MovementSpeed(5.0f), MouseSensitivity(0.1f), FirstMouse(true),
-      Velocity(0.0f), OnGround(false), InLiquid(false), NKeyPressed(false),
-      NoclipMode(false), IsSprinting(false), SprintKeyPressed(false)
+      MovementSpeed(5.0f), MouseSensitivity(0.1f), m_firstMouse(true),
+      m_velocity(0.0f), m_onGround(false), m_inLiquid(false), m_nKeyPressed(false),
+      NoclipMode(false), m_isSprinting(false), m_sprintKeyPressed(false)
 {
     updateVectors();
 }
@@ -27,17 +28,17 @@ Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
 void Player::update(GLFWwindow* window, float deltaTime, World* world, bool processInput) {
     // Handle N key to toggle noclip mode (only if processing input)
     if (processInput && glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) {
-        if (!NKeyPressed) {
+        if (!m_nKeyPressed) {
             NoclipMode = !NoclipMode;
-            NKeyPressed = true;
+            m_nKeyPressed = true;
             Logger::info() << "Noclip mode: " << (NoclipMode ? "ON" : "OFF");
             if (!NoclipMode) {
                 // Reset velocity when entering physics mode
-                Velocity = glm::vec3(0.0f);
+                m_velocity = glm::vec3(0.0f);
             }
         }
     } else {
-        NKeyPressed = false;
+        m_nKeyPressed = false;
     }
 
     // Update mouse look (only if processing input)
@@ -45,16 +46,16 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
         double xpos, ypos;
         glfwGetCursorPos(window, &xpos, &ypos);
 
-        if (FirstMouse) {
-            LastX = float(xpos);
-            LastY = float(ypos);
-            FirstMouse = false;
+        if (m_firstMouse) {
+            m_lastX = float(xpos);
+            m_lastY = float(ypos);
+            m_firstMouse = false;
         }
 
-        float xoffset = float(xpos - LastX);
-        float yoffset = float(LastY - ypos); // Reversed for Vulkan's flipped Y projection
-        LastX = float(xpos);
-        LastY = float(ypos);
+        float xoffset = float(xpos - m_lastX);
+        float yoffset = float(m_lastY - ypos); // Reversed for Vulkan's flipped Y projection
+        m_lastX = float(xpos);
+        m_lastY = float(ypos);
 
         xoffset *= MouseSensitivity;
         yoffset *= MouseSensitivity;
@@ -110,22 +111,23 @@ void Player::updateNoclip(GLFWwindow* window, float deltaTime) {
  * similar to Minecraft's physics system. The key features are:
  *
  * 1. **Movement Modes**:
- *    - Ground movement: WALK_SPEED (4.3 units/sec) or sprint (5.6 units/sec)
- *    - Swimming: SWIM_SPEED (2.0 units/sec) with vertical control
- *    - Jumping: Instant upward velocity (JUMP_VELOCITY = 7.0)
+ *    - Ground movement: WALK_SPEED (2.15 world units/sec = 4.3 blocks/sec)
+ *    - Sprint: WALK_SPEED * 1.5 (3.225 world units/sec = 6.45 blocks/sec)
+ *    - Swimming: SWIM_SPEED (1.5 world units/sec = 3.0 blocks/sec) with vertical control
+ *    - Jumping: Instant upward velocity (JUMP_VELOCITY = 4.2 world units/sec)
  *
  * 2. **Gravity Integration** (Semi-implicit Euler):
- *    - Velocity updated first: v(t+dt) = v(t) - g*dt
+ *    - m_velocity updated first: v(t+dt) = v(t) - g*dt
  *    - Position updated with new velocity: p(t+dt) = p(t) + v(t+dt)*dt
  *    - This prevents energy gain on slopes (unlike explicit Euler)
- *    - Gravity: 20.0 units/sec² (same as Minecraft)
- *    - Terminal velocity: -40.0 units/sec
+ *    - Gravity: 16.0 world units/sec² (32 blocks/sec²)
+ *    - Terminal velocity: -40.0 world units/sec (-80 blocks/sec)
  *
  * 3. **Ground Detection** (4-corner AABB check):
  *    - Checks center + 4 foot corners for solid blocks below
  *    - Check distance: 0.05 units below feet
  *    - Allows edge-of-block jumping (coyote time effect)
- *    - OnGround set BEFORE movement to enable jump at frame start
+ *    - m_onGround set BEFORE movement to enable jump at frame start
  *
  * 4. **Collision Resolution** (Axis-by-axis AABB):
  *    - Y-axis resolved first (prevents edge clipping)
@@ -141,20 +143,22 @@ void Player::updateNoclip(GLFWwindow* window, float deltaTime) {
  *
  * Physics Constants (from player.h):
  * -----------------------------------
- * - GRAVITY: 20.0 units/sec² (comparable to Earth's 9.8 m/s²)
- * - JUMP_VELOCITY: 7.0 units/sec (reaches ~1.225 units high)
- * - WALK_SPEED: 4.3 units/sec (8.6 blocks/sec)
- * - SPRINT_MULTIPLIER: 1.3x (5.59 units/sec)
- * - SWIM_SPEED: 2.0 units/sec
- * - PLAYER_HEIGHT: 0.9 units (1.8 blocks, same as Minecraft)
- * - PLAYER_WIDTH: 0.25 units (0.5 blocks)
- * - PLAYER_EYE_HEIGHT: 0.85 units (Position is at eye level)
+ * - GRAVITY: 16.0 world units/sec² (32 blocks/sec²)
+ * - JUMP_VELOCITY: 4.2 world units/sec (reaches ~1.1 blocks high)
+ * - WALK_SPEED: 2.15 world units/sec (4.3 blocks/sec)
+ * - SPRINT_MULTIPLIER: 1.5x (6.45 blocks/sec when sprinting)
+ * - SWIM_SPEED: 1.5 world units/sec (3.0 blocks/sec)
+ * - PLAYER_HEIGHT: 0.9 world units (1.8 blocks, same as Minecraft)
+ * - PLAYER_WIDTH: 0.25 world units (0.5 blocks)
+ * - PLAYER_EYE_HEIGHT: 0.8 world units (1.6 blocks, Position is at eye level)
  *
  * Physics Math Example:
  * ---------------------
- * Jump height calculation: h = v₀² / (2g) = 7.0² / (2*20) = 1.225 units
- * Jump duration: t = 2v₀ / g = 2*7.0 / 20 = 0.7 seconds
- * Sprint speed in blocks/sec: 5.59 / 0.5 = 11.18 blocks/sec
+ * Jump height: h = v₀² / (2g) = 4.2² / (2*16) = 0.55125 world units ≈ 1.1 blocks
+ * Jump duration: t = 2v₀ / g = 2*4.2 / 16 = 0.525 seconds
+ * Sprint speed: 2.15 * 1.5 = 3.225 world units/sec = 6.45 blocks/sec
+ *
+ * Note: Blocks are 0.5 world units in size
  *
  * @param window GLFW window for input
  * @param deltaTime Frame time in seconds (typically ~0.016 for 60 FPS)
@@ -165,11 +169,11 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     // Handle sprint input
     // NOTE: Sprint toggle mode could be added in the future by:
     // - Adding a sprint_toggle_mode config option in config.ini
-    // - Tracking sprint toggle state in SprintKeyPressed member
-    // - Toggling IsSprinting on key press instead of holding
+    // - Tracking sprint toggle state in m_sprintKeyPressed member
+    // - Toggling m_isSprinting on key press instead of holding
     // For now, using hold-to-sprint (Minecraft default behavior)
     bool sprintKeyDown = processInput && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
-    IsSprinting = sprintKeyDown && OnGround;  // Can only sprint on ground
+    m_isSprinting = sprintKeyDown && m_onGround;  // Can only sprint on ground
 
     // WASD input for horizontal movement (only if processing input)
     glm::vec3 wishDir(0.0f);
@@ -197,58 +201,59 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     // Check if the block is a liquid using BlockRegistry
     // NOTE: Currently no liquid blocks are defined in assets/blocks/
     // When liquid blocks are added (water, lava), set their "isLiquid: true" in YAML
-    InLiquid = false;
+    m_inLiquid = false;
     if (blockID > 0) {
         try {
             const auto& blockDef = BlockRegistry::instance().get(blockID);
-            InLiquid = blockDef.isLiquid;
+            m_inLiquid = blockDef.isLiquid;
         } catch (...) {
             // Invalid block ID, treat as air
-            InLiquid = false;
+            m_inLiquid = false;
         }
     }
 
     // Apply movement speed with sprint multiplier
-    float moveSpeed = InLiquid ? SWIM_SPEED : WALK_SPEED;
-    if (IsSprinting && !InLiquid) {
+    float moveSpeed = m_inLiquid ? SWIM_SPEED : WALK_SPEED;
+    if (m_isSprinting && !m_inLiquid) {
         moveSpeed *= SPRINT_MULTIPLIER;
     }
     glm::vec3 horizontalVel = wishDir * moveSpeed;
 
     // Jumping (only if processing input)
     if (processInput && glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-        if (InLiquid) {
+        if (m_inLiquid) {
             // Swim up in liquid
-            Velocity.y = SWIM_SPEED * 0.8f;
-        } else if (OnGround) {
+            m_velocity.y = SWIM_SPEED * 0.8f;
+        } else if (m_onGround) {
             // Jump if on ground
-            Velocity.y = JUMP_VELOCITY;
+            m_velocity.y = JUMP_VELOCITY;
         }
     }
 
     // Apply gravity (only when not on ground or in liquid)
     // This prevents slow sinking when standing still
-    if (!InLiquid && !OnGround) {
-        Velocity.y -= GRAVITY * deltaTime;
-    } else if (InLiquid) {
+    if (!m_inLiquid && !m_onGround) {
+        m_velocity.y -= GRAVITY * deltaTime;
+    } else if (m_inLiquid) {
         // In liquid, apply gentle downward drift (only if not processing input, or no keys pressed)
         if (!processInput || (glfwGetKey(window, GLFW_KEY_SPACE) != GLFW_PRESS &&
             glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) != GLFW_PRESS)) {
-            Velocity.y = -SWIM_SPEED * 0.3f;
+            m_velocity.y = -SWIM_SPEED * 0.3f;
         }
         // Swim down with shift (only if processing input)
         if (processInput && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-            Velocity.y = -SWIM_SPEED * 0.8f;
+            m_velocity.y = -SWIM_SPEED * 0.8f;
         }
     }
 
     // Terminal velocity
-    if (Velocity.y < -40.0f) Velocity.y = -40.0f;
+    using namespace PhysicsConstants;
+    if (m_velocity.y < TERMINAL_VELOCITY) m_velocity.y = TERMINAL_VELOCITY;
 
     // *** Check ground state BEFORE movement ***
-    // This ensures OnGround represents the state at the START of the frame
+    // This ensures m_onGround represents the state at the START of the frame
     // so jumping works correctly even when moving off edges
-    OnGround = false;
+    m_onGround = false;
 
     // Check if standing on ground - check 4 bottom corners of AABB
     // This is the standard approach in voxel games like Minecraft
@@ -257,7 +262,8 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
 
     // Check slightly below feet to detect ground
     bool groundDetected = false;
-    float checkDistance = 0.05f;  // Check 0.05 units below feet
+    using namespace PhysicsConstants;
+    const float checkDistance = GROUND_CHECK_DISTANCE;
 
     // First verify player isn't inside a block (center check at feet level)
     int blockAtCenter = world->getBlockAt(feetPos.x, feetPos.y, feetPos.z);
@@ -295,7 +301,7 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     }
 
     if (groundDetected) {
-        OnGround = true;
+        m_onGround = true;
         // Don't stop velocity here - let collision resolution handle it
         // This prevents teleporting/floating when detecting ground early
     }
@@ -303,7 +309,7 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     // Now calculate movement and apply physics
     // Calculate total movement
     glm::vec3 movement = horizontalVel * deltaTime;
-    movement.y = Velocity.y * deltaTime;
+    movement.y = m_velocity.y * deltaTime;
 
     // Resolve collisions
     resolveCollisions(movement, world);
@@ -312,8 +318,8 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     Position += movement;
 
     // After movement, if we detected ground and are now on it, stop falling
-    if (OnGround && Velocity.y < 0.0f) {
-        Velocity.y = 0.0f;
+    if (m_onGround && m_velocity.y < 0.0f) {
+        m_velocity.y = 0.0f;
     }
 }
 
@@ -363,7 +369,7 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
  * - Calculate correction to push player to next grid boundary
  * - Only apply if correction > STUCK_THRESHOLD (0.02 units)
  * - Prevents jittering from tiny floating-point errors
- * - Sets Velocity.y = 0 to prevent continued falling
+ * - Sets m_velocity.y = 0 to prevent continued falling
  *
  * Collision Detection:
  * --------------------
@@ -378,7 +384,7 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
  * 1. Movement vector: (-0.032, -0.24, 0.048)
  * 2. Test Y: Position + (0, -0.24, 0) → collision detected below
  * 3. Snap feet to block grid: movement.y adjusted from -0.24 to -0.05
- * 4. Set Velocity.y = 0 (stop falling)
+ * 4. Set m_velocity.y = 0 (stop falling)
  * 5. Test X: Position + (-0.032, 0, 0) → no collision, keep movement.x
  * 6. Test Z: Position + (0, 0, 0.048) → no collision, keep movement.z
  * 7. Final movement: (-0.032, -0.05, 0.048) → player lands smoothly
@@ -397,15 +403,15 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     // DEBUG: Print position and movement (only if debug_collision is enabled)
     static int debugCounter = 0;
     bool shouldDebug = DebugState::instance().debugCollision.getValue();
-    if (shouldDebug && debugCounter++ % 60 == 0 && std::abs(Velocity.y) > 0.1f) {
+    if (shouldDebug && debugCounter++ % 60 == 0 && std::abs(m_velocity.y) > 0.1f) {
         glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
         Logger::debug() << "Player pos=" << Position.y << " feet=" << feetPos.y
-                        << " movement.y=" << movement.y << " velocity.y=" << Velocity.y;
+                        << " movement.y=" << movement.y << " velocity.y=" << m_velocity.y;
     }
 
     // CRITICAL FIX: If player is ALREADY stuck inside a block, push them out
     // But only if they're SIGNIFICANTLY stuck (not just barely touching)
-    const float STUCK_THRESHOLD = 0.02f; // Only unstick if > 0.02 units inside
+    using namespace PhysicsConstants;
 
     if (checkCollision(Position, world)) {
         // Player is currently inside a block - calculate correction
@@ -416,7 +422,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
         // Only apply correction if it's significant (player is really stuck, not just touching edge)
         if (std::abs(correctionY) > STUCK_THRESHOLD) {
             Position.y += correctionY;
-            Velocity.y = 0.0f; // Stop vertical velocity when unsticking
+            m_velocity.y = 0.0f; // Stop vertical velocity when unsticking
 
             if (shouldDebug && debugCounter % 60 == 0) {
                 Logger::debug() << "Player stuck in block! Pushing up by " << correctionY;
@@ -428,7 +434,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     glm::vec3 testPos = Position + glm::vec3(0.0f, movement.y, 0.0f);
     bool yCollision = checkCollision(testPos, world);
 
-    if (shouldDebug && debugCounter % 60 == 0 && std::abs(Velocity.y) > 0.1f) {
+    if (shouldDebug && debugCounter % 60 == 0 && std::abs(m_velocity.y) > 0.1f) {
         Logger::debug() << "Y collision check at testPos.y=" << testPos.y << " result=" << yCollision;
     }
 
@@ -445,7 +451,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
             // Moving upward (hitting ceiling) - just stop
             movement.y = 0.0f;
         }
-        Velocity.y = 0.0f;
+        m_velocity.y = 0.0f;
     }
 
     // ===== Test X axis (horizontal movement) =====
@@ -455,7 +461,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     if (checkHorizontalCollision(testPos, world)) {
         // Collision detected - stop horizontal movement
         movement.x = 0.0f;
-        Velocity.x = 0.0f;
+        m_velocity.x = 0.0f;
     }
 
     // ===== Test Z axis (horizontal movement) =====
@@ -465,7 +471,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     if (checkHorizontalCollision(testPos, world)) {
         // Collision detected - stop horizontal movement
         movement.z = 0.0f;
-        Velocity.z = 0.0f;
+        m_velocity.z = 0.0f;
     }
 }
 
@@ -654,8 +660,9 @@ bool Player::checkHorizontalCollision(const glm::vec3& position, World* world) {
     glm::vec3 feetPos = position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
     float halfWidth = PLAYER_WIDTH / 2.0f;
 
-    // Start checking from 0.3 units (0.6 blocks) above feet - this is knee/step height
-    const float stepHeight = 0.3f;
+    // Start checking from step height above feet - this is knee/step height
+    using namespace PhysicsConstants;
+    const float stepHeight = STEP_HEIGHT;
     glm::vec3 minBound = feetPos + glm::vec3(-halfWidth, stepHeight, -halfWidth);
     glm::vec3 maxBound = feetPos + glm::vec3(halfWidth, PLAYER_HEIGHT, halfWidth);
 
@@ -703,5 +710,5 @@ void Player::updateVectors() {
 }
 
 void Player::resetMouse() {
-    FirstMouse = true;
+    m_firstMouse = true;
 }

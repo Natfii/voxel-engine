@@ -14,16 +14,19 @@
 #include "world.h"
 #include "vulkan_renderer.h"
 #include "block_system.h"
+#include "terrain_constants.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
+#include <mutex>
 
 // Static member initialization
-FastNoiseLite* Chunk::s_noise = nullptr;
+std::unique_ptr<FastNoiseLite> Chunk::s_noise = nullptr;
+static std::mutex s_noiseMutex;  // Protect noise access for thread safety
 
 void Chunk::initNoise(int seed) {
     if (s_noise == nullptr) {
-        s_noise = new FastNoiseLite(seed);
+        s_noise = std::make_unique<FastNoiseLite>(seed);
         s_noise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
         s_noise->SetFractalType(FastNoiseLite::FractalType_FBm);
         s_noise->SetFractalOctaves(4);
@@ -34,8 +37,7 @@ void Chunk::initNoise(int seed) {
 }
 
 void Chunk::cleanupNoise() {
-    delete s_noise;
-    s_noise = nullptr;
+    s_noise.reset();  // Automatic cleanup with unique_ptr
 }
 
 // Note: Vertex::getBindingDescription() and Vertex::getAttributeDescriptions()
@@ -97,13 +99,21 @@ Chunk::~Chunk() {
  * @return Height in blocks (Y coordinate)
  */
 int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
+    using namespace TerrainGeneration;
+
     if (s_noise == nullptr) {
-        return 64; // Fallback to flat terrain if noise not initialized
+        return BASE_HEIGHT; // Fallback to flat terrain if noise not initialized
     }
 
-    // Sample noise and map to height range [52, 76]
-    float noise = s_noise->GetNoise(worldX, worldZ);
-    int height = 64 + (int)(noise * 12.0f);  // Base 64 ± 12 blocks variation
+    // Thread-safe noise sampling (FastNoiseLite may not be thread-safe)
+    float noise;
+    {
+        std::lock_guard<std::mutex> lock(s_noiseMutex);
+        noise = s_noise->GetNoise(worldX, worldZ);
+    }
+
+    // Map noise to height range [BASE_HEIGHT - HEIGHT_VARIATION, BASE_HEIGHT + HEIGHT_VARIATION]
+    int height = BASE_HEIGHT + (int)(noise * HEIGHT_VARIATION);
 
     return height;
 }
@@ -124,6 +134,8 @@ int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
  * Performance: ~32,000 blocks processed per chunk (32³)
  */
 void Chunk::generate() {
+    using namespace TerrainGeneration;
+
     for (int x = 0; x < WIDTH; x++) {
         for (int z = 0; z < DEPTH; z++) {
             // Convert local coords to world coords
@@ -138,18 +150,18 @@ void Chunk::generate() {
                 int worldY = m_y * HEIGHT + y;
 
                 if (worldY < terrainHeight) {
-                    // Determine block type based on depth
+                    // Determine block type based on depth from surface
                     int depthFromSurface = terrainHeight - worldY;
 
                     if (depthFromSurface == 1) {
-                        m_blocks[x][y][z] = 3;  // Grass Block on top (ID 3)
-                    } else if (depthFromSurface <= 4) {
-                        m_blocks[x][y][z] = 2;  // Dirt below grass (ID 2)
+                        m_blocks[x][y][z] = BLOCK_GRASS;  // Grass on top
+                    } else if (depthFromSurface <= TOPSOIL_DEPTH) {
+                        m_blocks[x][y][z] = BLOCK_DIRT;  // Dirt below grass
                     } else {
-                        m_blocks[x][y][z] = 1;  // Stone at bottom (ID 1)
+                        m_blocks[x][y][z] = BLOCK_STONE;  // Stone at bottom
                     }
                 } else {
-                    m_blocks[x][y][z] = 0;  // Air above terrain
+                    m_blocks[x][y][z] = BLOCK_AIR;  // Air above terrain
                 }
             }
         }
@@ -204,36 +216,73 @@ void Chunk::generate() {
  * @param world World instance to query neighboring chunks
  */
 void Chunk::generateMesh(World* world) {
-    // Define a 0.5-unit cube (4 vertices per face, 24 total) - indexed rendering
+    /**
+     * Cube Vertex Layout (indexed rendering):
+     * ========================================
+     *
+     * Each face is a quad defined by 4 vertices (counter-clockwise winding order).
+     * Blocks are 0.5 world units in size (1 block = 0.5 units).
+     *
+     * Vertex ordering per face (looking at face from outside):
+     *   3 -------- 2
+     *   |          |
+     *   |          |
+     *   0 -------- 1
+     *
+     * Index formula: Two triangles per quad
+     *   Triangle 1: (0, 1, 2) - bottom-left, bottom-right, top-right
+     *   Triangle 2: (0, 2, 3) - bottom-left, top-right, top-left
+     *
+     * Face storage order (offsets into cube array):
+     *   0-11:  Front face (z=0, facing -Z)
+     *   12-23: Back face (z=0.5, facing +Z)
+     *   24-35: Left face (x=0, facing -X)
+     *   36-47: Right face (x=0.5, facing +X)
+     *   48-59: Top face (y=0.5, facing +Y)
+     *   60-71: Bottom face (y=0, facing -Y)
+     *
+     * Each face offset contains 12 floats (4 vertices × 3 components).
+     */
     static constexpr std::array<float, 72> cube = {{
-        // front face (z = 0) - 4 vertices
+        // Front face (z = 0, facing -Z) - vertices: BL, BR, TR, TL
         0,0,0,  0.5f,0,0,  0.5f,0.5f,0,  0,0.5f,0,
-        // back face (z = 0.5) - 4 vertices
+        // Back face (z = 0.5, facing +Z) - vertices: BR, BL, TL, TR (reversed for correct winding)
         0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
-        // left face (x = 0) - 4 vertices
+        // Left face (x = 0, facing -X) - vertices: BL, BR, TR, TL
         0,0,0.5f,  0,0,0,  0,0.5f,0,  0,0.5f,0.5f,
-        // right face (x = 0.5) - 4 vertices
+        // Right face (x = 0.5, facing +X) - vertices: BL, BR, TR, TL
         0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
-        // top face (y = 0.5) - 4 vertices
+        // Top face (y = 0.5, facing +Y) - vertices: BL, BR, TR, TL
         0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
-        // bottom face (y = 0) - 4 vertices
+        // Bottom face (y = 0, facing -Y) - vertices: BL, BR, TR, TL
         0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,  0,0,0
     }};
 
-    // UV coordinates for each vertex (4 per face)
-    // Note: V coordinates are flipped for side faces to prevent upside-down textures
+    /**
+     * UV Coordinate Layout:
+     * =====================
+     *
+     * UV coordinates map quad corners to texture atlas cells.
+     * Standard UV space: (0,0) = top-left, (1,1) = bottom-right
+     *
+     * V-flip for side faces: Side faces need V-flip to prevent upside-down textures
+     * because Vulkan's texture coordinate system differs from OpenGL.
+     *
+     * Top/Bottom faces: Use standard UV orientation
+     * Side faces: Use V-flipped orientation (V: 0→1 instead of 1→0)
+     */
     static constexpr std::array<float, 48> cubeUVs = {{
-        // front face: 4 vertices - V flipped
+        // Front face (4 UV pairs) - V flipped: BL(0,1), BR(1,1), TR(1,0), TL(0,0)
         0,1,  1,1,  1,0,  0,0,
-        // back face - V flipped
+        // Back face - V flipped
         0,1,  1,1,  1,0,  0,0,
-        // left face - V flipped
+        // Left face - V flipped
         0,1,  1,1,  1,0,  0,0,
-        // right face - V flipped
+        // Right face - V flipped
         0,1,  1,1,  1,0,  0,0,
-        // top face - normal orientation
+        // Top face - Standard orientation: BL(0,0), BR(1,0), TR(1,1), TL(0,1)
         0,0,  1,0,  1,1,  0,1,
-        // bottom face - normal orientation
+        // Bottom face - Standard orientation
         0,0,  1,0,  1,1,  0,1
     }};
 
@@ -249,44 +298,37 @@ void Chunk::generateMesh(World* world) {
     int atlasGridSize = registry.getAtlasGridSize();
     float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
 
+    // Helper: Convert local chunk coordinates to world position (eliminates code duplication)
+    auto localToWorldPos = [this](int x, int y, int z) -> glm::vec3 {
+        int worldBlockX = m_x * WIDTH + x;
+        int worldBlockY = m_y * HEIGHT + y;
+        int worldBlockZ = m_z * DEPTH + z;
+        return glm::vec3(worldBlockX * 0.5f, worldBlockY * 0.5f, worldBlockZ * 0.5f);
+    };
+
     // Helper lambda to check if a block is solid (non-air)
     // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
-    auto isSolid = [this, world](int x, int y, int z) -> bool {
+    auto isSolid = [this, world, &localToWorldPos](int x, int y, int z) -> bool {
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
             // Inside this chunk
             return m_blocks[x][y][z] != 0;
         }
 
         // Out of bounds - check neighboring chunk via World
-        // Convert local coordinates to world coordinates
-        int worldBlockX = m_x * WIDTH + x;
-        int worldBlockY = m_y * HEIGHT + y;
-        int worldBlockZ = m_z * DEPTH + z;
-
-        // Convert to world position (blocks are 0.5 units)
-        float worldX = worldBlockX * 0.5f;
-        float worldY = worldBlockY * 0.5f;
-        float worldZ = worldBlockZ * 0.5f;
-
-        // Query the world (returns 0 for air or out-of-world bounds)
-        int blockID = world->getBlockAt(worldX, worldY, worldZ);
+        glm::vec3 worldPos = localToWorldPos(x, y, z);
+        int blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         return blockID != 0;
     };
 
     // Helper lambda to check if a block is liquid
-    auto isLiquid = [this, world, &registry](int x, int y, int z) -> bool {
+    auto isLiquid = [this, world, &registry, &localToWorldPos](int x, int y, int z) -> bool {
         int blockID;
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
             blockID = m_blocks[x][y][z];
         } else {
             // Out of bounds - check world
-            int worldBlockX = m_x * WIDTH + x;
-            int worldBlockY = m_y * HEIGHT + y;
-            int worldBlockZ = m_z * DEPTH + z;
-            float worldX = worldBlockX * 0.5f;
-            float worldY = worldBlockY * 0.5f;
-            float worldZ = worldBlockZ * 0.5f;
-            blockID = world->getBlockAt(worldX, worldY, worldZ);
+            glm::vec3 worldPos = localToWorldPos(x, y, z);
+            blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         }
         if (blockID == 0) return false;
         return registry.get(blockID).isLiquid;
@@ -390,49 +432,67 @@ void Chunk::generateMesh(World* world) {
                 const BlockDefinition::FaceTexture& topTex = def.useCubeMap ? def.top : def.all;
                 const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
 
-                // Special rendering for liquid blocks
+                // Face culling based on block type
+                // - Solid blocks: render faces against air and liquids (liquids are transparent)
+                // - Liquid blocks: render faces against air and solids (not other liquids)
                 bool isCurrentLiquid = def.isLiquid;
 
                 // Front face (z=0, facing -Z direction)
-                if (!isSolid(X, Y, Z - 1) || (isCurrentLiquid && !isLiquid(X, Y, Z - 1))) {
-                    // Render if neighbor is air, or if this is liquid and neighbor is non-liquid
-                    if (!isCurrentLiquid || !isLiquid(X, Y, Z - 1)) {
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X, Y, Z - 1)  // Liquid: render against air/solids, not other liquids
+                        : (!isSolid(X, Y, Z - 1) || isLiquid(X, Y, Z - 1));  // Solid: render against air/liquids
+                    if (shouldRender) {
                         renderFace(frontTex, 0, 0);
                     }
                 }
 
                 // Back face (z=0.5, facing +Z direction)
-                if (!isSolid(X, Y, Z + 1) || (isCurrentLiquid && !isLiquid(X, Y, Z + 1))) {
-                    if (!isCurrentLiquid || !isLiquid(X, Y, Z + 1)) {
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X, Y, Z + 1)
+                        : (!isSolid(X, Y, Z + 1) || isLiquid(X, Y, Z + 1));
+                    if (shouldRender) {
                         renderFace(backTex, 12, 8);
                     }
                 }
 
                 // Left face (x=0, facing -X direction)
-                if (!isSolid(X - 1, Y, Z) || (isCurrentLiquid && !isLiquid(X - 1, Y, Z))) {
-                    if (!isCurrentLiquid || !isLiquid(X - 1, Y, Z)) {
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X - 1, Y, Z)
+                        : (!isSolid(X - 1, Y, Z) || isLiquid(X - 1, Y, Z));
+                    if (shouldRender) {
                         renderFace(leftTex, 24, 16);
                     }
                 }
 
                 // Right face (x=0.5, facing +X direction)
-                if (!isSolid(X + 1, Y, Z) || (isCurrentLiquid && !isLiquid(X + 1, Y, Z))) {
-                    if (!isCurrentLiquid || !isLiquid(X + 1, Y, Z)) {
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X + 1, Y, Z)
+                        : (!isSolid(X + 1, Y, Z) || isLiquid(X + 1, Y, Z));
+                    if (shouldRender) {
                         renderFace(rightTex, 36, 24);
                     }
                 }
 
                 // Top face (y=0.5, facing +Y direction)
-                // For liquids: only render if exposed to air (not another liquid)
-                if (!isSolid(X, Y + 1, Z)) {
-                    renderFace(topTex, 48, 32);
-                } else if (isCurrentLiquid && !isLiquid(X, Y + 1, Z)) {
-                    renderFace(topTex, 48, 32);
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X, Y + 1, Z)
+                        : (!isSolid(X, Y + 1, Z) || isLiquid(X, Y + 1, Z));
+                    if (shouldRender) {
+                        renderFace(topTex, 48, 32);
+                    }
                 }
 
                 // Bottom face (y=0, facing -Y direction)
-                if (!isSolid(X, Y - 1, Z) || (isCurrentLiquid && !isLiquid(X, Y - 1, Z))) {
-                    if (!isCurrentLiquid || !isLiquid(X, Y - 1, Z)) {
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X, Y - 1, Z)
+                        : (!isSolid(X, Y - 1, Z) || isLiquid(X, Y - 1, Z));
+                    if (shouldRender) {
                         renderFace(bottomTex, 60, 40);
                     }
                 }
@@ -454,52 +514,96 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
     // Destroy old buffers if they exist
     destroyBuffers(renderer);
 
-    // Create vertex buffer
+    VkDevice device = renderer->getDevice();
+
+    // Create vertex buffer with exception safety
     VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
 
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
-    renderer->createBuffer(vertexBufferSize,
-                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                          stagingBuffer, stagingBufferMemory);
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
 
-    void* data;
-    vkMapMemory(renderer->getDevice(), stagingBufferMemory, 0, vertexBufferSize, 0, &data);
-    memcpy(data, m_vertices.data(), (size_t)vertexBufferSize);
-    vkUnmapMemory(renderer->getDevice(), stagingBufferMemory);
+    try {
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              stagingBuffer, stagingBufferMemory);
 
-    renderer->createBuffer(vertexBufferSize,
-                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                          m_vertexBuffer, m_vertexBufferMemory);
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, vertexBufferSize, 0, &data);
+        memcpy(data, m_vertices.data(), (size_t)vertexBufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
 
-    renderer->copyBuffer(stagingBuffer, m_vertexBuffer, vertexBufferSize);
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                              m_vertexBuffer, m_vertexBufferMemory);
 
-    vkDestroyBuffer(renderer->getDevice(), stagingBuffer, nullptr);
-    vkFreeMemory(renderer->getDevice(), stagingBufferMemory, nullptr);
+        renderer->copyBuffer(stagingBuffer, m_vertexBuffer, vertexBufferSize);
 
-    // Create index buffer
+        // Clean up staging buffer
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+        stagingBuffer = VK_NULL_HANDLE;
+        stagingBufferMemory = VK_NULL_HANDLE;
+
+    } catch (...) {
+        // Clean up staging buffer on exception
+        if (stagingBuffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+        }
+        if (stagingBufferMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        }
+        throw;  // Re-throw to caller
+    }
+
+    // Create index buffer with exception safety
     VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_indices.size();
 
-    renderer->createBuffer(indexBufferSize,
-                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                          stagingBuffer, stagingBufferMemory);
+    stagingBuffer = VK_NULL_HANDLE;
+    stagingBufferMemory = VK_NULL_HANDLE;
 
-    vkMapMemory(renderer->getDevice(), stagingBufferMemory, 0, indexBufferSize, 0, &data);
-    memcpy(data, m_indices.data(), (size_t)indexBufferSize);
-    vkUnmapMemory(renderer->getDevice(), stagingBufferMemory);
+    try {
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              stagingBuffer, stagingBufferMemory);
 
-    renderer->createBuffer(indexBufferSize,
-                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                          m_indexBuffer, m_indexBufferMemory);
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, indexBufferSize, 0, &data);
+        memcpy(data, m_indices.data(), (size_t)indexBufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
 
-    renderer->copyBuffer(stagingBuffer, m_indexBuffer, indexBufferSize);
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                              m_indexBuffer, m_indexBufferMemory);
 
-    vkDestroyBuffer(renderer->getDevice(), stagingBuffer, nullptr);
-    vkFreeMemory(renderer->getDevice(), stagingBufferMemory, nullptr);
+        renderer->copyBuffer(stagingBuffer, m_indexBuffer, indexBufferSize);
+
+        // Clean up staging buffer
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+    } catch (...) {
+        // Clean up staging buffer on exception
+        if (stagingBuffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+        }
+        if (stagingBufferMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        }
+        // Also clean up partially created vertex buffer
+        if (m_vertexBuffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, m_vertexBuffer, nullptr);
+            m_vertexBuffer = VK_NULL_HANDLE;
+        }
+        if (m_vertexBufferMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(device, m_vertexBufferMemory, nullptr);
+            m_vertexBufferMemory = VK_NULL_HANDLE;
+        }
+        throw;  // Re-throw to caller
+    }
 }
 
 void Chunk::destroyBuffers(VulkanRenderer* renderer) {
