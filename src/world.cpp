@@ -1,5 +1,6 @@
 #include "world.h"
 #include "world_utils.h"
+#include "world_constants.h"
 #include "vulkan_renderer.h"
 #include "frustum.h"
 #include "debug_state.h"
@@ -94,17 +95,15 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
 
     // Chunk culling: account for chunk size to prevent popping
     // Chunks are 32x32x32 blocks = 16x16x16 world units
-    // Distance from chunk center to farthest corner = sqrt(8^2 + 8^2 + 8^2) ≈ 13.86 units
-    // Fragment shader discards at renderDistance * 1.05 (see shader.frag)
+    // Fragment shader discards at renderDistance * FRAGMENT_DISCARD_MARGIN (see shader.frag)
     // Render chunks if their farthest corner could be visible
-    const float fragmentDiscardDistance = renderDistance * 1.05f;
-    const float chunkHalfDiagonal = 13.86f;
-    const float renderDistanceWithMargin = fragmentDiscardDistance + chunkHalfDiagonal;
+    using namespace WorldConstants;
+    const float fragmentDiscardDistance = renderDistance * FRAGMENT_DISCARD_MARGIN;
+    const float renderDistanceWithMargin = fragmentDiscardDistance + CHUNK_HALF_DIAGONAL;
     const float renderDistanceSquared = renderDistanceWithMargin * renderDistanceWithMargin;
 
     // Frustum margin: add extra padding to prevent edge-case popping
-    // Slightly larger than default to account for chunk size (16 world units)
-    const float frustumMargin = chunkHalfDiagonal + 2.0f;
+    const float frustumMargin = CHUNK_HALF_DIAGONAL + FRUSTUM_CULLING_PADDING;
 
     int renderedCount = 0;
     int distanceCulled = 0;
@@ -146,9 +145,9 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     DebugState::instance().chunksFrustumCulled = frustumCulled;
     DebugState::instance().chunksTotalInWorld = static_cast<int>(m_chunks.size());
 
-    // Debug output every 60 frames (roughly once per second at 60 FPS)
+    // Debug output periodically (roughly once per second at 60 FPS)
     static int frameCount = 0;
-    if (frameCount++ % 60 == 0) {
+    if (frameCount++ % WorldConstants::DEBUG_OUTPUT_INTERVAL == 0) {
         std::cout << "Rendered: " << renderedCount << " chunks | "
                   << "Distance culled: " << distanceCulled << " | "
                   << "Frustum culled: " << frustumCulled << " | "
