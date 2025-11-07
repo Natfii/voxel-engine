@@ -5,5 +5,5 @@ durability: 0
 liquid: true
 affected_by_gravity: false
 flammability: 0
-transparency: 0.6
+transparency: 0.25  # 25% transparent (was 0.6 which was way too see-through)
 color: [0.2, 0.4, 0.8]  # Blue tint for water

@@ -397,14 +397,14 @@ void Chunk::generateMesh(World* world) {
                 float by = float(m_y * HEIGHT + Y) * 0.5f;
                 float bz = float(m_z * DEPTH + Z) * 0.5f;
 
-                // Get water level for height adjustment (Minecraft-style flowing water)
+                // TODO: Water level height adjustment (Minecraft-style flowing water)
+                // Disabled for now - causes rendering issues with side faces
+                // Need to implement proper sloped water surface with vertex interpolation
                 float waterHeightAdjust = 0.0f;
-                if (def.isLiquid) {
-                    uint8_t waterLevel = m_blockMetadata[X][Y][Z];
-                    // Level 0 = source (full height), levels 1-7 = decreasing height
-                    // Each level reduces height by 1/9th (0.055 world units, ~0.11 blocks)
-                    waterHeightAdjust = -waterLevel * (0.5f / 9.0f);
-                }
+                // if (def.isLiquid) {
+                //     uint8_t waterLevel = m_blockMetadata[X][Y][Z];
+                //     waterHeightAdjust = -waterLevel * (0.5f / 9.0f);
+                // }
 
                 // Helper to render a face with the appropriate texture (indexed rendering)
                 // heightAdjust: Optional Y-offset for water level rendering (top face only)
@@ -450,15 +450,24 @@ void Chunk::generateMesh(World* world) {
                 const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
 
                 // Face culling based on block type
-                // - Solid blocks: render faces against air and liquids (liquids are transparent)
-                // - Liquid blocks: render faces against air and solids (not other liquids)
+                // - Solid blocks: ALWAYS render faces against air and liquids (liquids are transparent)
+                // - Liquid blocks: render faces against air and solids (not other liquids to avoid z-fighting)
                 bool isCurrentLiquid = def.isLiquid;
 
                 // Front face (z=0, facing -Z direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X, Y, Z - 1)  // Liquid: render against air/solids, not other liquids
-                        : (!isSolid(X, Y, Z - 1) || isLiquid(X, Y, Z - 1));  // Solid: render against air/liquids
+                    bool neighborIsLiquid = isLiquid(X, Y, Z - 1);
+                    bool neighborIsSolid = isSolid(X, Y, Z - 1);
+
+                    bool shouldRender;
+                    if (isCurrentLiquid) {
+                        // Water: render against non-water (air or solid)
+                        shouldRender = !neighborIsLiquid;
+                    } else {
+                        // Solid: render against non-solid (air or water)
+                        shouldRender = !neighborIsSolid;
+                    }
+
                     if (shouldRender) {
                         renderFace(frontTex, 0, 0);
                     }
@@ -466,9 +475,9 @@ void Chunk::generateMesh(World* world) {
 
                 // Back face (z=0.5, facing +Z direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X, Y, Z + 1)
-                        : (!isSolid(X, Y, Z + 1) || isLiquid(X, Y, Z + 1));
+                    bool neighborIsLiquid = isLiquid(X, Y, Z + 1);
+                    bool neighborIsSolid = isSolid(X, Y, Z + 1);
+                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
                         renderFace(backTex, 12, 8);
                     }
@@ -476,9 +485,9 @@ void Chunk::generateMesh(World* world) {
 
                 // Left face (x=0, facing -X direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X - 1, Y, Z)
-                        : (!isSolid(X - 1, Y, Z) || isLiquid(X - 1, Y, Z));
+                    bool neighborIsLiquid = isLiquid(X - 1, Y, Z);
+                    bool neighborIsSolid = isSolid(X - 1, Y, Z);
+                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
                         renderFace(leftTex, 24, 16);
                     }
@@ -486,9 +495,9 @@ void Chunk::generateMesh(World* world) {
 
                 // Right face (x=0.5, facing +X direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X + 1, Y, Z)
-                        : (!isSolid(X + 1, Y, Z) || isLiquid(X + 1, Y, Z));
+                    bool neighborIsLiquid = isLiquid(X + 1, Y, Z);
+                    bool neighborIsSolid = isSolid(X + 1, Y, Z);
+                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
                         renderFace(rightTex, 36, 24);
                     }
@@ -496,20 +505,19 @@ void Chunk::generateMesh(World* world) {
 
                 // Top face (y=0.5, facing +Y direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X, Y + 1, Z)
-                        : (!isSolid(X, Y + 1, Z) || isLiquid(X, Y + 1, Z));
+                    bool neighborIsLiquid = isLiquid(X, Y + 1, Z);
+                    bool neighborIsSolid = isSolid(X, Y + 1, Z);
+                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
-                        // Apply water height adjustment for flowing water (Minecraft-style)
-                        renderFace(topTex, 48, 32, waterHeightAdjust);
+                        renderFace(topTex, 48, 32);
                     }
                 }
 
                 // Bottom face (y=0, facing -Y direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X, Y - 1, Z)
-                        : (!isSolid(X, Y - 1, Z) || isLiquid(X, Y - 1, Z));
+                    bool neighborIsLiquid = isLiquid(X, Y - 1, Z);
+                    bool neighborIsSolid = isSolid(X, Y - 1, Z);
+                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
                         renderFace(bottomTex, 60, 40);
                     }
