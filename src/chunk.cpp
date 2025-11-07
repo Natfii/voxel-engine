@@ -134,6 +134,8 @@ int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
  * Performance: ~32,000 blocks processed per chunk (32³)
  */
 void Chunk::generate() {
+    using namespace TerrainGeneration;
+
     for (int x = 0; x < WIDTH; x++) {
         for (int z = 0; z < DEPTH; z++) {
             // Convert local coords to world coords
@@ -151,7 +153,6 @@ void Chunk::generate() {
                     // Determine block type based on depth from surface
                     int depthFromSurface = terrainHeight - worldY;
 
-                    using namespace TerrainGeneration;
                     if (depthFromSurface == 1) {
                         m_blocks[x][y][z] = BLOCK_GRASS;  // Grass on top
                     } else if (depthFromSurface <= TOPSOIL_DEPTH) {
@@ -401,49 +402,67 @@ void Chunk::generateMesh(World* world) {
                 const BlockDefinition::FaceTexture& topTex = def.useCubeMap ? def.top : def.all;
                 const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
 
-                // Special rendering for liquid blocks
+                // Face culling based on block type
+                // - Solid blocks: render faces against air and liquids (liquids are transparent)
+                // - Liquid blocks: render faces against air and solids (not other liquids)
                 bool isCurrentLiquid = def.isLiquid;
 
                 // Front face (z=0, facing -Z direction)
-                if (!isSolid(X, Y, Z - 1) || (isCurrentLiquid && !isLiquid(X, Y, Z - 1))) {
-                    // Render if neighbor is air, or if this is liquid and neighbor is non-liquid
-                    if (!isCurrentLiquid || !isLiquid(X, Y, Z - 1)) {
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X, Y, Z - 1)  // Liquid: render against air/solids, not other liquids
+                        : (!isSolid(X, Y, Z - 1) || isLiquid(X, Y, Z - 1));  // Solid: render against air/liquids
+                    if (shouldRender) {
                         renderFace(frontTex, 0, 0);
                     }
                 }
 
                 // Back face (z=0.5, facing +Z direction)
-                if (!isSolid(X, Y, Z + 1) || (isCurrentLiquid && !isLiquid(X, Y, Z + 1))) {
-                    if (!isCurrentLiquid || !isLiquid(X, Y, Z + 1)) {
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X, Y, Z + 1)
+                        : (!isSolid(X, Y, Z + 1) || isLiquid(X, Y, Z + 1));
+                    if (shouldRender) {
                         renderFace(backTex, 12, 8);
                     }
                 }
 
                 // Left face (x=0, facing -X direction)
-                if (!isSolid(X - 1, Y, Z) || (isCurrentLiquid && !isLiquid(X - 1, Y, Z))) {
-                    if (!isCurrentLiquid || !isLiquid(X - 1, Y, Z)) {
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X - 1, Y, Z)
+                        : (!isSolid(X - 1, Y, Z) || isLiquid(X - 1, Y, Z));
+                    if (shouldRender) {
                         renderFace(leftTex, 24, 16);
                     }
                 }
 
                 // Right face (x=0.5, facing +X direction)
-                if (!isSolid(X + 1, Y, Z) || (isCurrentLiquid && !isLiquid(X + 1, Y, Z))) {
-                    if (!isCurrentLiquid || !isLiquid(X + 1, Y, Z)) {
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X + 1, Y, Z)
+                        : (!isSolid(X + 1, Y, Z) || isLiquid(X + 1, Y, Z));
+                    if (shouldRender) {
                         renderFace(rightTex, 36, 24);
                     }
                 }
 
                 // Top face (y=0.5, facing +Y direction)
-                // For liquids: only render if exposed to air (not another liquid)
-                if (!isSolid(X, Y + 1, Z)) {
-                    renderFace(topTex, 48, 32);
-                } else if (isCurrentLiquid && !isLiquid(X, Y + 1, Z)) {
-                    renderFace(topTex, 48, 32);
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X, Y + 1, Z)
+                        : (!isSolid(X, Y + 1, Z) || isLiquid(X, Y + 1, Z));
+                    if (shouldRender) {
+                        renderFace(topTex, 48, 32);
+                    }
                 }
 
                 // Bottom face (y=0, facing -Y direction)
-                if (!isSolid(X, Y - 1, Z) || (isCurrentLiquid && !isLiquid(X, Y - 1, Z))) {
-                    if (!isCurrentLiquid || !isLiquid(X, Y - 1, Z)) {
+                {
+                    bool shouldRender = isCurrentLiquid
+                        ? !isLiquid(X, Y - 1, Z)
+                        : (!isSolid(X, Y - 1, Z) || isLiquid(X, Y - 1, Z));
+                    if (shouldRender) {
                         renderFace(bottomTex, 60, 40);
                     }
                 }
