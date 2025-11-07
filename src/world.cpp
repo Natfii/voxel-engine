@@ -455,10 +455,12 @@ void World::updateLiquids(VulkanRenderer* renderer) {
                             int blockBelow = getBlockAt(worldX, belowY, worldZ);
 
                             if (blockBelow == 0) {
-                                // Air below - water flows down as source block (level 0)
+                                // Air below - water flows down as SOURCE block (level 0)
+                                // CRITICAL: In Minecraft, falling water becomes a source!
                                 waterToAdd.push_back({worldX, belowY, worldZ, 0});
                                 chunksToUpdate.insert(getChunkAtWorldPos(worldX, belowY, worldZ));
-                                chunksToUpdate.insert(chunk);
+                                // Skip horizontal spread when falling (priority to vertical flow)
+                                continue;
                             } else if (!registry.get(blockBelow).isLiquid) {
                                 // Solid block below - try horizontal spread
                                 // Only spread if we're a source or low-level flow (level < 7)

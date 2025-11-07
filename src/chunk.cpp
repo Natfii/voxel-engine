@@ -397,8 +397,18 @@ void Chunk::generateMesh(World* world) {
                 float by = float(m_y * HEIGHT + Y) * 0.5f;
                 float bz = float(m_z * DEPTH + Z) * 0.5f;
 
+                // Get water level for height adjustment (Minecraft-style flowing water)
+                float waterHeightAdjust = 0.0f;
+                if (def.isLiquid) {
+                    uint8_t waterLevel = m_blockMetadata[X][Y][Z];
+                    // Level 0 = source (full height), levels 1-7 = decreasing height
+                    // Each level reduces height by 1/9th (0.055 world units, ~0.11 blocks)
+                    waterHeightAdjust = -waterLevel * (0.5f / 9.0f);
+                }
+
                 // Helper to render a face with the appropriate texture (indexed rendering)
-                auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart) {
+                // heightAdjust: Optional Y-offset for water level rendering (top face only)
+                auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart, float heightAdjust = 0.0f) {
                     auto [uMin, vMin] = getUVsForFace(faceTexture);
                     float uvScaleZoomed = uvScale;
 
@@ -414,7 +424,7 @@ void Chunk::generateMesh(World* world) {
                     for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
+                        v.y = cube[i+1] + by + heightAdjust;  // Apply height adjustment (for water)
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb; v.a = ca;
                         v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
@@ -490,7 +500,8 @@ void Chunk::generateMesh(World* world) {
                         ? !isLiquid(X, Y + 1, Z)
                         : (!isSolid(X, Y + 1, Z) || isLiquid(X, Y + 1, Z));
                     if (shouldRender) {
-                        renderFace(topTex, 48, 32);
+                        // Apply water height adjustment for flowing water (Minecraft-style)
+                        renderFace(topTex, 48, 32, waterHeightAdjust);
                     }
                 }
 

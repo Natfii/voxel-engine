@@ -411,9 +411,10 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
 
     // CRITICAL FIX: If player is ALREADY stuck inside a block, push them out
     // But only if they're SIGNIFICANTLY stuck (not just barely touching)
+    // SKIP this when swimming - liquids don't count as solid blocks
     using namespace PhysicsConstants;
 
-    if (checkCollision(Position, world)) {
+    if (!m_inLiquid && checkCollision(Position, world)) {
         // Player is currently inside a block - calculate correction
         glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
         float blockGridY = std::ceil(feetPos.y / 0.5f) * 0.5f;
