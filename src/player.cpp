@@ -10,6 +10,7 @@
 #include "block_system.h"
 #include "debug_state.h"
 #include "logger.h"
+#include "terrain_constants.h"
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -246,7 +247,8 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     }
 
     // Terminal velocity
-    if (Velocity.y < -40.0f) Velocity.y = -40.0f;
+    using namespace PhysicsConstants;
+    if (Velocity.y < TERMINAL_VELOCITY) Velocity.y = TERMINAL_VELOCITY;
 
     // *** Check ground state BEFORE movement ***
     // This ensures OnGround represents the state at the START of the frame
@@ -260,7 +262,8 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
 
     // Check slightly below feet to detect ground
     bool groundDetected = false;
-    float checkDistance = 0.05f;  // Check 0.05 units below feet
+    using namespace PhysicsConstants;
+    const float checkDistance = GROUND_CHECK_DISTANCE;
 
     // First verify player isn't inside a block (center check at feet level)
     int blockAtCenter = world->getBlockAt(feetPos.x, feetPos.y, feetPos.z);
@@ -408,7 +411,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
 
     // CRITICAL FIX: If player is ALREADY stuck inside a block, push them out
     // But only if they're SIGNIFICANTLY stuck (not just barely touching)
-    const float STUCK_THRESHOLD = 0.02f; // Only unstick if > 0.02 units inside
+    using namespace PhysicsConstants;
 
     if (checkCollision(Position, world)) {
         // Player is currently inside a block - calculate correction
@@ -657,8 +660,9 @@ bool Player::checkHorizontalCollision(const glm::vec3& position, World* world) {
     glm::vec3 feetPos = position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
     float halfWidth = PLAYER_WIDTH / 2.0f;
 
-    // Start checking from 0.3 units (0.6 blocks) above feet - this is knee/step height
-    const float stepHeight = 0.3f;
+    // Start checking from step height above feet - this is knee/step height
+    using namespace PhysicsConstants;
+    const float stepHeight = STEP_HEIGHT;
     glm::vec3 minBound = feetPos + glm::vec3(-halfWidth, stepHeight, -halfWidth);
     glm::vec3 maxBound = feetPos + glm::vec3(halfWidth, PLAYER_HEIGHT, halfWidth);
 

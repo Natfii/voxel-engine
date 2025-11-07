@@ -14,12 +14,15 @@
 #include "world.h"
 #include "vulkan_renderer.h"
 #include "block_system.h"
+#include "terrain_constants.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
+#include <mutex>
 
 // Static member initialization
 std::unique_ptr<FastNoiseLite> Chunk::s_noise = nullptr;
+static std::mutex s_noiseMutex;  // Protect noise access for thread safety
 
 void Chunk::initNoise(int seed) {
     if (s_noise == nullptr) {
@@ -96,13 +99,21 @@ Chunk::~Chunk() {
  * @return Height in blocks (Y coordinate)
  */
 int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
+    using namespace TerrainGeneration;
+
     if (s_noise == nullptr) {
-        return 64; // Fallback to flat terrain if noise not initialized
+        return BASE_HEIGHT; // Fallback to flat terrain if noise not initialized
     }
 
-    // Sample noise and map to height range [52, 76]
-    float noise = s_noise->GetNoise(worldX, worldZ);
-    int height = 64 + (int)(noise * 12.0f);  // Base 64 ± 12 blocks variation
+    // Thread-safe noise sampling (FastNoiseLite may not be thread-safe)
+    float noise;
+    {
+        std::lock_guard<std::mutex> lock(s_noiseMutex);
+        noise = s_noise->GetNoise(worldX, worldZ);
+    }
+
+    // Map noise to height range [BASE_HEIGHT - HEIGHT_VARIATION, BASE_HEIGHT + HEIGHT_VARIATION]
+    int height = BASE_HEIGHT + (int)(noise * HEIGHT_VARIATION);
 
     return height;
 }
@@ -137,18 +148,19 @@ void Chunk::generate() {
                 int worldY = m_y * HEIGHT + y;
 
                 if (worldY < terrainHeight) {
-                    // Determine block type based on depth
+                    // Determine block type based on depth from surface
                     int depthFromSurface = terrainHeight - worldY;
 
+                    using namespace TerrainGeneration;
                     if (depthFromSurface == 1) {
-                        m_blocks[x][y][z] = 3;  // Grass Block on top (ID 3)
-                    } else if (depthFromSurface <= 4) {
-                        m_blocks[x][y][z] = 2;  // Dirt below grass (ID 2)
+                        m_blocks[x][y][z] = BLOCK_GRASS;  // Grass on top
+                    } else if (depthFromSurface <= TOPSOIL_DEPTH) {
+                        m_blocks[x][y][z] = BLOCK_DIRT;  // Dirt below grass
                     } else {
-                        m_blocks[x][y][z] = 1;  // Stone at bottom (ID 1)
+                        m_blocks[x][y][z] = BLOCK_STONE;  // Stone at bottom
                     }
                 } else {
-                    m_blocks[x][y][z] = 0;  // Air above terrain
+                    m_blocks[x][y][z] = BLOCK_AIR;  // Air above terrain
                 }
             }
         }
