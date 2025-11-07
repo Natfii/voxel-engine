@@ -244,6 +244,11 @@ void Chunk::generateMesh(World* world) {
     verts.reserve(WIDTH * HEIGHT * DEPTH * 12 / 10);  // 4 vertices per face
     indices.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10); // 6 indices per face (same as before)
 
+    // Get block registry (needed for liquid checks)
+    auto& registry = BlockRegistry::instance();
+    int atlasGridSize = registry.getAtlasGridSize();
+    float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
+
     // Helper lambda to check if a block is solid (non-air)
     // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
     auto isSolid = [this, world](int x, int y, int z) -> bool {
@@ -286,11 +291,6 @@ void Chunk::generateMesh(World* world) {
         if (blockID == 0) return false;
         return registry.get(blockID).isLiquid;
     };
-
-    // Get atlas grid size for UV calculations
-    auto& registry = BlockRegistry::instance();
-    int atlasGridSize = registry.getAtlasGridSize();
-    float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
 
     // Iterate over every block in the chunk (optimized order for cache locality)
     for(int X = 0; X < WIDTH;  ++X) {
