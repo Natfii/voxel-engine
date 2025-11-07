@@ -434,7 +434,11 @@ int main() {
             }
 
             // Update liquid physics periodically
-            // TODO: Optimize by maintaining a list of active liquid blocks instead of scanning entire world
+            // DISABLED: Causes severe lag (scans millions of blocks per update)
+            // TODO: Optimize by maintaining a dirty list of only water blocks that need updates
+            // Current implementation: O(chunks * 32^3) = O(millions) per update
+            // Needed: Only track changed water blocks in a queue/set for O(changed blocks) updates
+            /*
             static float liquidUpdateTimer = 0.0f;
             liquidUpdateTimer += deltaTime;
             const float liquidUpdateInterval = 0.1f;  // Update liquids 10 times per second for smooth flow
@@ -442,6 +446,7 @@ int main() {
                 liquidUpdateTimer = 0.0f;
                 world.updateLiquids(&renderer);
             }
+            */
 
             // Begin rendering
             if (!renderer.beginFrame()) {
