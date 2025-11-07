@@ -8,6 +8,7 @@ public:
         GAMEPLAY,    // Normal gameplay - all controls enabled
         MENU,        // Pause menu open - gameplay controls disabled
         CONSOLE,     // Console open - gameplay controls disabled
+        INVENTORY,   // Inventory open - mouse enabled, gameplay disabled
         PAUSED       // Generic paused state
     };
 

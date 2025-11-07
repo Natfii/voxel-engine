@@ -136,7 +136,7 @@ void Console::renderInput() {
 
     ImGui::PopItemWidth();
 
-    // Update autocomplete suggestions based on input (handles commands and arguments)
+    // Update autocomplete suggestions based on input
     std::string currentInput(m_inputBuffer);
     m_suggestions = CommandRegistry::instance().getFullCompletions(currentInput);
 
@@ -271,3 +271,4 @@ void Console::autoComplete() {
         m_suggestionIndex = 0;
     }
 }
+

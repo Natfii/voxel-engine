@@ -186,6 +186,31 @@ public:
      */
     void breakBlock(const glm::ivec3& coords, VulkanRenderer* renderer);
 
+    /**
+     * @brief Places a block and regenerates meshes for affected chunks
+     *
+     * Places the specified block type at the given position and automatically:
+     * - Regenerates the mesh for the affected chunk
+     * - Updates all 6 adjacent chunks (for proper face culling)
+     * - Recreates Vulkan buffers for modified chunks
+     *
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @param blockID Block ID to place (>0)
+     * @param renderer Vulkan renderer for buffer recreation
+     */
+    void placeBlock(float worldX, float worldY, float worldZ, int blockID, VulkanRenderer* renderer);
+
+    /**
+     * @brief Places a block at the specified position (vec3 overload)
+     *
+     * @param position World position as glm::vec3
+     * @param blockID Block ID to place (>0)
+     * @param renderer Vulkan renderer for buffer recreation
+     */
+    void placeBlock(const glm::vec3& position, int blockID, VulkanRenderer* renderer);
+
     // ========== Liquid Physics ==========
 
     /**

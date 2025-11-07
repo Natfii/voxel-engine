@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <glm/glm.hpp>        // for glm::vec3
 #include <yaml-cpp/yaml.h>   // for YAML::Node
+#include <imgui.h>            // for ImGui rendering
 
 // Block ID constants
 namespace BlockID {
@@ -46,6 +47,7 @@ class VulkanRenderer;
 struct BlockDefinition {
     int id = -1;                       ///< Unique block ID
     std::string name;                  ///< Block name (e.g., "grass", "stone")
+    std::string sourceFile;            ///< Original YAML filename (for re-parsing textures)
 
     // ========== Rendering Properties ==========
     bool hasTexture = false;           ///< True if texture was loaded successfully
@@ -239,4 +241,84 @@ private:
     VkImageView m_atlasImageView = VK_NULL_HANDLE; ///< Atlas image view
     VkSampler m_atlasSampler = VK_NULL_HANDLE;     ///< Atlas sampler
     int m_atlasGridSize = 0;                       ///< Grid size (NxN)
+};
+
+/**
+ * @brief Renders blocks as isometric icons using ImGui draw commands
+ *
+ * Provides static methods for drawing block icons in inventory UI.
+ * Uses the texture atlas from BlockRegistry for rendering.
+ */
+class BlockIconRenderer {
+public:
+    /**
+     * @brief Initialize with the texture atlas descriptor set
+     * @param atlasDescriptorSet ImGui descriptor set for the block atlas
+     */
+    static void init(VkDescriptorSet atlasDescriptorSet);
+
+    /**
+     * @brief Draw an isometric block icon at the specified position
+     * @param drawList ImGui draw list to render into
+     * @param pos Top-left corner position
+     * @param size Icon size in pixels
+     * @param blockID Block ID to render
+     */
+    static void drawBlockIcon(ImDrawList* drawList, const ImVec2& pos, float size, int blockID);
+
+    /**
+     * @brief Draw a larger isometric block preview
+     * @param drawList ImGui draw list to render into
+     * @param pos Top-left corner position
+     * @param size Preview size in pixels
+     * @param blockID Block ID to render
+     */
+    static void drawBlockPreview(ImDrawList* drawList, const ImVec2& pos, float size, int blockID);
+
+    /**
+     * @brief Get the ImGui descriptor set for the atlas
+     * @return VkDescriptorSet for texture rendering
+     */
+    static VkDescriptorSet getAtlasDescriptorSet() { return s_atlasDescriptorSet; }
+
+private:
+    /**
+     * @brief Get texture UV coordinates for a specific block face
+     * @param blockID Block ID
+     * @param face Face index (0=top, 1=left, 2=right)
+     * @param uv0 Output UV coordinate for top-left corner
+     * @param uv1 Output UV coordinate for bottom-right corner
+     */
+    static void getTextureUVs(int blockID, int face, ImVec2& uv0, ImVec2& uv1);
+
+    /**
+     * @brief Draw isometric cube with textured faces
+     * @param drawList ImGui draw list to render into
+     * @param center Center position of the cube
+     * @param size Cube size in pixels
+     * @param blockID Block ID to render
+     */
+    static void drawIsometricCubeTextured(ImDrawList* drawList, const ImVec2& center, float size, int blockID);
+
+    /**
+     * @brief Draw isometric cube with solid colors (fallback)
+     * @param drawList ImGui draw list to render into
+     * @param center Center position of the cube
+     * @param size Cube size in pixels
+     * @param topColor Top face color
+     * @param leftColor Left face color
+     * @param rightColor Right face color
+     */
+    static void drawIsometricCube(ImDrawList* drawList, const ImVec2& center, float size,
+                                   const ImVec4& topColor, const ImVec4& leftColor, const ImVec4& rightColor);
+
+    /**
+     * @brief Get block color for a specific face
+     * @param blockID Block ID
+     * @param face Face index
+     * @return Color as ImVec4
+     */
+    static ImVec4 getBlockColor(int blockID, int face);
+
+    static VkDescriptorSet s_atlasDescriptorSet; ///< ImGui descriptor set for texture atlas
 };

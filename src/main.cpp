@@ -39,13 +39,22 @@
 #include "debug_state.h"
 #include "targeting_system.h"
 #include "input_manager.h"
+#include "inventory.h"
+// BlockIconRenderer is now part of block_system.h
 
 // Global variables
 VulkanRenderer* g_renderer = nullptr;
+Inventory* g_inventory = nullptr;
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     if (g_renderer) {
         g_renderer->framebufferResized();
+    }
+}
+
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
+    if (g_inventory) {
+        g_inventory->handleMouseScroll(yoffset);
     }
 }
 
@@ -72,6 +81,7 @@ int main() {
             return -1;
         }
         glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+        glfwSetScrollCallback(window, scroll_callback);
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
         // Initialize Vulkan renderer
@@ -153,6 +163,15 @@ int main() {
             BlockRegistry::instance().getAtlasSampler()
         );
 
+        // Create ImGui descriptor set for the texture atlas (for inventory icons)
+        std::cout << "Creating ImGui atlas descriptor..." << std::endl;
+        VkDescriptorSet atlasImGuiDescriptor = ImGui_ImplVulkan_AddTexture(
+            BlockRegistry::instance().getAtlasSampler(),
+            BlockRegistry::instance().getAtlasImageView(),
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        );
+        BlockIconRenderer::init(atlasImGuiDescriptor);
+
         std::cout << "Initializing world generation..." << std::endl;
         Chunk::initNoise(seed);
         World world(worldWidth, worldHeight, worldDepth);
@@ -191,10 +210,15 @@ int main() {
         Console console(window);
         ConsoleCommands::registerAll(&console, &player, &world, &renderer);
 
+        // Create inventory system
+        Inventory inventory;
+        g_inventory = &inventory;
+
         bool isPaused = false;
         bool escPressed = false;
         bool requestMouseReset = false;
         bool f9Pressed = false;
+        bool iPressed = false;
 
         std::cout << "Entering main loop..." << std::endl;
 
@@ -220,7 +244,7 @@ int main() {
                     // Hide cursor when console is visible (text input uses keyboard only)
                     if (console.isVisible()) {
                         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
-                    } else if (!isPaused) {
+                    } else if (!isPaused && !inventory.isOpen()) {
                         requestMouseReset = true;
                     }
                 }
@@ -228,13 +252,37 @@ int main() {
                 f9Pressed = false;
             }
 
-            // Handle ESC key for pause menu (but not if console is open)
+            // Handle I key for inventory (only when not in console or paused)
+            if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
+                if (!iPressed && !console.isVisible() && !isPaused) {
+                    iPressed = true;
+                    inventory.toggleOpen();
+
+                    // Show cursor when inventory is open
+                    if (inventory.isOpen()) {
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                    } else {
+                        requestMouseReset = true;
+                    }
+                }
+            } else {
+                iPressed = false;
+            }
+
+            // Handle ESC key for pause menu (but not if console or inventory is open)
             if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
                 if (!escPressed) {
                     escPressed = true;
 
+                    // If inventory is open, close it first
+                    if (inventory.isOpen()) {
+                        inventory.setOpen(false);
+                        if (!isPaused && !console.isVisible()) {
+                            requestMouseReset = true;
+                        }
+                    }
                     // If console is open, close it instead of opening pause menu
-                    if (console.isVisible()) {
+                    else if (console.isVisible()) {
                         console.setVisible(false);
                         if (!isPaused) {
                             requestMouseReset = true;
@@ -243,6 +291,10 @@ int main() {
                         isPaused = !isPaused;
                         if (isPaused) {
                             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                            // Center cursor on window when pausing
+                            int windowWidth, windowHeight;
+                            glfwGetWindowSize(window, &windowWidth, &windowHeight);
+                            glfwSetCursorPos(window, windowWidth / 2.0, windowHeight / 2.0);
                         } else {
                             requestMouseReset = true;
                         }
@@ -252,11 +304,13 @@ int main() {
                 escPressed = false;
             }
 
-            // Update input context based on menu/console state
+            // Update input context based on menu/console/inventory state
             if (isPaused) {
                 InputManager::instance().setContext(InputManager::Context::PAUSED);
             } else if (console.isVisible()) {
                 InputManager::instance().setContext(InputManager::Context::CONSOLE);
+            } else if (inventory.isOpen()) {
+                InputManager::instance().setContext(InputManager::Context::INVENTORY);
             } else {
                 InputManager::instance().setContext(InputManager::Context::GAMEPLAY);
             }
@@ -265,13 +319,21 @@ int main() {
             bool canProcessInput = InputManager::instance().canMove();
             player.update(window, deltaTime, &world, canProcessInput);
 
-            // Check if console was closed (by clicking outside or ESC)
+            // Update inventory system
+            inventory.update(window, deltaTime);
+
+            // Check if console/inventory was closed (by clicking outside or ESC)
             // and we need to reset mouse for gameplay
             static bool wasConsoleOpen = false;
-            if (wasConsoleOpen && !console.isVisible() && !isPaused) {
+            static bool wasInventoryOpen = false;
+            if (wasConsoleOpen && !console.isVisible() && !isPaused && !inventory.isOpen()) {
+                requestMouseReset = true;
+            }
+            if (wasInventoryOpen && !inventory.isOpen() && !isPaused && !console.isVisible()) {
                 requestMouseReset = true;
             }
             wasConsoleOpen = console.isVisible();
+            wasInventoryOpen = inventory.isOpen();
 
             if (requestMouseReset) {
                 player.resetMouse();
@@ -317,6 +379,27 @@ int main() {
                 }
             } else {
                 leftMousePressed = false;
+            }
+
+            // Handle block placement on right mouse click (creative mode)
+            static bool rightMousePressed = false;
+            if (InputManager::instance().canPlaceBlocks() &&
+                glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+                if (!rightMousePressed && target.hasTarget) {
+                    rightMousePressed = true;
+
+                    // Get selected block from hotbar
+                    int selectedBlockID = inventory.getSelectedBlockID();
+
+                    // Place block adjacent to the targeted block (using hit normal)
+                    if (selectedBlockID > 0) {
+                        // Calculate placement position using the hit normal
+                        glm::vec3 placePosition = target.blockPosition + target.hitNormal * 0.5f;
+                        world.placeBlock(placePosition, selectedBlockID, &renderer);
+                    }
+                }
+            } else {
+                rightMousePressed = false;
             }
 
             // Update liquid physics periodically
@@ -370,12 +453,21 @@ int main() {
                     isPaused = false;
                     requestMouseReset = true;
                 }
-            } else if (!console.isVisible()) {
+            } else if (!console.isVisible() && !inventory.isOpen()) {
                 targetingSystem.renderCrosshair();
             }
 
             // Render console (overlays on top of everything)
             console.render();
+
+            // Render inventory UI (full inventory when open, hotbar always visible)
+            if (inventory.isOpen()) {
+                inventory.render(&renderer);
+            }
+            if (!isPaused && !console.isVisible()) {
+                inventory.renderHotbar(&renderer);
+                inventory.renderSelectedBlockPreview(&renderer);
+            }
 
             // Render FPS counter if enabled
             if (DebugState::instance().drawFPS.getValue()) {

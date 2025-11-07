@@ -1,4 +1,5 @@
-name: "Grass"
+id: 3
+name: "Grass Block"
 cube_map:
   top: "grass.png,1.5"       # Grass texture on top with variation
   bottom: "dirt.png,1.2"     # Dirt texture on bottom with slight variation

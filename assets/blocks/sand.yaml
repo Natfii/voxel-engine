@@ -1,5 +1,6 @@
+id: 4
 name: "Sand"
-texture: "#c2b280"  # sandy beige
+texture: "sand.png,1.4"  # Sand texture with variation
 durability: 2
 liquid: false
 affected_by_gravity: true

@@ -142,11 +142,11 @@ void Chunk::generate() {
                     int depthFromSurface = terrainHeight - worldY;
 
                     if (depthFromSurface == 1) {
-                        m_blocks[x][y][z] = 2;  // Grass on top
+                        m_blocks[x][y][z] = 3;  // Grass Block on top (ID 3)
                     } else if (depthFromSurface <= 4) {
-                        m_blocks[x][y][z] = 3;  // Dirt below grass
+                        m_blocks[x][y][z] = 2;  // Dirt below grass (ID 2)
                     } else {
-                        m_blocks[x][y][z] = 1;  // Stone at bottom
+                        m_blocks[x][y][z] = 1;  // Stone at bottom (ID 1)
                     }
                 } else {
                     m_blocks[x][y][z] = 0;  // Air above terrain

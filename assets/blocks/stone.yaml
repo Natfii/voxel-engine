@@ -1,6 +1,6 @@
+id: 1
 name: "Stone"
-# Automatically loads stone.png with no variation (1.0)
-# For variation, use: texture: "stone.png,1.5"
+texture: "stone.png,1.3"  # Slight texture variation for natural look
 durability: 5
 liquid: false
 affected_by_gravity: false

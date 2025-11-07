@@ -1,0 +1,39 @@
+#pragma once
+
+#include <imgui.h>
+#include <glm/glm.hpp>
+#include <vulkan/vulkan.h>
+
+class BlockRegistry;
+
+// Renders blocks as simple isometric icons using ImGui draw commands
+class BlockIconRenderer {
+public:
+    // Initialize with the texture atlas for rendering
+    static void init(VkDescriptorSet atlasDescriptorSet);
+
+    // Draw an isometric block icon at the specified position
+    static void drawBlockIcon(ImDrawList* drawList, const ImVec2& pos, float size, int blockID);
+
+    // Draw a larger isometric block preview
+    static void drawBlockPreview(ImDrawList* drawList, const ImVec2& pos, float size, int blockID);
+
+    // Get the ImGui descriptor set for the atlas
+    static VkDescriptorSet getAtlasDescriptorSet() { return s_atlasDescriptorSet; }
+
+private:
+    // Helper to get block color (from BlockDefinition)
+    static ImVec4 getBlockColor(int blockID, int face);
+
+    // Helper to get texture UV coordinates for a face
+    static void getTextureUVs(int blockID, int face, ImVec2& uv0, ImVec2& uv1);
+
+    // Draw isometric cube faces (textured version)
+    static void drawIsometricCubeTextured(ImDrawList* drawList, const ImVec2& center, float size, int blockID);
+
+    // Draw isometric cube faces (fallback color version)
+    static void drawIsometricCube(ImDrawList* drawList, const ImVec2& center, float size,
+                                   const ImVec4& topColor, const ImVec4& leftColor, const ImVec4& rightColor);
+
+    static VkDescriptorSet s_atlasDescriptorSet;
+};

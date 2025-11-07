@@ -1,7 +1,7 @@
+id: 2
 name: "Dirt"
-# Automatically loads dirt.png with variation
 texture: "dirt.png,1.5"  # filename,variation (omit ,variation for no variation)
-durability: 5
+durability: 3
 liquid: false
 affected_by_gravity: false
 flammability: 0

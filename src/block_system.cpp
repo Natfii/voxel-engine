@@ -95,11 +95,30 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         std::cerr << "BlockRegistry: Directory not found: " << directory << std::endl;
         return false;
     }
+
+    // Collect all YAML files first
+    std::vector<fs::path> yamlFiles;
     for (auto& entry : fs::directory_iterator(dirPath)) {
         if (!entry.is_regular_file()) continue;
         auto path = entry.path();
         auto ext = path.extension().string();
         if (ext != ".yaml" && ext != ".yml") continue;
+        yamlFiles.push_back(path);
+    }
+
+    // Structure to hold blocks without explicit IDs
+    struct PendingBlock {
+        fs::path path;
+        YAML::Node doc;
+        std::string name;
+    };
+    std::vector<PendingBlock> pendingBlocks;
+    int highestExplicitID = 0;
+
+    std::cout << "Loading blocks (Pass 1: Explicit IDs)..." << std::endl;
+
+    // PASS 1: Load all blocks with explicit IDs
+    for (const auto& path : yamlFiles) {
         // Parse the YAML file
         YAML::Node doc;
         try {
@@ -118,10 +137,25 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
             std::cerr << "Duplicate block name '" << name << "' in " << path << "; skipping." << std::endl;
             continue;
         }
+
+        // Check if block has explicit ID
+        if (!doc["id"]) {
+            // No ID specified - defer to pass 2
+            pendingBlocks.push_back({path, doc, name});
+            continue;
+        }
+
+        // Has explicit ID - load immediately
         BlockDefinition def;
-        def.id = (int)m_defs.size();
+        def.id = doc["id"].as<int>();
         def.name = name;
-        
+        def.sourceFile = path.string();  // Store the original YAML file path
+
+        // Track highest explicit ID
+        if (def.id > highestExplicitID) {
+            highestExplicitID = def.id;
+        }
+
         // Durability (required)
         if (doc["durability"]) {
             def.durability = doc["durability"].as<int>();
@@ -172,15 +206,119 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
                 }
             }
         }
-        
-        // Add to registry
+
+        // Ensure m_defs is large enough to hold this block at its ID
+        if (def.id >= (int)m_defs.size()) {
+            m_defs.resize(def.id + 1);
+        }
+
+        // Add to registry at the specified ID position
+        m_defs[def.id] = def;
         m_nameToID[def.name] = def.id;
-        m_defs.push_back(def);
+        std::cout << "  Loaded block: " << def.name << " (ID " << def.id << ")" << std::endl;
+    }
+
+    // PASS 2: Load blocks without explicit IDs (auto-assign starting from highestExplicitID + 1)
+    if (!pendingBlocks.empty()) {
+        std::cout << "\nLoading blocks (Pass 2: Auto-assigned IDs)..." << std::endl;
+        std::cout << "  Highest explicit ID: " << highestExplicitID << std::endl;
+        std::cout << "  Auto-assigning " << pendingBlocks.size() << " blocks starting from ID " << (highestExplicitID + 1) << std::endl;
+
+        int nextAutoID = highestExplicitID + 1;
+
+        for (const auto& pending : pendingBlocks) {
+            BlockDefinition def;
+            def.id = nextAutoID++;
+            def.name = pending.name;
+            def.sourceFile = pending.path.string();
+
+            YAML::Node doc = pending.doc;
+
+            // Durability (required)
+            if (doc["durability"]) {
+                def.durability = doc["durability"].as<int>();
+            }
+            // Affected by gravity (required)
+            if (doc["affected_by_gravity"]) {
+                def.affectedByGravity = doc["affected_by_gravity"].as<bool>();
+            }
+            // Optional: flammability, transparency, redstone, liquid
+            if (doc["flammability"]) {
+                def.flammability = doc["flammability"].as<int>();
+            }
+            if (doc["transparency"]) {
+                def.transparency = doc["transparency"].as<float>();
+            }
+            if (doc["liquid"]) {
+                def.isLiquid = doc["liquid"].as<bool>();
+            }
+            // Store metadata node if exists
+            if (doc["metadata"]) {
+                def.metadata = doc["metadata"];
+            }
+
+            // Parse texture field (either PNG filename, hex color, or cube_map)
+            if (doc["cube_map"]) {
+                // Cube map mode: different textures for different faces
+                def.useCubeMap = true;
+                // Textures will be loaded during atlas building
+            } else if (doc["texture"]) {
+                std::string tex = doc["texture"].as<std::string>();
+
+                // Parse hex color as fallback
+                if (!tex.empty() && tex[0] == '#') {
+                    std::string hex = tex.substr(1);
+                    if (hex.size() == 6) {
+                        int rgb = std::stoi(hex, nullptr, 16);
+                        float r = ((rgb >> 16) & 0xFF) / 255.0f;
+                        float g = ((rgb >> 8) & 0xFF) / 255.0f;
+                        float b = (rgb & 0xFF) / 255.0f;
+                        def.hasColor = true;
+                        def.color = glm::vec3(r, g, b);
+                    } else {
+                        // Invalid color code - use error color (semi-transparent red)
+                        def.hasColor = true;
+                        def.color = glm::vec3(1.0f, 0.0f, 0.0f);
+                        def.transparency = 0.5f;
+                        std::cerr << "ERROR: Invalid color code for " << def.name << " - using error block" << std::endl;
+                    }
+                }
+            }
+
+            // Ensure m_defs is large enough
+            if (def.id >= (int)m_defs.size()) {
+                m_defs.resize(def.id + 1);
+            }
+
+            // Add to registry
+            m_defs[def.id] = def;
+            m_nameToID[def.name] = def.id;
+            std::cout << "  Loaded block: " << def.name << " (ID " << def.id << ", auto-assigned)" << std::endl;
+        }
     }
 
     // Build texture atlas after all blocks are loaded
     if (renderer) {
         buildTextureAtlas(renderer);
+    }
+
+    // Debug: Print final block registry state
+    std::cout << "\nBlock Registry Summary:" << std::endl;
+    for (size_t i = 0; i < m_defs.size(); i++) {
+        const BlockDefinition& def = m_defs[i];
+        if (def.name.empty()) {
+            std::cout << "  ID " << i << ": [empty slot]" << std::endl;
+        } else {
+            std::cout << "  ID " << i << ": " << def.name;
+            if (def.useCubeMap) {
+                std::cout << " (cube map)";
+            } else if (def.hasTexture) {
+                std::cout << " (textured)";
+            } else if (def.hasColor) {
+                std::cout << " (colored)";
+            }
+            std::cout << std::endl;
+        }
     }
 
     return true;
@@ -221,19 +359,30 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
     for (size_t i = 1; i < m_defs.size(); i++) {  // Skip air (index 0)
         BlockDefinition& def = m_defs[i];
 
-        // Re-parse YAML to get texture information
-        std::string lowerName = def.name;
-        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
-                     [](unsigned char c){ return std::tolower(c); });
-
-        std::string yamlPath = "assets/blocks/" + lowerName + ".yaml";
-        YAML::Node doc;
-        try {
-            doc = YAML::LoadFile(yamlPath);
-        } catch (const std::exception& e) {
-            std::cerr << "Error re-parsing YAML for " << def.name << ": " << e.what() << std::endl;
+        // Skip empty slots (blocks loaded with explicit IDs may have gaps)
+        if (def.name.empty()) {
             continue;
         }
+
+        // Re-parse YAML to get texture information using stored source file
+        if (def.sourceFile.empty()) {
+            std::cerr << "Error: No source file stored for " << def.name << std::endl;
+            continue;
+        }
+
+        YAML::Node doc;
+        try {
+            doc = YAML::LoadFile(def.sourceFile);
+        } catch (const std::exception& e) {
+            std::cerr << "Error re-parsing YAML for " << def.name << " from " << def.sourceFile << ": " << e.what() << std::endl;
+            continue;
+        }
+
+        // Extract base filename (without extension) for default texture lookup
+        std::filesystem::path sourcePath(def.sourceFile);
+        std::string lowerName = sourcePath.stem().string();  // Get filename without extension
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                     [](unsigned char c){ return std::tolower(c); });
 
         if (doc["cube_map"]) {
             // Cube map mode
@@ -419,6 +568,12 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
     // Second pass: Convert atlas indices to atlas grid coordinates
     for (size_t i = 1; i < m_defs.size(); i++) {
         BlockDefinition& def = m_defs[i];
+
+        // Skip empty slots
+        if (def.name.empty()) {
+            continue;
+        }
+
         if (!def.hasTexture) continue;
 
         auto convertFace = [&](BlockDefinition::FaceTexture& face) {
@@ -547,4 +702,237 @@ bool BlockRegistry::isBreakable(int blockID) const {
     // All non-air blocks are breakable for now
     // Future: Check durability or special flags
     return true;
+}
+
+// ============================================================================
+// BlockIconRenderer Implementation
+// ============================================================================
+
+VkDescriptorSet BlockIconRenderer::s_atlasDescriptorSet = VK_NULL_HANDLE;
+
+void BlockIconRenderer::init(VkDescriptorSet atlasDescriptorSet) {
+    s_atlasDescriptorSet = atlasDescriptorSet;
+}
+
+void BlockIconRenderer::drawBlockIcon(ImDrawList* drawList, const ImVec2& pos, float size, int blockID) {
+    auto& registry = BlockRegistry::instance();
+    if (blockID <= 0 || blockID >= registry.count()) {
+        return;
+    }
+
+    const BlockDefinition& block = registry.get(blockID);
+
+    // Use textured version if we have the atlas and the block has textures
+    if (s_atlasDescriptorSet != VK_NULL_HANDLE && block.hasTexture) {
+        drawIsometricCubeTextured(drawList, pos, size, blockID);
+    } else {
+        // Fallback to color version
+        ImVec4 topColor = getBlockColor(blockID, 0);    // Top face
+        ImVec4 leftColor = getBlockColor(blockID, 1);   // Left face
+        ImVec4 rightColor = getBlockColor(blockID, 2);  // Right face
+        drawIsometricCube(drawList, pos, size, topColor, leftColor, rightColor);
+    }
+}
+
+void BlockIconRenderer::drawBlockPreview(ImDrawList* drawList, const ImVec2& pos, float size, int blockID) {
+    // Same as icon but larger
+    drawBlockIcon(drawList, pos, size, blockID);
+}
+
+ImVec4 BlockIconRenderer::getBlockColor(int blockID, int face) {
+    auto& registry = BlockRegistry::instance();
+    if (blockID <= 0 || blockID >= registry.count()) {
+        return ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+    }
+
+    const BlockDefinition& block = registry.get(blockID);
+
+    // If block has a solid color, use it
+    if (block.hasColor) {
+        ImVec4 baseColor = ImVec4(block.color.r, block.color.g, block.color.b, 1.0f);
+
+        // Apply shading based on face (isometric lighting)
+        switch (face) {
+            case 0: // Top - brightest
+                return baseColor;
+            case 1: // Left - medium
+                return ImVec4(baseColor.x * 0.75f, baseColor.y * 0.75f, baseColor.z * 0.75f, 1.0f);
+            case 2: // Right - darkest
+                return ImVec4(baseColor.x * 0.55f, baseColor.y * 0.55f, baseColor.z * 0.55f, 1.0f);
+        }
+    }
+
+    // For textured blocks, use a neutral gray with shading
+    switch (face) {
+        case 0: return ImVec4(0.8f, 0.8f, 0.8f, 1.0f);  // Top
+        case 1: return ImVec4(0.6f, 0.6f, 0.6f, 1.0f);  // Left
+        case 2: return ImVec4(0.45f, 0.45f, 0.45f, 1.0f); // Right
+    }
+
+    return ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+}
+
+void BlockIconRenderer::getTextureUVs(int blockID, int face, ImVec2& uv0, ImVec2& uv1) {
+    // NOTE: This function works with dynamically loaded blocks at runtime
+    // Users can add new block YAML files and textures to assets/blocks/
+    // and they will automatically appear with correct icons in the inventory
+    auto& registry = BlockRegistry::instance();
+    if (blockID <= 0 || blockID >= registry.count()) {
+        uv0 = ImVec2(0, 0);
+        uv1 = ImVec2(1, 1);
+        return;
+    }
+
+    const BlockDefinition& block = registry.get(blockID);
+    // Query atlas grid size dynamically - this adjusts based on how many blocks are loaded
+    int gridSize = registry.getAtlasGridSize();
+    if (gridSize == 0) gridSize = 1;
+
+    // Get the appropriate face texture coordinates
+    const BlockDefinition::FaceTexture* faceTexture = nullptr;
+
+    if (block.useCubeMap) {
+        switch (face) {
+            case 0: faceTexture = &block.top; break;    // Top
+            case 1: faceTexture = &block.left; break;   // Left
+            case 2: faceTexture = &block.right; break;  // Right
+            default: faceTexture = &block.all; break;
+        }
+    } else {
+        faceTexture = &block.all;
+    }
+
+    // Calculate UV coordinates from atlas grid position
+    float cellSize = 1.0f / gridSize;
+    uv0 = ImVec2(faceTexture->atlasX * cellSize, faceTexture->atlasY * cellSize);
+    uv1 = ImVec2((faceTexture->atlasX + 1) * cellSize, (faceTexture->atlasY + 1) * cellSize);
+}
+
+void BlockIconRenderer::drawIsometricCubeTextured(ImDrawList* drawList, const ImVec2& center, float size, int blockID) {
+    // Isometric projection constants
+    const float isoAngle = 0.5f;
+    const float halfSize = size * 0.5f;
+
+    // Calculate face vertices
+    ImVec2 topFace[4] = {
+        ImVec2(center.x, center.y - size * 0.35f),                    // Top point
+        ImVec2(center.x + size * 0.45f, center.y - size * 0.1f),      // Right point
+        ImVec2(center.x, center.y + size * 0.15f),                    // Bottom point
+        ImVec2(center.x - size * 0.45f, center.y - size * 0.1f)       // Left point
+    };
+
+    ImVec2 leftFace[4] = {
+        ImVec2(center.x - size * 0.45f, center.y - size * 0.1f),      // Top-left
+        ImVec2(center.x, center.y + size * 0.15f),                    // Top-right
+        ImVec2(center.x, center.y + size * 0.5f),                     // Bottom-right
+        ImVec2(center.x - size * 0.45f, center.y + size * 0.25f)      // Bottom-left
+    };
+
+    ImVec2 rightFace[4] = {
+        ImVec2(center.x + size * 0.45f, center.y - size * 0.1f),      // Top-right
+        ImVec2(center.x, center.y + size * 0.15f),                    // Top-left
+        ImVec2(center.x, center.y + size * 0.5f),                     // Bottom-left
+        ImVec2(center.x + size * 0.45f, center.y + size * 0.25f)      // Bottom-right
+    };
+
+    // Get UV coordinates for each face
+    ImVec2 uvTop0, uvTop1, uvLeft0, uvLeft1, uvRight0, uvRight1;
+    getTextureUVs(blockID, 0, uvTop0, uvTop1);     // Top
+    getTextureUVs(blockID, 1, uvLeft0, uvLeft1);   // Left
+    getTextureUVs(blockID, 2, uvRight0, uvRight1); // Right
+
+    ImTextureID texID = (ImTextureID)s_atlasDescriptorSet;
+
+    // Draw faces in back-to-front order with textures
+    // Right face (darkened)
+    drawList->AddImageQuad(texID,
+        rightFace[0], rightFace[1], rightFace[2], rightFace[3],
+        ImVec2(uvRight0.x, uvRight0.y), ImVec2(uvRight1.x, uvRight0.y),
+        ImVec2(uvRight1.x, uvRight1.y), ImVec2(uvRight0.x, uvRight1.y),
+        IM_COL32(140, 140, 140, 255)); // Darken right face
+    drawList->AddQuad(rightFace[0], rightFace[1], rightFace[2], rightFace[3],
+        IM_COL32(0, 0, 0, 100), 1.0f);
+
+    // Left face (medium shade)
+    drawList->AddImageQuad(texID,
+        leftFace[0], leftFace[1], leftFace[2], leftFace[3],
+        ImVec2(uvLeft0.x, uvLeft0.y), ImVec2(uvLeft1.x, uvLeft0.y),
+        ImVec2(uvLeft1.x, uvLeft1.y), ImVec2(uvLeft0.x, uvLeft1.y),
+        IM_COL32(190, 190, 190, 255)); // Medium shade left face
+    drawList->AddQuad(leftFace[0], leftFace[1], leftFace[2], leftFace[3],
+        IM_COL32(0, 0, 0, 100), 1.0f);
+
+    // Top face (brightest)
+    drawList->AddImageQuad(texID,
+        topFace[0], topFace[1], topFace[2], topFace[3],
+        ImVec2(uvTop0.x, uvTop0.y), ImVec2(uvTop1.x, uvTop0.y),
+        ImVec2(uvTop1.x, uvTop1.y), ImVec2(uvTop0.x, uvTop1.y),
+        IM_COL32(255, 255, 255, 255)); // Full bright top face
+    drawList->AddQuad(topFace[0], topFace[1], topFace[2], topFace[3],
+        IM_COL32(0, 0, 0, 120), 1.5f);
+}
+
+void BlockIconRenderer::drawIsometricCube(ImDrawList* drawList, const ImVec2& center, float size,
+                                          const ImVec4& topColor, const ImVec4& leftColor, const ImVec4& rightColor) {
+    // Isometric projection constants
+    // Standard isometric: 30 degree angle
+    const float isoAngle = 0.5f; // tan(30°) ≈ 0.577, using 0.5 for simplicity
+    const float halfSize = size * 0.5f;
+
+    // Calculate the 7 vertices of the isometric cube projection
+    // Center the cube at 'center'
+    ImVec2 top = ImVec2(center.x, center.y - halfSize);                           // Top vertex
+    ImVec2 left = ImVec2(center.x - halfSize, center.y);                          // Left vertex
+    ImVec2 right = ImVec2(center.x + halfSize, center.y);                         // Right vertex
+    ImVec2 bottom = ImVec2(center.x, center.y + halfSize);                        // Bottom vertex (center of base)
+    ImVec2 topLeft = ImVec2(center.x - halfSize * isoAngle, center.y - halfSize * isoAngle);
+    ImVec2 topRight = ImVec2(center.x + halfSize * isoAngle, center.y - halfSize * isoAngle);
+    ImVec2 bottomLeft = ImVec2(center.x - halfSize * isoAngle, center.y + halfSize * isoAngle);
+    ImVec2 bottomRight = ImVec2(center.x + halfSize * isoAngle, center.y + halfSize * isoAngle);
+
+    // Simplified isometric cube using diamonds/rhombus shapes
+    // We'll draw three visible faces: top, left, right
+
+    // Top face (brightest) - diamond shape
+    ImVec2 topFace[4] = {
+        ImVec2(center.x, center.y - size * 0.35f),                    // Top point
+        ImVec2(center.x + size * 0.45f, center.y - size * 0.1f),      // Right point
+        ImVec2(center.x, center.y + size * 0.15f),                    // Bottom point
+        ImVec2(center.x - size * 0.45f, center.y - size * 0.1f)       // Left point
+    };
+
+    // Left face (medium shade)
+    ImVec2 leftFace[4] = {
+        ImVec2(center.x - size * 0.45f, center.y - size * 0.1f),      // Top-left
+        ImVec2(center.x, center.y + size * 0.15f),                    // Top-right
+        ImVec2(center.x, center.y + size * 0.5f),                     // Bottom-right
+        ImVec2(center.x - size * 0.45f, center.y + size * 0.25f)      // Bottom-left
+    };
+
+    // Right face (darkest)
+    ImVec2 rightFace[4] = {
+        ImVec2(center.x + size * 0.45f, center.y - size * 0.1f),      // Top-right
+        ImVec2(center.x, center.y + size * 0.15f),                    // Top-left
+        ImVec2(center.x, center.y + size * 0.5f),                     // Bottom-left
+        ImVec2(center.x + size * 0.45f, center.y + size * 0.25f)      // Bottom-right
+    };
+
+    // Draw faces in back-to-front order for proper occlusion
+    // Right face (back-right)
+    drawList->AddQuadFilled(rightFace[0], rightFace[1], rightFace[2], rightFace[3],
+                            ImGui::ColorConvertFloat4ToU32(rightColor));
+    drawList->AddQuad(rightFace[0], rightFace[1], rightFace[2], rightFace[3],
+                      IM_COL32(0, 0, 0, 100), 1.0f);
+
+    // Left face (back-left)
+    drawList->AddQuadFilled(leftFace[0], leftFace[1], leftFace[2], leftFace[3],
+                            ImGui::ColorConvertFloat4ToU32(leftColor));
+    drawList->AddQuad(leftFace[0], leftFace[1], leftFace[2], leftFace[3],
+                      IM_COL32(0, 0, 0, 100), 1.0f);
+
+    // Top face (front)
+    drawList->AddQuadFilled(topFace[0], topFace[1], topFace[2], topFace[3],
+                            ImGui::ColorConvertFloat4ToU32(topColor));
+    drawList->AddQuad(topFace[0], topFace[1], topFace[2], topFace[3],
+                      IM_COL32(0, 0, 0, 120), 1.5f);
 }

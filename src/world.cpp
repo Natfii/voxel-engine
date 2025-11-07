@@ -301,6 +301,58 @@ void World::breakBlock(const glm::ivec3& coords, VulkanRenderer* renderer) {
     breakBlock(worldX, worldY, worldZ, renderer);
 }
 
+void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, VulkanRenderer* renderer) {
+    // Don't place air blocks (use breakBlock for that)
+    if (blockID <= 0) return;
+
+    // Check if there's already a block here (don't place over existing blocks)
+    int existingBlock = getBlockAt(worldX, worldY, worldZ);
+    if (existingBlock != 0) return;
+
+    // Place the block
+    setBlockAt(worldX, worldY, worldZ, blockID);
+
+    // Update the affected chunk and all adjacent chunks
+    // Must regenerate MESH (not just vertex buffer) because face culling needs updating
+    Chunk* affectedChunk = getChunkAtWorldPos(worldX, worldY, worldZ);
+    if (affectedChunk) {
+        affectedChunk->generateMesh(this);
+        affectedChunk->createVertexBuffer(renderer);
+    }
+
+    // Always update all 6 adjacent chunks (not just on boundaries)
+    Chunk* neighbors[6] = {
+        getChunkAtWorldPos(worldX - 0.5f, worldY, worldZ),  // -X
+        getChunkAtWorldPos(worldX + 0.5f, worldY, worldZ),  // +X
+        getChunkAtWorldPos(worldX, worldY - 0.5f, worldZ),  // -Y (below)
+        getChunkAtWorldPos(worldX, worldY + 0.5f, worldZ),  // +Y (above)
+        getChunkAtWorldPos(worldX, worldY, worldZ - 0.5f),  // -Z
+        getChunkAtWorldPos(worldX, worldY, worldZ + 0.5f)   // +Z
+    };
+
+    // Regenerate mesh and buffer for each unique neighbor chunk
+    for (int i = 0; i < 6; i++) {
+        if (neighbors[i] && neighbors[i] != affectedChunk) {
+            // Skip if already updated (same chunk)
+            bool alreadyUpdated = false;
+            for (int j = 0; j < i; j++) {
+                if (neighbors[j] == neighbors[i]) {
+                    alreadyUpdated = true;
+                    break;
+                }
+            }
+            if (!alreadyUpdated) {
+                neighbors[i]->generateMesh(this);
+                neighbors[i]->createVertexBuffer(renderer);
+            }
+        }
+    }
+}
+
+void World::placeBlock(const glm::vec3& position, int blockID, VulkanRenderer* renderer) {
+    placeBlock(position.x, position.y, position.z, blockID, renderer);
+}
+
 void World::updateLiquids(VulkanRenderer* renderer) {
     auto& registry = BlockRegistry::instance();
     std::vector<Chunk*> chunksToUpdate;
