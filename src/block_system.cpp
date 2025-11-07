@@ -361,7 +361,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
         }
 
         int atlasIndex = (int)textures.size();
-        textures.push_back(tex);
+        textures.push_back(std::move(tex));  // Move unique_ptr ownership
         textureNameToAtlasIndex[textureName] = atlasIndex;
         std::cout << "  Loaded texture: " << textureName << " (atlas index " << atlasIndex << ")" << std::endl;
         return atlasIndex;
