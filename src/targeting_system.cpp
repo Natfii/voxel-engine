@@ -221,7 +221,7 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
     const float offset = 0.003f; // Minimal offset (Minecraft-style thin outline)
 
     std::vector<float> vertices;
-    vertices.reserve(24 * 8); // 24 vertices * 8 floats per vertex (x,y,z,r,g,b,u,v)
+    vertices.reserve(24 * 9); // 24 vertices * 9 floats per vertex (x,y,z,r,g,b,a,u,v)
 
     // Helper lambda to add a line (2 vertices)
     auto addLine = [&](float x1, float y1, float z1, float x2, float y2, float z2) {
@@ -232,6 +232,7 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
         vertices.push_back(0.0f); // Black outline color (cartoonish)
         vertices.push_back(0.0f);
         vertices.push_back(0.0f);
+        vertices.push_back(1.0f); // Alpha (fully opaque)
         vertices.push_back(0.0f); // UV coordinates
         vertices.push_back(0.0f);
 
@@ -242,6 +243,7 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
         vertices.push_back(0.0f); // Black outline color (cartoonish)
         vertices.push_back(0.0f);
         vertices.push_back(0.0f);
+        vertices.push_back(1.0f); // Alpha (fully opaque)
         vertices.push_back(0.0f); // UV coordinates
         vertices.push_back(0.0f);
     };

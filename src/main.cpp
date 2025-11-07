@@ -319,6 +319,19 @@ int main() {
                 leftMousePressed = false;
             }
 
+            // Update liquid physics periodically
+            // DISABLED: Scanning all blocks in the world is too expensive for large worlds (14M+ checks per update)
+            // TODO: Optimize by maintaining a list of active liquid blocks instead of scanning entire world
+            /*
+            static float liquidUpdateTimer = 0.0f;
+            liquidUpdateTimer += deltaTime;
+            const float liquidUpdateInterval = 0.5f;  // Update liquids 2 times per second
+            if (liquidUpdateTimer >= liquidUpdateInterval) {
+                liquidUpdateTimer = 0.0f;
+                world.updateLiquids(&renderer);
+            }
+            */
+
             // Begin rendering
             if (!renderer.beginFrame()) {
                 // Skip this frame (swap chain recreation in progress)

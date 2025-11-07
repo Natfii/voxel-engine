@@ -244,6 +244,11 @@ void Chunk::generateMesh(World* world) {
     verts.reserve(WIDTH * HEIGHT * DEPTH * 12 / 10);  // 4 vertices per face
     indices.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10); // 6 indices per face (same as before)
 
+    // Get block registry (needed for liquid checks)
+    auto& registry = BlockRegistry::instance();
+    int atlasGridSize = registry.getAtlasGridSize();
+    float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
+
     // Helper lambda to check if a block is solid (non-air)
     // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
     auto isSolid = [this, world](int x, int y, int z) -> bool {
@@ -268,10 +273,24 @@ void Chunk::generateMesh(World* world) {
         return blockID != 0;
     };
 
-    // Get atlas grid size for UV calculations
-    auto& registry = BlockRegistry::instance();
-    int atlasGridSize = registry.getAtlasGridSize();
-    float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
+    // Helper lambda to check if a block is liquid
+    auto isLiquid = [this, world, &registry](int x, int y, int z) -> bool {
+        int blockID;
+        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
+            blockID = m_blocks[x][y][z];
+        } else {
+            // Out of bounds - check world
+            int worldBlockX = m_x * WIDTH + x;
+            int worldBlockY = m_y * HEIGHT + y;
+            int worldBlockZ = m_z * DEPTH + z;
+            float worldX = worldBlockX * 0.5f;
+            float worldY = worldBlockY * 0.5f;
+            float worldZ = worldBlockZ * 0.5f;
+            blockID = world->getBlockAt(worldX, worldY, worldZ);
+        }
+        if (blockID == 0) return false;
+        return registry.get(blockID).isLiquid;
+    };
 
     // Iterate over every block in the chunk (optimized order for cache locality)
     for(int X = 0; X < WIDTH;  ++X) {
@@ -282,7 +301,7 @@ void Chunk::generateMesh(World* world) {
 
                 // Look up block definition by ID
                 const BlockDefinition& def = registry.get(id);
-                float cr, cg, cb;
+                float cr, cg, cb, ca;
                 if (def.hasColor) {
                     // Use the block's defined color
                     cr = def.color.r;
@@ -292,6 +311,8 @@ void Chunk::generateMesh(World* world) {
                     // No color defined (likely has a texture); use white
                     cr = cg = cb = 1.0f;
                 }
+                // Set alpha based on transparency (1.0 - transparency for proper blending)
+                ca = 1.0f - def.transparency;
 
                 // Helper to get UV coordinates for a specific face with texture variation
                 auto getUVsForFace = [&](const BlockDefinition::FaceTexture& face) -> std::pair<float, float> {
@@ -346,7 +367,7 @@ void Chunk::generateMesh(World* world) {
                         v.x = cube[i+0] + bx;
                         v.y = cube[i+1] + by;
                         v.z = cube[i+2] + bz;
-                        v.r = cr; v.g = cg; v.b = cb;
+                        v.r = cr; v.g = cg; v.b = cb; v.a = ca;
                         v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
                         v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
                         verts.push_back(v);
@@ -369,34 +390,51 @@ void Chunk::generateMesh(World* world) {
                 const BlockDefinition::FaceTexture& topTex = def.useCubeMap ? def.top : def.all;
                 const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
 
+                // Special rendering for liquid blocks
+                bool isCurrentLiquid = def.isLiquid;
+
                 // Front face (z=0, facing -Z direction)
-                if (!isSolid(X, Y, Z - 1)) {
-                    renderFace(frontTex, 0, 0);
+                if (!isSolid(X, Y, Z - 1) || (isCurrentLiquid && !isLiquid(X, Y, Z - 1))) {
+                    // Render if neighbor is air, or if this is liquid and neighbor is non-liquid
+                    if (!isCurrentLiquid || !isLiquid(X, Y, Z - 1)) {
+                        renderFace(frontTex, 0, 0);
+                    }
                 }
 
                 // Back face (z=0.5, facing +Z direction)
-                if (!isSolid(X, Y, Z + 1)) {
-                    renderFace(backTex, 12, 8);
+                if (!isSolid(X, Y, Z + 1) || (isCurrentLiquid && !isLiquid(X, Y, Z + 1))) {
+                    if (!isCurrentLiquid || !isLiquid(X, Y, Z + 1)) {
+                        renderFace(backTex, 12, 8);
+                    }
                 }
 
                 // Left face (x=0, facing -X direction)
-                if (!isSolid(X - 1, Y, Z)) {
-                    renderFace(leftTex, 24, 16);
+                if (!isSolid(X - 1, Y, Z) || (isCurrentLiquid && !isLiquid(X - 1, Y, Z))) {
+                    if (!isCurrentLiquid || !isLiquid(X - 1, Y, Z)) {
+                        renderFace(leftTex, 24, 16);
+                    }
                 }
 
                 // Right face (x=0.5, facing +X direction)
-                if (!isSolid(X + 1, Y, Z)) {
-                    renderFace(rightTex, 36, 24);
+                if (!isSolid(X + 1, Y, Z) || (isCurrentLiquid && !isLiquid(X + 1, Y, Z))) {
+                    if (!isCurrentLiquid || !isLiquid(X + 1, Y, Z)) {
+                        renderFace(rightTex, 36, 24);
+                    }
                 }
 
                 // Top face (y=0.5, facing +Y direction)
+                // For liquids: only render if exposed to air (not another liquid)
                 if (!isSolid(X, Y + 1, Z)) {
+                    renderFace(topTex, 48, 32);
+                } else if (isCurrentLiquid && !isLiquid(X, Y + 1, Z)) {
                     renderFace(topTex, 48, 32);
                 }
 
                 // Bottom face (y=0, facing -Y direction)
-                if (!isSolid(X, Y - 1, Z)) {
-                    renderFace(bottomTex, 60, 40);
+                if (!isSolid(X, Y - 1, Z) || (isCurrentLiquid && !isLiquid(X, Y - 1, Z))) {
+                    if (!isCurrentLiquid || !isLiquid(X, Y - 1, Z)) {
+                        renderFace(bottomTex, 60, 40);
+                    }
                 }
             }
         }

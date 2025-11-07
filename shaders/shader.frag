@@ -10,18 +10,34 @@ layout(binding = 0) uniform UniformBufferObject {
 
 layout(binding = 1) uniform sampler2D texSampler;
 
-layout(location = 0) in vec3 fragColor;
+layout(location = 0) in vec4 fragColor;  // Now vec4 with alpha
 layout(location = 1) in vec3 fragWorldPos;
 layout(location = 2) in vec2 fragTexCoord;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    vec2 texCoord = fragTexCoord;
+
+    // Liquid animation: if alpha < 1.0, apply diagonal scrolling
+    if (fragColor.a < 0.99) {
+        // Use time of day for animation
+        float time = ubo.skyTimeData.x * 100.0;  // Scale time for visible movement
+
+        // Diagonal scrolling (both U and V move)
+        float scrollSpeed = 0.02;
+        texCoord.x += time * scrollSpeed;
+        texCoord.y += time * scrollSpeed * 0.7;  // Slightly different speed for diagonal effect
+
+        // Keep UVs in valid range
+        texCoord = fract(texCoord);
+    }
+
     // Sample texture and multiply by vertex color
-    // Textured blocks have white (1,1,1) vertex color → shows texture
+    // Textured blocks have white (1,1,1,1) vertex color → shows texture
     // Colored blocks have colored vertex color → shows solid color (default white texture)
-    vec4 texColor = texture(texSampler, fragTexCoord);
-    vec3 baseColor = texColor.rgb * fragColor;
+    vec4 texColor = texture(texSampler, texCoord);
+    vec3 baseColor = texColor.rgb * fragColor.rgb;
 
     // Extract camera position and render distance from packed vec4
     vec3 camPos = ubo.cameraPos.xyz;
@@ -69,5 +85,6 @@ void main() {
     float ambientLight = 0.3 + 0.7 * sunIntensity + 0.15 * moonIntensity;
     finalColor *= ambientLight;
 
-    outColor = vec4(finalColor, 1.0);
+    // Output with alpha from vertex color (for liquid transparency)
+    outColor = vec4(finalColor, fragColor.a);
 }

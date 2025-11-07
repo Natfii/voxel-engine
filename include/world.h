@@ -186,6 +186,18 @@ public:
      */
     void breakBlock(const glm::ivec3& coords, VulkanRenderer* renderer);
 
+    // ========== Liquid Physics ==========
+
+    /**
+     * @brief Updates liquid blocks to simulate gravity and flow
+     *
+     * Checks all liquid blocks and makes them fall if there's air below.
+     * This should be called periodically from the main game loop.
+     *
+     * @param renderer Vulkan renderer for buffer recreation
+     */
+    void updateLiquids(VulkanRenderer* renderer);
+
 private:
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
     std::vector<Chunk*> m_chunks;         ///< All chunks in the world
