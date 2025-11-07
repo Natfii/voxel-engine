@@ -9,6 +9,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <cstdint>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 #include "chunk.h"
@@ -179,6 +180,26 @@ public:
      * @param blockID Block ID to set (0 = air/remove block)
      */
     void setBlockAt(float worldX, float worldY, float worldZ, int blockID);
+
+    /**
+     * @brief Gets the block metadata at the specified world position
+     *
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @return Metadata value (0-255), or 0 if out of bounds
+     */
+    uint8_t getBlockMetadataAt(float worldX, float worldY, float worldZ);
+
+    /**
+     * @brief Sets the block metadata at the specified world position
+     *
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @param metadata Metadata value to set (0-255)
+     */
+    void setBlockMetadataAt(float worldX, float worldY, float worldZ, uint8_t metadata);
 
     // ========== Higher-Level Block Operations ==========
 

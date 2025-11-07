@@ -257,6 +257,28 @@ public:
      */
     void setBlock(int x, int y, int z, int blockID);
 
+    /**
+     * @brief Gets the block metadata at local chunk coordinates
+     *
+     * Metadata is used for water levels, block states, etc.
+     *
+     * @param x Local X coordinate (0-31)
+     * @param y Local Y coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @return Metadata value (0-255), or 0 if out of bounds
+     */
+    uint8_t getBlockMetadata(int x, int y, int z) const;
+
+    /**
+     * @brief Sets the block metadata at local chunk coordinates
+     *
+     * @param x Local X coordinate (0-31)
+     * @param y Local Y coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @param metadata Metadata value to set (0-255)
+     */
+    void setBlockMetadata(int x, int y, int z, uint8_t metadata);
+
     // ========== Chunk Position ==========
 
     /**
@@ -295,6 +317,7 @@ private:
     // ========== Position and Storage ==========
     int m_x, m_y, m_z;                      ///< Chunk coordinates in chunk space
     int m_blocks[WIDTH][HEIGHT][DEPTH];    ///< Block ID storage (32 KB)
+    uint8_t m_blockMetadata[WIDTH][HEIGHT][DEPTH]; ///< Block metadata (water levels, etc.) (32 KB)
 
     // ========== Mesh Data ==========
     std::vector<Vertex> m_vertices;         ///< CPU-side vertex data

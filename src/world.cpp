@@ -25,6 +25,7 @@
 #include <thread>
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 World::World(int width, int height, int depth)
     : m_width(width), m_height(height), m_depth(depth) {
@@ -248,6 +249,31 @@ void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID) {
     // We'll mark the chunk as needing a buffer update elsewhere
 }
 
+uint8_t World::getBlockMetadataAt(float worldX, float worldY, float worldZ) {
+    // Convert world coordinates to chunk and local block coordinates
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+
+    Chunk* chunk = getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
+    if (chunk == nullptr) {
+        return 0; // Out of bounds
+    }
+
+    return chunk->getBlockMetadata(coords.localX, coords.localY, coords.localZ);
+}
+
+void World::setBlockMetadataAt(float worldX, float worldY, float worldZ, uint8_t metadata) {
+    // Convert world coordinates to chunk and local block coordinates
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+
+    Chunk* chunk = getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
+    if (chunk == nullptr) {
+        return; // Outside world bounds, do nothing
+    }
+
+    // Set the metadata
+    chunk->setBlockMetadata(coords.localX, coords.localY, coords.localZ, metadata);
+}
+
 void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer* renderer) {
     // Break the block (set to air = 0)
     setBlockAt(worldX, worldY, worldZ, 0);
@@ -377,14 +403,28 @@ void World::placeBlock(const glm::vec3& position, int blockID, VulkanRenderer* r
 }
 
 void World::updateLiquids(VulkanRenderer* renderer) {
-    auto& registry = BlockRegistry::instance();
-    std::vector<Chunk*> chunksToUpdate;
+    // Minecraft-style water flow implementation
+    // - Level 0: Source block (infinite water, doesn't flow away)
+    // - Levels 1-7: Flowing water (spreads horizontally with level decay)
+    // - Water flows down infinitely (becomes source block when falling)
+    // - Horizontal spread: up to 7 blocks from source
+    // TODO: Update rendering to show water height based on level (currently all water renders at full height)
 
-    // Iterate through all chunks from bottom to top (so liquids fall properly)
+    auto& registry = BlockRegistry::instance();
+    std::unordered_set<Chunk*> chunksToUpdate;
+
+    // Track water blocks that need updating
+    struct WaterBlock {
+        float x, y, z;
+        uint8_t level;
+    };
+    std::vector<WaterBlock> waterToAdd;
+    std::vector<glm::vec3> waterToRemove;
+
+    // Pass 1: Process all water blocks (vertical flow priority)
     for (int y = 0; y < m_height; ++y) {
         for (int x = 0; x < m_width; ++x) {
             for (int z = 0; z < m_depth; ++z) {
-                // Get chunk using proper index calculation
                 int halfWidth = m_width / 2;
                 int halfDepth = m_depth / 2;
                 int chunkX = x - halfWidth;
@@ -393,16 +433,13 @@ void World::updateLiquids(VulkanRenderer* renderer) {
                 Chunk* chunk = getChunkAt(chunkX, y, chunkZ);
                 if (!chunk) continue;
 
-                bool chunkModified = false;
-
                 // Iterate through blocks in this chunk
                 for (int localX = 0; localX < Chunk::WIDTH; ++localX) {
-                    for (int localY = Chunk::HEIGHT - 1; localY >= 0; --localY) {  // Top to bottom
+                    for (int localY = Chunk::HEIGHT - 1; localY >= 0; --localY) {
                         for (int localZ = 0; localZ < Chunk::DEPTH; ++localZ) {
                             int blockID = chunk->getBlock(localX, localY, localZ);
                             if (blockID == 0) continue;
 
-                            // Check if this is a liquid block
                             const BlockDefinition& def = registry.get(blockID);
                             if (!def.isLiquid) continue;
 
@@ -411,39 +448,126 @@ void World::updateLiquids(VulkanRenderer* renderer) {
                             float worldY = (y * Chunk::HEIGHT + localY) * 0.5f;
                             float worldZ = (chunkZ * Chunk::DEPTH + localZ) * 0.5f;
 
-                            // Check block below
+                            // Get water level
+                            uint8_t waterLevel = getBlockMetadataAt(worldX, worldY, worldZ);
+
+                            // VERTICAL FLOW: Water always flows down first
                             float belowY = worldY - 0.5f;
                             int blockBelow = getBlockAt(worldX, belowY, worldZ);
 
-                            // If there's air below, make liquid fall
                             if (blockBelow == 0) {
-                                // Remove liquid from current position
-                                setBlockAt(worldX, worldY, worldZ, 0);
-                                // Place liquid one block below
-                                setBlockAt(worldX, belowY, worldZ, blockID);
-                                chunkModified = true;
+                                // Air below - water flows down as source block (level 0)
+                                waterToAdd.push_back({worldX, belowY, worldZ, 0});
+                                chunksToUpdate.insert(getChunkAtWorldPos(worldX, belowY, worldZ));
+                            } else {
+                                // Can't flow down - try horizontal spread
+                                // Only spread if we have flow capacity (level < 7)
+                                if (waterLevel < 7) {
+                                    uint8_t newLevel = waterLevel + 1;
 
-                                // Mark the chunk below for update too
-                                Chunk* chunkBelow = getChunkAtWorldPos(worldX, belowY, worldZ);
-                                if (chunkBelow && std::find(chunksToUpdate.begin(), chunksToUpdate.end(), chunkBelow) == chunksToUpdate.end()) {
-                                    chunksToUpdate.push_back(chunkBelow);
+                                    // Check 4 horizontal neighbors
+                                    const glm::vec3 directions[4] = {
+                                        {0.5f, 0.0f, 0.0f},   // +X
+                                        {-0.5f, 0.0f, 0.0f},  // -X
+                                        {0.0f, 0.0f, 0.5f},   // +Z
+                                        {0.0f, 0.0f, -0.5f}   // -Z
+                                    };
+
+                                    for (const auto& dir : directions) {
+                                        float nx = worldX + dir.x;
+                                        float ny = worldY + dir.y;
+                                        float nz = worldZ + dir.z;
+
+                                        int neighborBlock = getBlockAt(nx, ny, nz);
+
+                                        if (neighborBlock == 0) {
+                                            // Empty space - place water
+                                            waterToAdd.push_back({nx, ny, nz, newLevel});
+                                            chunksToUpdate.insert(getChunkAtWorldPos(nx, ny, nz));
+                                        } else if (registry.get(neighborBlock).isLiquid) {
+                                            // Existing water - update if we have lower level (stronger flow)
+                                            uint8_t neighborLevel = getBlockMetadataAt(nx, ny, nz);
+                                            if (newLevel < neighborLevel) {
+                                                setBlockMetadataAt(nx, ny, nz, newLevel);
+                                                chunksToUpdate.insert(getChunkAtWorldPos(nx, ny, nz));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Remove flowing water that has no source (level > 0 && no lower-level neighbors)
+                            if (waterLevel > 0) {
+                                bool hasSource = false;
+
+                                // Check above
+                                int blockAbove = getBlockAt(worldX, worldY + 0.5f, worldZ);
+                                if (registry.get(blockAbove).isLiquid) {
+                                    hasSource = true;
+                                }
+
+                                // Check 4 horizontal neighbors for lower levels
+                                if (!hasSource) {
+                                    const glm::vec3 directions[4] = {
+                                        {0.5f, 0.0f, 0.0f}, {-0.5f, 0.0f, 0.0f},
+                                        {0.0f, 0.0f, 0.5f}, {0.0f, 0.0f, -0.5f}
+                                    };
+
+                                    for (const auto& dir : directions) {
+                                        float nx = worldX + dir.x;
+                                        float ny = worldY + dir.y;
+                                        float nz = worldZ + dir.z;
+
+                                        int neighborBlock = getBlockAt(nx, ny, nz);
+                                        if (registry.get(neighborBlock).isLiquid) {
+                                            uint8_t neighborLevel = getBlockMetadataAt(nx, ny, nz);
+                                            if (neighborLevel < waterLevel) {
+                                                hasSource = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // No source found - mark for removal
+                                if (!hasSource) {
+                                    waterToRemove.push_back({worldX, worldY, worldZ});
+                                    chunksToUpdate.insert(chunk);
                                 }
                             }
                         }
                     }
                 }
-
-                // Mark this chunk for mesh update if modified
-                if (chunkModified && std::find(chunksToUpdate.begin(), chunksToUpdate.end(), chunk) == chunksToUpdate.end()) {
-                    chunksToUpdate.push_back(chunk);
-                }
             }
         }
     }
 
-    // Regenerate meshes for all affected chunks
+    // Pass 2: Apply all changes
+    for (const auto& pos : waterToRemove) {
+        setBlockAt(pos.x, pos.y, pos.z, 0);
+        setBlockMetadataAt(pos.x, pos.y, pos.z, 0);
+    }
+
+    for (const auto& water : waterToAdd) {
+        int existing = getBlockAt(water.x, water.y, water.z);
+        if (existing == 0) {
+            // Only place if still empty
+            setBlockAt(water.x, water.y, water.z, 5); // Water block ID
+            setBlockMetadataAt(water.x, water.y, water.z, water.level);
+        } else if (registry.get(existing).isLiquid) {
+            // Update level if better
+            uint8_t existingLevel = getBlockMetadataAt(water.x, water.y, water.z);
+            if (water.level < existingLevel) {
+                setBlockMetadataAt(water.x, water.y, water.z, water.level);
+            }
+        }
+    }
+
+    // Pass 3: Regenerate meshes for all affected chunks
     for (Chunk* chunk : chunksToUpdate) {
-        chunk->generateMesh(this);
-        chunk->createVertexBuffer(renderer);
+        if (chunk) {
+            chunk->generateMesh(this);
+            chunk->createVertexBuffer(renderer);
+        }
     }
 }

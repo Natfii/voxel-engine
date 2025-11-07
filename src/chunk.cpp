@@ -53,11 +53,12 @@ Chunk::Chunk(int x, int y, int z)
       m_indexCount(0),
       m_visible(false) {
 
-    // Initialize all blocks to air
+    // Initialize all blocks to air and metadata to 0
     for (int i = 0; i < WIDTH; i++) {
         for (int j = 0; j < HEIGHT; j++) {
             for (int k = 0; k < DEPTH; k++) {
                 m_blocks[i][j][k] = 0;
+                m_blockMetadata[i][j][k] = 0;
             }
         }
     }
@@ -160,8 +161,12 @@ void Chunk::generate() {
                     } else {
                         m_blocks[x][y][z] = BLOCK_STONE;  // Stone at bottom
                     }
+                } else if (worldY < WATER_LEVEL) {
+                    // Fill with water up to water level
+                    m_blocks[x][y][z] = BLOCK_WATER;
+                    m_blockMetadata[x][y][z] = 0;  // 0 = source block (infinite water)
                 } else {
-                    m_blocks[x][y][z] = BLOCK_AIR;  // Air above terrain
+                    m_blocks[x][y][z] = BLOCK_AIR;  // Air above water level
                 }
             }
         }
@@ -659,4 +664,18 @@ void Chunk::setBlock(int x, int y, int z, int blockID) {
         return;  // Out of bounds
     }
     m_blocks[x][y][z] = blockID;
+}
+
+uint8_t Chunk::getBlockMetadata(int x, int y, int z) const {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return 0;  // Out of bounds
+    }
+    return m_blockMetadata[x][y][z];
+}
+
+void Chunk::setBlockMetadata(int x, int y, int z, uint8_t metadata) {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return;  // Out of bounds
+    }
+    m_blockMetadata[x][y][z] = metadata;
 }
