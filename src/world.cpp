@@ -1,4 +1,5 @@
 #include "world.h"
+#include "world_utils.h"
 #include "vulkan_renderer.h"
 #include "frustum.h"
 #include "debug_state.h"
@@ -168,81 +169,34 @@ Chunk* World::getChunkAt(int chunkX, int chunkY, int chunkZ) {
 }
 
 int World::getBlockAt(float worldX, float worldY, float worldZ) {
-    // Convert world coordinates to chunk coordinates
-    // Blocks are 0.5 units in size, and each chunk is 32 blocks
-    int blockX = static_cast<int>(std::floor(worldX / 0.5f));
-    int blockY = static_cast<int>(std::floor(worldY / 0.5f));
-    int blockZ = static_cast<int>(std::floor(worldZ / 0.5f));
+    // Convert world coordinates to chunk and local block coordinates
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
 
-    int chunkX = blockX / Chunk::WIDTH;
-    int chunkY = blockY / Chunk::HEIGHT;
-    int chunkZ = blockZ / Chunk::DEPTH;
-
-    int localX = blockX - (chunkX * Chunk::WIDTH);
-    int localY = blockY - (chunkY * Chunk::HEIGHT);
-    int localZ = blockZ - (chunkZ * Chunk::DEPTH);
-
-    // Handle negative coordinates properly
-    if (localX < 0) { localX += Chunk::WIDTH; chunkX--; }
-    if (localY < 0) { localY += Chunk::HEIGHT; chunkY--; }
-    if (localZ < 0) { localZ += Chunk::DEPTH; chunkZ--; }
-
-    Chunk* chunk = getChunkAt(chunkX, chunkY, chunkZ);
+    Chunk* chunk = getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
     if (chunk == nullptr) {
         return 0; // Air (outside world bounds)
     }
 
-    return chunk->getBlock(localX, localY, localZ);
+    return chunk->getBlock(coords.localX, coords.localY, coords.localZ);
 }
 
 Chunk* World::getChunkAtWorldPos(float worldX, float worldY, float worldZ) {
-    // Convert world coordinates to chunk coordinates (same logic as getBlockAt)
-    int blockX = static_cast<int>(std::floor(worldX / 0.5f));
-    int blockY = static_cast<int>(std::floor(worldY / 0.5f));
-    int blockZ = static_cast<int>(std::floor(worldZ / 0.5f));
-
-    int chunkX = blockX / Chunk::WIDTH;
-    int chunkY = blockY / Chunk::HEIGHT;
-    int chunkZ = blockZ / Chunk::DEPTH;
-
-    int localX = blockX - (chunkX * Chunk::WIDTH);
-    int localY = blockY - (chunkY * Chunk::HEIGHT);
-    int localZ = blockZ - (chunkZ * Chunk::DEPTH);
-
-    // Handle negative coordinates properly
-    if (localX < 0) { localX += Chunk::WIDTH; chunkX--; }
-    if (localY < 0) { localY += Chunk::HEIGHT; chunkY--; }
-    if (localZ < 0) { localZ += Chunk::DEPTH; chunkZ--; }
-
-    return getChunkAt(chunkX, chunkY, chunkZ);
+    // Convert world coordinates to chunk coordinates
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+    return getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
 }
 
 void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID) {
-    // Convert world coordinates to chunk coordinates (same logic as getBlockAt)
-    int blockX = static_cast<int>(std::floor(worldX / 0.5f));
-    int blockY = static_cast<int>(std::floor(worldY / 0.5f));
-    int blockZ = static_cast<int>(std::floor(worldZ / 0.5f));
+    // Convert world coordinates to chunk and local block coordinates
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
 
-    int chunkX = blockX / Chunk::WIDTH;
-    int chunkY = blockY / Chunk::HEIGHT;
-    int chunkZ = blockZ / Chunk::DEPTH;
-
-    int localX = blockX - (chunkX * Chunk::WIDTH);
-    int localY = blockY - (chunkY * Chunk::HEIGHT);
-    int localZ = blockZ - (chunkZ * Chunk::DEPTH);
-
-    // Handle negative coordinates properly
-    if (localX < 0) { localX += Chunk::WIDTH; chunkX--; }
-    if (localY < 0) { localY += Chunk::HEIGHT; chunkY--; }
-    if (localZ < 0) { localZ += Chunk::DEPTH; chunkZ--; }
-
-    Chunk* chunk = getChunkAt(chunkX, chunkY, chunkZ);
+    Chunk* chunk = getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
     if (chunk == nullptr) {
         return; // Outside world bounds, do nothing
     }
 
     // Set the block
-    chunk->setBlock(localX, localY, localZ, blockID);
+    chunk->setBlock(coords.localX, coords.localY, coords.localZ, blockID);
 
     // NOTE: Block break animations could be added in the future by:
     // - Adding a callback parameter to this function
