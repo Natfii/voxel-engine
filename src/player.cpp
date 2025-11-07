@@ -262,8 +262,8 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     bool shouldDebug = DebugState::instance().debugCollision.getValue();
     if (shouldDebug && debugCounter++ % 60 == 0 && std::abs(Velocity.y) > 0.1f) {
         glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
-        std::cout << "DEBUG: Player pos=" << Position.y << " feet=" << feetPos.y
-                  << " movement.y=" << movement.y << " velocity.y=" << Velocity.y << std::endl;
+        Logger::debug() << "Player pos=" << Position.y << " feet=" << feetPos.y
+                        << " movement.y=" << movement.y << " velocity.y=" << Velocity.y;
     }
 
     // CRITICAL FIX: If player is ALREADY stuck inside a block, push them out
@@ -354,9 +354,9 @@ bool Player::checkCollision(const glm::vec3& position, World* world) {
     static int checkCounter = 0;
     bool shouldDebugCollision = DebugState::instance().debugCollision.getValue() && (checkCounter++ % 120 == 0);
     if (shouldDebugCollision) {
-        std::cout << "DEBUG checkCollision: feet=" << feetPos.y
-                  << " minY=" << minY << " maxY=" << maxY
-                  << " (blocks " << minY << " to " << maxY << ")" << std::endl;
+        Logger::debug() << "checkCollision: feet=" << feetPos.y
+                        << " minY=" << minY << " maxY=" << maxY
+                        << " (blocks " << minY << " to " << maxY << ")";
     }
 
     // Check each block in the range
@@ -371,9 +371,9 @@ bool Player::checkCollision(const glm::vec3& position, World* world) {
                 int blockID = world->getBlockAt(worldX, worldY, worldZ);
 
                 if (shouldDebugCollision && y == minY) {
-                    std::cout << "  Checking block (" << x << "," << y << "," << z
-                              << ") world(" << worldX << "," << worldY << "," << worldZ
-                              << ") = " << blockID << std::endl;
+                    Logger::debug() << "  Checking block (" << x << "," << y << "," << z
+                                    << ") world(" << worldX << "," << worldY << "," << worldZ
+                                    << ") = " << blockID;
                 }
 
                 if (blockID > 0) {  // Solid block (not air)
