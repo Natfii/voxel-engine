@@ -244,8 +244,11 @@ void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID) {
     // Set the block
     chunk->setBlock(localX, localY, localZ, blockID);
 
-    // TODO: For block break animation, we can add a callback here later
-    // For now, immediately update the mesh
+    // NOTE: Block break animations could be added in the future by:
+    // - Adding a callback parameter to this function
+    // - Delaying mesh regeneration until animation completes
+    // - Using a particle system for break effects
+    // For now, blocks update instantly (Minecraft-style instant break)
     chunk->generateMesh(this);
     // Note: We don't call createBuffer here - that needs a renderer which we don't have access to
     // We'll mark the chunk as needing a buffer update elsewhere

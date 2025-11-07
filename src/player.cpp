@@ -1,5 +1,6 @@
 #include "player.h"
 #include "world.h"
+#include "block_system.h"
 #include "debug_state.h"
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -93,11 +94,13 @@ void Player::updateNoclip(GLFWwindow* window, float deltaTime) {
 }
 
 void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bool processInput) {
-    // Handle sprint (hold to sprint by default, TODO: add toggle mode from config)
+    // Handle sprint input
+    // NOTE: Sprint toggle mode could be added in the future by:
+    // - Adding a sprint_toggle_mode config option in config.ini
+    // - Tracking sprint toggle state in SprintKeyPressed member
+    // - Toggling IsSprinting on key press instead of holding
+    // For now, using hold-to-sprint (Minecraft default behavior)
     bool sprintKeyDown = processInput && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
-
-    // TODO: Load sprint_toggle from config and implement toggle mode
-    // For now, it's hold-to-sprint
     IsSprinting = sprintKeyDown && OnGround;  // Can only sprint on ground
 
     // WASD input for horizontal movement (only if processing input)
@@ -122,7 +125,20 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     // Check if player is in liquid (check center of player)
     glm::vec3 checkPos = Position;
     int blockID = world->getBlockAt(checkPos.x, checkPos.y, checkPos.z);
-    InLiquid = false;  // TODO: check if blockID is a liquid type when we implement liquids
+
+    // Check if the block is a liquid using BlockRegistry
+    // NOTE: Currently no liquid blocks are defined in assets/blocks/
+    // When liquid blocks are added (water, lava), set their "isLiquid: true" in YAML
+    InLiquid = false;
+    if (blockID > 0) {
+        try {
+            const auto& blockDef = BlockRegistry::instance().get(blockID);
+            InLiquid = blockDef.isLiquid;
+        } catch (...) {
+            // Invalid block ID, treat as air
+            InLiquid = false;
+        }
+    }
 
     // Apply movement speed with sprint multiplier
     float moveSpeed = InLiquid ? SWIM_SPEED : WALK_SPEED;
