@@ -7,6 +7,7 @@
 
 #pragma once
 #include <vector>
+#include <memory>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 #include "chunk.h"
@@ -225,7 +226,7 @@ public:
 
 private:
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
-    std::vector<Chunk*> m_chunks;         ///< All chunks in the world
+    std::vector<std::unique_ptr<Chunk>> m_chunks;  ///< All chunks in the world (RAII managed)
 
     /**
      * @brief Converts 3D chunk coordinates to linear array index

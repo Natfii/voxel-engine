@@ -39,7 +39,7 @@ World::World(int width, int height, int depth)
     for (int x = -halfWidth; x < width - halfWidth; ++x) {
         for (int y = 0; y < height; ++y) {
             for (int z = -halfDepth; z < depth - halfDepth; ++z) {
-                m_chunks.push_back(new Chunk(x, y, z));
+                m_chunks.push_back(std::make_unique<Chunk>(x, y, z));
             }
         }
     }
@@ -48,9 +48,7 @@ World::World(int width, int height, int depth)
 }
 
 World::~World() {
-    for (Chunk* chunk : m_chunks) {
-        delete chunk;
-    }
+    // unique_ptr automatically cleans up - no manual delete needed
 }
 
 int World::index(int x, int y, int z) const {
@@ -108,7 +106,7 @@ void World::generateWorld() {
 
 void World::createBuffers(VulkanRenderer* renderer) {
     // Only create buffers for chunks with vertices (skip empty chunks)
-    for (Chunk* chunk : m_chunks) {
+    for (auto& chunk : m_chunks) {
         if (chunk->getVertexCount() > 0) {
             chunk->createVertexBuffer(renderer);
         }
@@ -117,7 +115,7 @@ void World::createBuffers(VulkanRenderer* renderer) {
 
 void World::cleanup(VulkanRenderer* renderer) {
     // Destroy all chunk buffers before deleting chunks
-    for (Chunk* chunk : m_chunks) {
+    for (auto& chunk : m_chunks) {
         chunk->destroyBuffers(renderer);
     }
 }
@@ -147,7 +145,7 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     int distanceCulled = 0;
     int frustumCulled = 0;
 
-    for (Chunk* chunk : m_chunks) {
+    for (auto& chunk : m_chunks) {
         // Skip chunks with no vertices (optimization)
         if (chunk->getVertexCount() == 0) {
             continue;
@@ -197,11 +195,11 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
 
 Chunk* World::getChunkAt(int chunkX, int chunkY, int chunkZ) {
     // Find chunk with matching coordinates
-    for (Chunk* chunk : m_chunks) {
+    for (auto& chunk : m_chunks) {
         if (chunk->getChunkX() == chunkX &&
             chunk->getChunkY() == chunkY &&
             chunk->getChunkZ() == chunkZ) {
-            return chunk;
+            return chunk.get();  // Return raw pointer from unique_ptr
         }
     }
     return nullptr;

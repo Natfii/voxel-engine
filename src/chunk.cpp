@@ -19,11 +19,11 @@
 #include <iostream>
 
 // Static member initialization
-FastNoiseLite* Chunk::s_noise = nullptr;
+std::unique_ptr<FastNoiseLite> Chunk::s_noise = nullptr;
 
 void Chunk::initNoise(int seed) {
     if (s_noise == nullptr) {
-        s_noise = new FastNoiseLite(seed);
+        s_noise = std::make_unique<FastNoiseLite>(seed);
         s_noise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
         s_noise->SetFractalType(FastNoiseLite::FractalType_FBm);
         s_noise->SetFractalOctaves(4);
@@ -34,8 +34,7 @@ void Chunk::initNoise(int seed) {
 }
 
 void Chunk::cleanupNoise() {
-    delete s_noise;
-    s_noise = nullptr;
+    s_noise.reset();  // Automatic cleanup with unique_ptr
 }
 
 // Note: Vertex::getBindingDescription() and Vertex::getAttributeDescriptions()
