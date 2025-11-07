@@ -1,3 +1,10 @@
+/**
+ * @file player.cpp
+ * @brief First-person player controller with AABB physics and collision detection
+ *
+ * Created by original author, enhanced documentation by Claude (Anthropic AI Assistant)
+ */
+
 #include "player.h"
 #include "world.h"
 #include "block_system.h"
@@ -93,6 +100,67 @@ void Player::updateNoclip(GLFWwindow* window, float deltaTime) {
         Position -= WorldUp * velocity;
 }
 
+/**
+ * @brief Physics-based player movement with gravity, collision, and liquid mechanics
+ *
+ * Physics System Overview:
+ * ========================
+ *
+ * This function implements a semi-implicit Euler integrator for player physics,
+ * similar to Minecraft's physics system. The key features are:
+ *
+ * 1. **Movement Modes**:
+ *    - Ground movement: WALK_SPEED (4.3 units/sec) or sprint (5.6 units/sec)
+ *    - Swimming: SWIM_SPEED (2.0 units/sec) with vertical control
+ *    - Jumping: Instant upward velocity (JUMP_VELOCITY = 7.0)
+ *
+ * 2. **Gravity Integration** (Semi-implicit Euler):
+ *    - Velocity updated first: v(t+dt) = v(t) - g*dt
+ *    - Position updated with new velocity: p(t+dt) = p(t) + v(t+dt)*dt
+ *    - This prevents energy gain on slopes (unlike explicit Euler)
+ *    - Gravity: 20.0 units/sec² (same as Minecraft)
+ *    - Terminal velocity: -40.0 units/sec
+ *
+ * 3. **Ground Detection** (4-corner AABB check):
+ *    - Checks center + 4 foot corners for solid blocks below
+ *    - Check distance: 0.05 units below feet
+ *    - Allows edge-of-block jumping (coyote time effect)
+ *    - OnGround set BEFORE movement to enable jump at frame start
+ *
+ * 4. **Collision Resolution** (Axis-by-axis AABB):
+ *    - Y-axis resolved first (prevents edge clipping)
+ *    - Then X and Z axes independently
+ *    - Uses resolveCollisions() with swept AABB tests
+ *    - See resolveCollisions() documentation for algorithm details
+ *
+ * 5. **Swimming Mechanics**:
+ *    - Liquid detection via BlockRegistry.isLiquid flag
+ *    - Space key: swim up (0.8 * SWIM_SPEED upward velocity)
+ *    - Shift key: swim down (0.8 * SWIM_SPEED downward velocity)
+ *    - No gravity in liquid, gentle drift down when idle
+ *
+ * Physics Constants (from player.h):
+ * -----------------------------------
+ * - GRAVITY: 20.0 units/sec² (comparable to Earth's 9.8 m/s²)
+ * - JUMP_VELOCITY: 7.0 units/sec (reaches ~1.225 units high)
+ * - WALK_SPEED: 4.3 units/sec (8.6 blocks/sec)
+ * - SPRINT_MULTIPLIER: 1.3x (5.59 units/sec)
+ * - SWIM_SPEED: 2.0 units/sec
+ * - PLAYER_HEIGHT: 0.9 units (1.8 blocks, same as Minecraft)
+ * - PLAYER_WIDTH: 0.25 units (0.5 blocks)
+ * - PLAYER_EYE_HEIGHT: 0.85 units (Position is at eye level)
+ *
+ * Physics Math Example:
+ * ---------------------
+ * Jump height calculation: h = v₀² / (2g) = 7.0² / (2*20) = 1.225 units
+ * Jump duration: t = 2v₀ / g = 2*7.0 / 20 = 0.7 seconds
+ * Sprint speed in blocks/sec: 5.59 / 0.5 = 11.18 blocks/sec
+ *
+ * @param window GLFW window for input
+ * @param deltaTime Frame time in seconds (typically ~0.016 for 60 FPS)
+ * @param world World instance for collision queries
+ * @param processInput Whether to process keyboard input (false during menu)
+ */
 void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bool processInput) {
     // Handle sprint input
     // NOTE: Sprint toggle mode could be added in the future by:
@@ -249,6 +317,75 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     }
 }
 
+/**
+ * @brief AABB collision resolution using axis-by-axis swept tests
+ *
+ * Collision Resolution Algorithm:
+ * ================================
+ *
+ * This function resolves collisions between the player's AABB (Axis-Aligned Bounding Box)
+ * and the voxel world using a swept collision approach tested per axis.
+ *
+ * Algorithm Overview:
+ * -------------------
+ * 1. **Unstick Phase**: If player is stuck inside a block, push them out
+ * 2. **Y-Axis Test**: Test vertical movement first, snap to grid if collision
+ * 3. **X-Axis Test**: Test horizontal X movement, stop if collision
+ * 4. **Z-Axis Test**: Test horizontal Z movement, stop if collision
+ *
+ * Why Y-First Resolution Order?
+ * ------------------------------
+ * Resolving Y (vertical) before X/Z (horizontal) prevents "edge clipping" bugs:
+ * - If player is falling and moving forward simultaneously
+ * - Resolving X first might push player slightly into a wall
+ * - Then resolving Y would snap player downward INTO the wall (stuck)
+ * - By resolving Y first, player settles onto ground before horizontal movement
+ * - This matches Minecraft's collision resolution order
+ *
+ * AABB Coordinate System:
+ * -----------------------
+ * - Player.Position = eye level (0.85 units above feet)
+ * - feetPos = Position - vec3(0, PLAYER_EYE_HEIGHT, 0)
+ * - AABB extends from feetPos to feetPos + vec3(0, PLAYER_HEIGHT, 0)
+ * - AABB width: PLAYER_WIDTH (0.25 units) centered on feetPos.xz
+ *
+ * Grid Snapping on Collision:
+ * ----------------------------
+ * When falling downward and hitting ground:
+ * - Feet position is snapped UP to nearest 0.5-unit boundary (block grid)
+ * - Formula: blockGridY = ceil(feetPos.y / 0.5) * 0.5
+ * - This ensures perfect alignment with block tops (prevents Z-fighting)
+ * - Example: feetPos.y = 3.47 → snaps to 3.5 (top of block at y=3.0-3.5)
+ *
+ * Unstick Mechanism:
+ * ------------------
+ * If player is already inside a block (can happen due to rounding errors):
+ * - Calculate correction to push player to next grid boundary
+ * - Only apply if correction > STUCK_THRESHOLD (0.02 units)
+ * - Prevents jittering from tiny floating-point errors
+ * - Sets Velocity.y = 0 to prevent continued falling
+ *
+ * Collision Detection:
+ * --------------------
+ * - Uses checkCollision() for full AABB tests (Y axis)
+ * - Uses checkHorizontalCollision() for X/Z axes (allows ledge walking)
+ * - checkHorizontalCollision starts from step height (0.3 units above feet)
+ * - This allows player to walk off ledges smoothly without instant collision
+ *
+ * Example Scenario:
+ * -----------------
+ * Player falling at velocity (-2, -15, 3) with deltaTime = 0.016:
+ * 1. Movement vector: (-0.032, -0.24, 0.048)
+ * 2. Test Y: Position + (0, -0.24, 0) → collision detected below
+ * 3. Snap feet to block grid: movement.y adjusted from -0.24 to -0.05
+ * 4. Set Velocity.y = 0 (stop falling)
+ * 5. Test X: Position + (-0.032, 0, 0) → no collision, keep movement.x
+ * 6. Test Z: Position + (0, 0, 0.048) → no collision, keep movement.z
+ * 7. Final movement: (-0.032, -0.05, 0.048) → player lands smoothly
+ *
+ * @param movement [in/out] Movement vector for this frame, modified by collision
+ * @param world World instance for collision queries
+ */
 void Player::resolveCollisions(glm::vec3& movement, World* world) {
     // AABB collision resolution using axis-by-axis approach
     // Position is at eye level, feet are PLAYER_EYE_HEIGHT below
@@ -332,6 +469,60 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     }
 }
 
+/**
+ * @brief Full AABB collision detection against the voxel world
+ *
+ * Collision Detection Algorithm:
+ * ===============================
+ *
+ * This function checks if the player's full AABB (from feet to head) would
+ * collide with any solid blocks in the world at the given position.
+ *
+ * Algorithm Steps:
+ * ----------------
+ * 1. Calculate player's AABB bounds in world space
+ * 2. Convert AABB bounds to block coordinates (divide by 0.5)
+ * 3. Iterate through all blocks within AABB range
+ * 4. Return true if ANY block is solid (blockID > 0)
+ *
+ * AABB Bounds Calculation:
+ * ------------------------
+ * - Input position is at eye level (0.85 units above feet)
+ * - feetPos = position - vec3(0, PLAYER_EYE_HEIGHT, 0)
+ * - minBound = feetPos - vec3(halfWidth, 0, halfWidth)
+ * - maxBound = feetPos + vec3(halfWidth, PLAYER_HEIGHT, halfWidth)
+ * - This creates a box from feet to head, centered on player
+ *
+ * Block Coordinate Conversion:
+ * ----------------------------
+ * Blocks are 0.5 units in size, so:
+ * - blockCoord = floor(worldCoord / 0.5)
+ * - Example: worldPos = 3.7 → blockCoord = floor(7.4) = 7
+ * - Block 7 spans world coordinates [3.5, 4.0)
+ *
+ * Optimization Note:
+ * ------------------
+ * This function checks ALL blocks in the AABB range, which is typically:
+ * - Width: 1-2 blocks (player is 0.5 blocks wide)
+ * - Height: 2-3 blocks (player is 1.8 blocks tall)
+ * - Depth: 1-2 blocks
+ * - Total: Usually 4-12 block checks per collision test
+ *
+ * Example:
+ * --------
+ * Player at position (5.0, 10.85, 5.0):
+ * - feetPos = (5.0, 10.0, 5.0)
+ * - minBound = (4.875, 10.0, 4.875)  [halfWidth = 0.125]
+ * - maxBound = (5.125, 10.9, 5.125)  [height = 0.9]
+ * - Block range X: floor(9.75) to floor(10.25) = 9 to 10
+ * - Block range Y: floor(20.0) to floor(21.8) = 20 to 21
+ * - Block range Z: floor(9.75) to floor(10.25) = 9 to 10
+ * - Checks 2×2×2 = 8 blocks total
+ *
+ * @param position Position to test (at eye level)
+ * @param world World instance for block queries
+ * @return true if collision detected, false if clear
+ */
 bool Player::checkCollision(const glm::vec3& position, World* world) {
     // Player's AABB bounds (position is at eye level)
     glm::vec3 feetPos = position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
@@ -389,6 +580,75 @@ bool Player::checkCollision(const glm::vec3& position, World* world) {
     return false;  // No collision
 }
 
+/**
+ * @brief Horizontal-only AABB collision detection for ledge walking
+ *
+ * Ledge Walking Algorithm:
+ * ========================
+ *
+ * This function is similar to checkCollision(), but only checks from STEP_HEIGHT
+ * upward to the player's head. This allows smooth ledge walking behavior.
+ *
+ * Why Separate Horizontal Check?
+ * -------------------------------
+ * If we used full AABB checks for horizontal movement, the player would collide
+ * with block edges at their feet level, preventing walking off ledges smoothly.
+ *
+ * Example problem WITHOUT this function:
+ * - Player walks toward ledge edge
+ * - Foot enters empty space beyond ledge
+ * - Full AABB check sees "no collision" (no block at foot level)
+ * - BUT horizontal check SHOULD allow this! (smooth ledge walking)
+ * - Player would be blocked from walking off ledge edge
+ *
+ * Step Height Mechanic:
+ * ---------------------
+ * By starting collision checks at stepHeight (0.3 units = 0.6 blocks) above feet:
+ * - Player can walk OFF ledges smoothly (no collision below knee)
+ * - Player still collides with walls at torso/head height
+ * - Creates natural "step over small obstacles" behavior
+ * - Similar to Minecraft's step height mechanic
+ *
+ * Algorithm:
+ * ----------
+ * 1. Calculate AABB from knee height to head (not from feet!)
+ * 2. Convert bounds to block coordinates
+ * 3. Check all blocks in reduced AABB range
+ * 4. Return true if any block is solid
+ *
+ * Visual Comparison:
+ * ------------------
+ * checkCollision() (full AABB):
+ * ```
+ *     ┌───┐         ← head
+ *     │ P │
+ *     │ l │
+ *     │ y │
+ *     │ r │         ← knees (step height)
+ *     └───┘         ← feet (checks from here)
+ * ```
+ *
+ * checkHorizontalCollision() (knee to head):
+ * ```
+ *     ┌───┐         ← head
+ *     │ P │
+ *     │ l │
+ *     │ y │
+ *     └───┘         ← knees (checks from here)
+ *                   ← feet (NOT checked)
+ * ```
+ *
+ * Use Cases:
+ * ----------
+ * - Walking off ledges: Feet can extend beyond ledge edge
+ * - Walking up to walls: Torso/head still collides properly
+ * - Prevents "wall climbing" by checking upper body
+ * - Allows smooth transitions from ground to air (falling)
+ *
+ * @param position Position to test (at eye level)
+ * @param world World instance for block queries
+ * @return true if horizontal collision detected, false if clear
+ */
 bool Player::checkHorizontalCollision(const glm::vec3& position, World* world) {
     // Check collision from knee height up to head (allows walking off ledges)
     glm::vec3 feetPos = position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
