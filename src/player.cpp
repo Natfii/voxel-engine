@@ -110,16 +110,17 @@ void Player::updateNoclip(GLFWwindow* window, float deltaTime) {
  * similar to Minecraft's physics system. The key features are:
  *
  * 1. **Movement Modes**:
- *    - Ground movement: WALK_SPEED (4.3 units/sec) or sprint (5.6 units/sec)
- *    - Swimming: SWIM_SPEED (2.0 units/sec) with vertical control
- *    - Jumping: Instant upward velocity (JUMP_VELOCITY = 7.0)
+ *    - Ground movement: WALK_SPEED (2.15 world units/sec = 4.3 blocks/sec)
+ *    - Sprint: WALK_SPEED * 1.5 (3.225 world units/sec = 6.45 blocks/sec)
+ *    - Swimming: SWIM_SPEED (1.5 world units/sec = 3.0 blocks/sec) with vertical control
+ *    - Jumping: Instant upward velocity (JUMP_VELOCITY = 4.2 world units/sec)
  *
  * 2. **Gravity Integration** (Semi-implicit Euler):
  *    - Velocity updated first: v(t+dt) = v(t) - g*dt
  *    - Position updated with new velocity: p(t+dt) = p(t) + v(t+dt)*dt
  *    - This prevents energy gain on slopes (unlike explicit Euler)
- *    - Gravity: 20.0 units/sec² (same as Minecraft)
- *    - Terminal velocity: -40.0 units/sec
+ *    - Gravity: 16.0 world units/sec² (32 blocks/sec²)
+ *    - Terminal velocity: -40.0 world units/sec (-80 blocks/sec)
  *
  * 3. **Ground Detection** (4-corner AABB check):
  *    - Checks center + 4 foot corners for solid blocks below
@@ -141,20 +142,22 @@ void Player::updateNoclip(GLFWwindow* window, float deltaTime) {
  *
  * Physics Constants (from player.h):
  * -----------------------------------
- * - GRAVITY: 20.0 units/sec² (comparable to Earth's 9.8 m/s²)
- * - JUMP_VELOCITY: 7.0 units/sec (reaches ~1.225 units high)
- * - WALK_SPEED: 4.3 units/sec (8.6 blocks/sec)
- * - SPRINT_MULTIPLIER: 1.3x (5.59 units/sec)
- * - SWIM_SPEED: 2.0 units/sec
- * - PLAYER_HEIGHT: 0.9 units (1.8 blocks, same as Minecraft)
- * - PLAYER_WIDTH: 0.25 units (0.5 blocks)
- * - PLAYER_EYE_HEIGHT: 0.85 units (Position is at eye level)
+ * - GRAVITY: 16.0 world units/sec² (32 blocks/sec²)
+ * - JUMP_VELOCITY: 4.2 world units/sec (reaches ~1.1 blocks high)
+ * - WALK_SPEED: 2.15 world units/sec (4.3 blocks/sec)
+ * - SPRINT_MULTIPLIER: 1.5x (6.45 blocks/sec when sprinting)
+ * - SWIM_SPEED: 1.5 world units/sec (3.0 blocks/sec)
+ * - PLAYER_HEIGHT: 0.9 world units (1.8 blocks, same as Minecraft)
+ * - PLAYER_WIDTH: 0.25 world units (0.5 blocks)
+ * - PLAYER_EYE_HEIGHT: 0.8 world units (1.6 blocks, Position is at eye level)
  *
  * Physics Math Example:
  * ---------------------
- * Jump height calculation: h = v₀² / (2g) = 7.0² / (2*20) = 1.225 units
- * Jump duration: t = 2v₀ / g = 2*7.0 / 20 = 0.7 seconds
- * Sprint speed in blocks/sec: 5.59 / 0.5 = 11.18 blocks/sec
+ * Jump height: h = v₀² / (2g) = 4.2² / (2*16) = 0.55125 world units ≈ 1.1 blocks
+ * Jump duration: t = 2v₀ / g = 2*4.2 / 16 = 0.525 seconds
+ * Sprint speed: 2.15 * 1.5 = 3.225 world units/sec = 6.45 blocks/sec
+ *
+ * Note: Blocks are 0.5 world units in size
  *
  * @param window GLFW window for input
  * @param deltaTime Frame time in seconds (typically ~0.016 for 60 FPS)
