@@ -517,7 +517,15 @@ void Chunk::generateMesh(World* world) {
                 {
                     bool neighborIsLiquid = isLiquid(X, Y - 1, Z);
                     bool neighborIsSolid = isSolid(X, Y - 1, Z);
-                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
+                    bool shouldRender;
+                    if (isCurrentLiquid) {
+                        // Water: only render bottom if air below (not solid blocks)
+                        // This prevents z-fighting with solid block top faces when viewed from above
+                        shouldRender = !neighborIsLiquid && !neighborIsSolid;
+                    } else {
+                        // Solid: render against air/water
+                        shouldRender = !neighborIsSolid;
+                    }
                     if (shouldRender) {
                         renderFace(bottomTex, 60, 40);
                     }
