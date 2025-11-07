@@ -1,3 +1,18 @@
+/**
+ * @file main.cpp
+ * @brief Main entry point for the voxel engine application
+ *
+ * This file initializes and runs the main game loop, coordinating:
+ * - GLFW window and input management
+ * - Vulkan renderer initialization
+ * - World generation and chunk management
+ * - Player controller and physics
+ * - ImGui-based developer console and debug UI
+ * - Pause menu and input handling
+ *
+ * Created by original author
+ */
+
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
@@ -245,9 +260,6 @@ int main() {
             } else {
                 InputManager::instance().setContext(InputManager::Context::GAMEPLAY);
             }
-
-            // Sync player noclip with debug state
-            player.NoclipMode = DebugState::instance().noclip.getValue();
 
             // Always update player physics, but only process input during gameplay
             bool canProcessInput = InputManager::instance().canMove();

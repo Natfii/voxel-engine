@@ -1,12 +1,29 @@
+/**
+ * @file world.cpp
+ * @brief Voxel world management with chunk generation, culling, and rendering
+ *
+ * This file implements the World class which manages:
+ * - Procedural chunk generation in a 3D grid
+ * - View frustum culling for efficient rendering
+ * - Distance-based culling with hysteresis
+ * - Block placement and removal
+ * - Chunk mesh updates and Vulkan buffer management
+ * - Coordinate system conversions (world ↔ chunk ↔ local)
+ *
+ * Created by original author
+ */
+
 #include "world.h"
+#include "world_utils.h"
+#include "world_constants.h"
 #include "vulkan_renderer.h"
 #include "frustum.h"
 #include "debug_state.h"
+#include "logger.h"
 #include <glm/glm.hpp>
 #include <thread>
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 
 World::World(int width, int height, int depth)
     : m_width(width), m_height(height), m_depth(depth) {
@@ -14,9 +31,9 @@ World::World(int width, int height, int depth)
     int halfWidth = width / 2;
     int halfDepth = depth / 2;
 
-    std::cout << "Creating world with " << width << "x" << height << "x" << depth << " chunks" << std::endl;
-    std::cout << "Chunk coordinates range: X[" << -halfWidth << " to " << (width - halfWidth - 1)
-              << "], Y[0 to " << (height - 1) << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]" << std::endl;
+    Logger::info() << "Creating world with " << width << "x" << height << "x" << depth << " chunks";
+    Logger::info() << "Chunk coordinates range: X[" << -halfWidth << " to " << (width - halfWidth - 1)
+                   << "], Y[0 to " << (height - 1) << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]";
 
     for (int x = -halfWidth; x < width - halfWidth; ++x) {
         for (int y = 0; y < height; ++y) {
@@ -26,7 +43,7 @@ World::World(int width, int height, int depth)
         }
     }
 
-    std::cout << "Total chunks created: " << m_chunks.size() << std::endl;
+    Logger::info() << "Total chunks created: " << m_chunks.size();
 }
 
 World::~World() {
@@ -47,6 +64,7 @@ void World::generateWorld() {
     std::vector<std::thread> threads;
     threads.reserve(numThreads);
 
+    // Step 1: Generate terrain blocks in parallel
     for (unsigned int i = 0; i < numThreads; ++i) {
         size_t startIdx = i * chunksPerThread;
         size_t endIdx = std::min(startIdx + chunksPerThread, m_chunks.size());
@@ -60,7 +78,28 @@ void World::generateWorld() {
         });
     }
 
-    // Wait for all threads to complete
+    // Wait for all threads to complete terrain generation
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Step 2: Generate meshes for all chunks (must be done after ALL terrain is generated
+    // so that neighbor checks work correctly across chunk boundaries)
+    threads.clear();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, m_chunks.size());
+
+        if (startIdx >= m_chunks.size()) break;
+
+        threads.emplace_back([this, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                m_chunks[j]->generateMesh(this);
+            }
+        });
+    }
+
+    // Wait for all threads to complete mesh generation
     for (auto& thread : threads) {
         thread.join();
     }
@@ -93,17 +132,15 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
 
     // Chunk culling: account for chunk size to prevent popping
     // Chunks are 32x32x32 blocks = 16x16x16 world units
-    // Distance from chunk center to farthest corner = sqrt(8^2 + 8^2 + 8^2) ≈ 13.86 units
-    // Fragment shader discards at renderDistance * 1.05 (see shader.frag)
+    // Fragment shader discards at renderDistance * FRAGMENT_DISCARD_MARGIN (see shader.frag)
     // Render chunks if their farthest corner could be visible
-    const float fragmentDiscardDistance = renderDistance * 1.05f;
-    const float chunkHalfDiagonal = 13.86f;
-    const float renderDistanceWithMargin = fragmentDiscardDistance + chunkHalfDiagonal;
+    using namespace WorldConstants;
+    const float fragmentDiscardDistance = renderDistance * FRAGMENT_DISCARD_MARGIN;
+    const float renderDistanceWithMargin = fragmentDiscardDistance + CHUNK_HALF_DIAGONAL;
     const float renderDistanceSquared = renderDistanceWithMargin * renderDistanceWithMargin;
 
     // Frustum margin: add extra padding to prevent edge-case popping
-    // Slightly larger than default to account for chunk size (16 world units)
-    const float frustumMargin = chunkHalfDiagonal + 2.0f;
+    const float frustumMargin = CHUNK_HALF_DIAGONAL + FRUSTUM_CULLING_PADDING;
 
     int renderedCount = 0;
     int distanceCulled = 0;
@@ -145,13 +182,15 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     DebugState::instance().chunksFrustumCulled = frustumCulled;
     DebugState::instance().chunksTotalInWorld = static_cast<int>(m_chunks.size());
 
-    // Debug output every 60 frames (roughly once per second at 60 FPS)
+    // Debug output periodically (roughly once per second at 60 FPS)
+    // Gated behind debug_world ConVar - use console command: "debug_world 1" to enable
     static int frameCount = 0;
-    if (frameCount++ % 60 == 0) {
-        std::cout << "Rendered: " << renderedCount << " chunks | "
-                  << "Distance culled: " << distanceCulled << " | "
-                  << "Frustum culled: " << frustumCulled << " | "
-                  << "Total: " << m_chunks.size() << " chunks" << std::endl;
+    if (DebugState::instance().debugWorld.getValue() &&
+        frameCount++ % WorldConstants::DEBUG_OUTPUT_INTERVAL == 0) {
+        Logger::debug() << "Rendered: " << renderedCount << " chunks | "
+                        << "Distance culled: " << distanceCulled << " | "
+                        << "Frustum culled: " << frustumCulled << " | "
+                        << "Total: " << m_chunks.size() << " chunks";
     }
 }
 
@@ -168,84 +207,40 @@ Chunk* World::getChunkAt(int chunkX, int chunkY, int chunkZ) {
 }
 
 int World::getBlockAt(float worldX, float worldY, float worldZ) {
-    // Convert world coordinates to chunk coordinates
-    // Blocks are 0.5 units in size, and each chunk is 32 blocks
-    int blockX = static_cast<int>(std::floor(worldX / 0.5f));
-    int blockY = static_cast<int>(std::floor(worldY / 0.5f));
-    int blockZ = static_cast<int>(std::floor(worldZ / 0.5f));
+    // Convert world coordinates to chunk and local block coordinates
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
 
-    int chunkX = blockX / Chunk::WIDTH;
-    int chunkY = blockY / Chunk::HEIGHT;
-    int chunkZ = blockZ / Chunk::DEPTH;
-
-    int localX = blockX - (chunkX * Chunk::WIDTH);
-    int localY = blockY - (chunkY * Chunk::HEIGHT);
-    int localZ = blockZ - (chunkZ * Chunk::DEPTH);
-
-    // Handle negative coordinates properly
-    if (localX < 0) { localX += Chunk::WIDTH; chunkX--; }
-    if (localY < 0) { localY += Chunk::HEIGHT; chunkY--; }
-    if (localZ < 0) { localZ += Chunk::DEPTH; chunkZ--; }
-
-    Chunk* chunk = getChunkAt(chunkX, chunkY, chunkZ);
+    Chunk* chunk = getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
     if (chunk == nullptr) {
         return 0; // Air (outside world bounds)
     }
 
-    return chunk->getBlock(localX, localY, localZ);
+    return chunk->getBlock(coords.localX, coords.localY, coords.localZ);
 }
 
 Chunk* World::getChunkAtWorldPos(float worldX, float worldY, float worldZ) {
-    // Convert world coordinates to chunk coordinates (same logic as getBlockAt)
-    int blockX = static_cast<int>(std::floor(worldX / 0.5f));
-    int blockY = static_cast<int>(std::floor(worldY / 0.5f));
-    int blockZ = static_cast<int>(std::floor(worldZ / 0.5f));
-
-    int chunkX = blockX / Chunk::WIDTH;
-    int chunkY = blockY / Chunk::HEIGHT;
-    int chunkZ = blockZ / Chunk::DEPTH;
-
-    int localX = blockX - (chunkX * Chunk::WIDTH);
-    int localY = blockY - (chunkY * Chunk::HEIGHT);
-    int localZ = blockZ - (chunkZ * Chunk::DEPTH);
-
-    // Handle negative coordinates properly
-    if (localX < 0) { localX += Chunk::WIDTH; chunkX--; }
-    if (localY < 0) { localY += Chunk::HEIGHT; chunkY--; }
-    if (localZ < 0) { localZ += Chunk::DEPTH; chunkZ--; }
-
-    return getChunkAt(chunkX, chunkY, chunkZ);
+    // Convert world coordinates to chunk coordinates
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+    return getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
 }
 
 void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID) {
-    // Convert world coordinates to chunk coordinates (same logic as getBlockAt)
-    int blockX = static_cast<int>(std::floor(worldX / 0.5f));
-    int blockY = static_cast<int>(std::floor(worldY / 0.5f));
-    int blockZ = static_cast<int>(std::floor(worldZ / 0.5f));
+    // Convert world coordinates to chunk and local block coordinates
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
 
-    int chunkX = blockX / Chunk::WIDTH;
-    int chunkY = blockY / Chunk::HEIGHT;
-    int chunkZ = blockZ / Chunk::DEPTH;
-
-    int localX = blockX - (chunkX * Chunk::WIDTH);
-    int localY = blockY - (chunkY * Chunk::HEIGHT);
-    int localZ = blockZ - (chunkZ * Chunk::DEPTH);
-
-    // Handle negative coordinates properly
-    if (localX < 0) { localX += Chunk::WIDTH; chunkX--; }
-    if (localY < 0) { localY += Chunk::HEIGHT; chunkY--; }
-    if (localZ < 0) { localZ += Chunk::DEPTH; chunkZ--; }
-
-    Chunk* chunk = getChunkAt(chunkX, chunkY, chunkZ);
+    Chunk* chunk = getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
     if (chunk == nullptr) {
         return; // Outside world bounds, do nothing
     }
 
     // Set the block
-    chunk->setBlock(localX, localY, localZ, blockID);
+    chunk->setBlock(coords.localX, coords.localY, coords.localZ, blockID);
 
-    // TODO: For block break animation, we can add a callback here later
-    // For now, immediately update the mesh
+    // NOTE: Block break animations could be added in the future by:
+    // - Adding a callback parameter to this function
+    // - Delaying mesh regeneration until animation completes
+    // - Using a particle system for break effects
+    // For now, blocks update instantly (Minecraft-style instant break)
     chunk->generateMesh(this);
     // Note: We don't call createBuffer here - that needs a renderer which we don't have access to
     // We'll mark the chunk as needing a buffer update elsewhere

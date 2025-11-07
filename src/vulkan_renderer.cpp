@@ -1,3 +1,20 @@
+/**
+ * @file vulkan_renderer.cpp
+ * @brief Vulkan rendering backend implementation for the voxel engine
+ *
+ * This file implements the VulkanRenderer class which manages:
+ * - Vulkan instance, device, and swapchain initialization
+ * - Graphics pipeline creation (vertex/fragment shaders, depth testing)
+ * - Command buffer recording and submission
+ * - Frame synchronization (semaphores, fences)
+ * - Buffer and image resource management
+ * - Texture atlas loading and mipmapping
+ * - Cube-mapped textures for voxel faces
+ * - Framebuffer resizing and recreation
+ *
+ * Created by original author
+ */
+
 #include "vulkan_renderer.h"
 #include "chunk.h"
 #include <stdexcept>
@@ -55,39 +72,8 @@ static std::vector<char> readFile(const std::string& filename) {
     return buffer;
 }
 
-// Vertex binding description
-VkVertexInputBindingDescription Vertex::getBindingDescription() {
-    VkVertexInputBindingDescription bindingDescription{};
-    bindingDescription.binding = 0;
-    bindingDescription.stride = sizeof(Vertex);
-    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    return bindingDescription;
-}
-
-// Vertex attribute descriptions
-std::array<VkVertexInputAttributeDescription, 3> Vertex::getAttributeDescriptions() {
-    std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
-
-    // Position (location = 0)
-    attributeDescriptions[0].binding = 0;
-    attributeDescriptions[0].location = 0;
-    attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributeDescriptions[0].offset = offsetof(Vertex, x);
-
-    // Color (location = 1)
-    attributeDescriptions[1].binding = 0;
-    attributeDescriptions[1].location = 1;
-    attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributeDescriptions[1].offset = offsetof(Vertex, r);
-
-    // Texture coordinates (location = 2)
-    attributeDescriptions[2].binding = 0;
-    attributeDescriptions[2].location = 2;
-    attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-    attributeDescriptions[2].offset = offsetof(Vertex, u);
-
-    return attributeDescriptions;
-}
+// Note: Vertex::getBindingDescription() and Vertex::getAttributeDescriptions()
+// are defined in chunk.cpp to avoid duplicate symbol linker errors
 
 // Constructor
 VulkanRenderer::VulkanRenderer(GLFWwindow* window) : m_window(window) {

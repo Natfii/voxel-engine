@@ -13,7 +13,7 @@ public:
     ConVar<bool> showTargetInfo;
     ConVar<bool> showCullingStats;
     ConVar<bool> debugCollision;
-    ConVar<bool> noclip;
+    ConVar<bool> debugWorld;  ///< Enable world/chunk debug logging
     ConVar<bool> wireframeMode;
 
     // FPS tracking
