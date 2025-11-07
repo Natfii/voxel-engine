@@ -161,8 +161,10 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     DebugState::instance().chunksTotalInWorld = static_cast<int>(m_chunks.size());
 
     // Debug output periodically (roughly once per second at 60 FPS)
+    // Gated behind debug_world ConVar - use console command: "debug_world 1" to enable
     static int frameCount = 0;
-    if (frameCount++ % WorldConstants::DEBUG_OUTPUT_INTERVAL == 0) {
+    if (DebugState::instance().debugWorld.getValue() &&
+        frameCount++ % WorldConstants::DEBUG_OUTPUT_INTERVAL == 0) {
         Logger::debug() << "Rendered: " << renderedCount << " chunks | "
                         << "Distance culled: " << distanceCulled << " | "
                         << "Frustum culled: " << frustumCulled << " | "

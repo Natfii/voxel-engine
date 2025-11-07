@@ -6,6 +6,7 @@ DebugState::DebugState()
       showTargetInfo("debug_targetinfo", "Show target information", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
       showCullingStats("debug_culling", "Show frustum culling statistics", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
       debugCollision("debug_collision", "Show collision detection debug output", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
+      debugWorld("debug_world", "Show world/chunk debug logging", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
       noclip("noclip", "Enable noclip mode", false, FCVAR_NOTIFY),
       wireframeMode("wireframe", "Enable wireframe rendering mode", false, FCVAR_NOTIFY) {
 }
