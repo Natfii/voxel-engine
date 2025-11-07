@@ -319,6 +319,15 @@ int main() {
                 leftMousePressed = false;
             }
 
+            // Update liquid physics periodically (not every frame for performance)
+            static float liquidUpdateTimer = 0.0f;
+            liquidUpdateTimer += deltaTime;
+            const float liquidUpdateInterval = 0.1f;  // Update liquids 10 times per second
+            if (liquidUpdateTimer >= liquidUpdateInterval) {
+                liquidUpdateTimer = 0.0f;
+                world.updateLiquids(&renderer);
+            }
+
             // Begin rendering
             if (!renderer.beginFrame()) {
                 // Skip this frame (swap chain recreation in progress)

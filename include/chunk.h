@@ -25,7 +25,7 @@ class VulkanRenderer;
  */
 struct Vertex {
     float x, y, z;      ///< Position in world space
-    float r, g, b;      ///< Color (fallback if texture not available)
+    float r, g, b, a;   ///< Color and alpha (fallback if texture not available, alpha for transparency)
     float u, v;         ///< Texture coordinates (atlas UV)
 
     /**
@@ -53,10 +53,10 @@ struct Vertex {
         attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         attributeDescriptions[0].offset = offsetof(Vertex, x);
 
-        // Color attribute (location = 1)
+        // Color attribute (location = 1) - now includes alpha
         attributeDescriptions[1].binding = 0;
         attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
         attributeDescriptions[1].offset = offsetof(Vertex, r);
 
         // Texture coordinate attribute (location = 2)

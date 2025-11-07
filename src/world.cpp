@@ -20,6 +20,7 @@
 #include "frustum.h"
 #include "debug_state.h"
 #include "logger.h"
+#include "block_system.h"
 #include <glm/glm.hpp>
 #include <thread>
 #include <algorithm>
@@ -298,4 +299,76 @@ void World::breakBlock(const glm::ivec3& coords, VulkanRenderer* renderer) {
     float worldY = coords.y * 0.5f;
     float worldZ = coords.z * 0.5f;
     breakBlock(worldX, worldY, worldZ, renderer);
+}
+
+void World::updateLiquids(VulkanRenderer* renderer) {
+    auto& registry = BlockRegistry::instance();
+    std::vector<Chunk*> chunksToUpdate;
+
+    // Iterate through all chunks from bottom to top (so liquids fall properly)
+    for (int y = 0; y < m_height; ++y) {
+        for (int x = 0; x < m_width; ++x) {
+            for (int z = 0; z < m_depth; ++z) {
+                // Get chunk using proper index calculation
+                int halfWidth = m_width / 2;
+                int halfDepth = m_depth / 2;
+                int chunkX = x - halfWidth;
+                int chunkZ = z - halfDepth;
+
+                Chunk* chunk = getChunkAt(chunkX, y, chunkZ);
+                if (!chunk) continue;
+
+                bool chunkModified = false;
+
+                // Iterate through blocks in this chunk
+                for (int localX = 0; localX < Chunk::WIDTH; ++localX) {
+                    for (int localY = Chunk::HEIGHT - 1; localY >= 0; --localY) {  // Top to bottom
+                        for (int localZ = 0; localZ < Chunk::DEPTH; ++localZ) {
+                            int blockID = chunk->getBlock(localX, localY, localZ);
+                            if (blockID == 0) continue;
+
+                            // Check if this is a liquid block
+                            const BlockDefinition& def = registry.get(blockID);
+                            if (!def.isLiquid) continue;
+
+                            // Calculate world position
+                            float worldX = (chunkX * Chunk::WIDTH + localX) * 0.5f;
+                            float worldY = (y * Chunk::HEIGHT + localY) * 0.5f;
+                            float worldZ = (chunkZ * Chunk::DEPTH + localZ) * 0.5f;
+
+                            // Check block below
+                            float belowY = worldY - 0.5f;
+                            int blockBelow = getBlockAt(worldX, belowY, worldZ);
+
+                            // If there's air below, make liquid fall
+                            if (blockBelow == 0) {
+                                // Remove liquid from current position
+                                setBlockAt(worldX, worldY, worldZ, 0);
+                                // Place liquid one block below
+                                setBlockAt(worldX, belowY, worldZ, blockID);
+                                chunkModified = true;
+
+                                // Mark the chunk below for update too
+                                Chunk* chunkBelow = getChunkAtWorldPos(worldX, belowY, worldZ);
+                                if (chunkBelow && std::find(chunksToUpdate.begin(), chunksToUpdate.end(), chunkBelow) == chunksToUpdate.end()) {
+                                    chunksToUpdate.push_back(chunkBelow);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Mark this chunk for mesh update if modified
+                if (chunkModified && std::find(chunksToUpdate.begin(), chunksToUpdate.end(), chunk) == chunksToUpdate.end()) {
+                    chunksToUpdate.push_back(chunk);
+                }
+            }
+        }
+    }
+
+    // Regenerate meshes for all affected chunks
+    for (Chunk* chunk : chunksToUpdate) {
+        chunk->generateMesh(this);
+        chunk->createVertexBuffer(renderer);
+    }
 }
