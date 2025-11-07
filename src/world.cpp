@@ -256,8 +256,14 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
     // Must regenerate MESH (not just vertex buffer) because face culling needs updating
     Chunk* affectedChunk = getChunkAtWorldPos(worldX, worldY, worldZ);
     if (affectedChunk) {
-        affectedChunk->generateMesh(this);
-        affectedChunk->createVertexBuffer(renderer);
+        try {
+            affectedChunk->generateMesh(this);
+            affectedChunk->createVertexBuffer(renderer);
+        } catch (const std::exception& e) {
+            Logger::error() << "Failed to update chunk after breaking block: " << e.what();
+            // Mesh is already generated, just buffer creation failed
+            // Chunk will still render with old buffer until next update
+        }
     }
 
     // Always update all 6 adjacent chunks (not just on boundaries)
@@ -283,8 +289,13 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
                 }
             }
             if (!alreadyUpdated) {
-                neighbors[i]->generateMesh(this);
-                neighbors[i]->createVertexBuffer(renderer);
+                try {
+                    neighbors[i]->generateMesh(this);
+                    neighbors[i]->createVertexBuffer(renderer);
+                } catch (const std::exception& e) {
+                    Logger::error() << "Failed to update neighbor chunk: " << e.what();
+                    // Continue updating other chunks even if one fails
+                }
             }
         }
     }
@@ -317,8 +328,14 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
     // Must regenerate MESH (not just vertex buffer) because face culling needs updating
     Chunk* affectedChunk = getChunkAtWorldPos(worldX, worldY, worldZ);
     if (affectedChunk) {
-        affectedChunk->generateMesh(this);
-        affectedChunk->createVertexBuffer(renderer);
+        try {
+            affectedChunk->generateMesh(this);
+            affectedChunk->createVertexBuffer(renderer);
+        } catch (const std::exception& e) {
+            Logger::error() << "Failed to update chunk after placing block: " << e.what();
+            // Mesh is already generated, just buffer creation failed
+            // Chunk will still render with old buffer until next update
+        }
     }
 
     // Always update all 6 adjacent chunks (not just on boundaries)
@@ -343,8 +360,13 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
                 }
             }
             if (!alreadyUpdated) {
-                neighbors[i]->generateMesh(this);
-                neighbors[i]->createVertexBuffer(renderer);
+                try {
+                    neighbors[i]->generateMesh(this);
+                    neighbors[i]->createVertexBuffer(renderer);
+                } catch (const std::exception& e) {
+                    Logger::error() << "Failed to update neighbor chunk: " << e.what();
+                    // Continue updating other chunks even if one fails
+                }
             }
         }
     }

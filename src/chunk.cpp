@@ -453,52 +453,96 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
     // Destroy old buffers if they exist
     destroyBuffers(renderer);
 
-    // Create vertex buffer
+    VkDevice device = renderer->getDevice();
+
+    // Create vertex buffer with exception safety
     VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
 
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
-    renderer->createBuffer(vertexBufferSize,
-                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                          stagingBuffer, stagingBufferMemory);
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
 
-    void* data;
-    vkMapMemory(renderer->getDevice(), stagingBufferMemory, 0, vertexBufferSize, 0, &data);
-    memcpy(data, m_vertices.data(), (size_t)vertexBufferSize);
-    vkUnmapMemory(renderer->getDevice(), stagingBufferMemory);
+    try {
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              stagingBuffer, stagingBufferMemory);
 
-    renderer->createBuffer(vertexBufferSize,
-                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                          m_vertexBuffer, m_vertexBufferMemory);
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, vertexBufferSize, 0, &data);
+        memcpy(data, m_vertices.data(), (size_t)vertexBufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
 
-    renderer->copyBuffer(stagingBuffer, m_vertexBuffer, vertexBufferSize);
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                              m_vertexBuffer, m_vertexBufferMemory);
 
-    vkDestroyBuffer(renderer->getDevice(), stagingBuffer, nullptr);
-    vkFreeMemory(renderer->getDevice(), stagingBufferMemory, nullptr);
+        renderer->copyBuffer(stagingBuffer, m_vertexBuffer, vertexBufferSize);
 
-    // Create index buffer
+        // Clean up staging buffer
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+        stagingBuffer = VK_NULL_HANDLE;
+        stagingBufferMemory = VK_NULL_HANDLE;
+
+    } catch (...) {
+        // Clean up staging buffer on exception
+        if (stagingBuffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+        }
+        if (stagingBufferMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        }
+        throw;  // Re-throw to caller
+    }
+
+    // Create index buffer with exception safety
     VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_indices.size();
 
-    renderer->createBuffer(indexBufferSize,
-                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                          stagingBuffer, stagingBufferMemory);
+    stagingBuffer = VK_NULL_HANDLE;
+    stagingBufferMemory = VK_NULL_HANDLE;
 
-    vkMapMemory(renderer->getDevice(), stagingBufferMemory, 0, indexBufferSize, 0, &data);
-    memcpy(data, m_indices.data(), (size_t)indexBufferSize);
-    vkUnmapMemory(renderer->getDevice(), stagingBufferMemory);
+    try {
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              stagingBuffer, stagingBufferMemory);
 
-    renderer->createBuffer(indexBufferSize,
-                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                          m_indexBuffer, m_indexBufferMemory);
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, indexBufferSize, 0, &data);
+        memcpy(data, m_indices.data(), (size_t)indexBufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
 
-    renderer->copyBuffer(stagingBuffer, m_indexBuffer, indexBufferSize);
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                              m_indexBuffer, m_indexBufferMemory);
 
-    vkDestroyBuffer(renderer->getDevice(), stagingBuffer, nullptr);
-    vkFreeMemory(renderer->getDevice(), stagingBufferMemory, nullptr);
+        renderer->copyBuffer(stagingBuffer, m_indexBuffer, indexBufferSize);
+
+        // Clean up staging buffer
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+    } catch (...) {
+        // Clean up staging buffer on exception
+        if (stagingBuffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+        }
+        if (stagingBufferMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        }
+        // Also clean up partially created vertex buffer
+        if (m_vertexBuffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, m_vertexBuffer, nullptr);
+            m_vertexBuffer = VK_NULL_HANDLE;
+        }
+        if (m_vertexBufferMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(device, m_vertexBufferMemory, nullptr);
+            m_vertexBufferMemory = VK_NULL_HANDLE;
+        }
+        throw;  // Re-throw to caller
+    }
 }
 
 void Chunk::destroyBuffers(VulkanRenderer* renderer) {
