@@ -100,17 +100,17 @@ public:
 
 private:
     // ========== Mouse Tracking ==========
-    bool FirstMouse;       ///< True until first mouse movement (prevents camera jump)
-    float LastX;           ///< Last mouse X position
-    float LastY;           ///< Last mouse Y position
+    bool m_firstMouse;       ///< True until first mouse movement (prevents camera jump)
+    float m_lastX;           ///< Last mouse X position
+    float m_lastY;           ///< Last mouse Y position
 
     // ========== Physics State ==========
-    glm::vec3 Velocity;    ///< Current velocity vector (world units/second)
-    bool OnGround;         ///< True if player is standing on a solid block
-    bool InLiquid;         ///< True if player is submerged in liquid (reserved for future)
-    bool NKeyPressed;      ///< Tracks N key state for noclip toggle
-    bool IsSprinting;      ///< True if currently sprinting
-    bool SprintKeyPressed; ///< Tracks sprint key state for toggle mode (reserved)
+    glm::vec3 m_velocity;    ///< Current velocity vector (world units/second)
+    bool m_onGround;         ///< True if player is standing on a solid block
+    bool m_inLiquid;         ///< True if player is submerged in liquid (reserved for future)
+    bool m_nKeyPressed;      ///< Tracks N key state for noclip toggle
+    bool m_isSprinting;      ///< True if currently sprinting
+    bool m_sprintKeyPressed; ///< Tracks sprint key state for toggle mode (reserved)
 
     // ========== Player Dimensions ==========
     // All dimensions in world units (blocks are 0.5 world units)

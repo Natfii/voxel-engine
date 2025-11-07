@@ -19,6 +19,7 @@
 #include "block_system.h"
 #include "structure_system.h"
 #include "vulkan_renderer.h"
+#include "logger.h"
 #include <iostream>
 #include <filesystem>
 #include <algorithm>
@@ -61,7 +62,7 @@ static LoadedTexture loadAndResizeTexture(const std::string& texturePath, const 
 
     // Auto-downscale to 64x64 if needed
     if (texWidth != 64 || texHeight != 64) {
-        std::cout << "Resizing texture " << texturePath << " from " << texWidth << "x" << texHeight << " to 64x64" << std::endl;
+        Logger::debug() << "Resizing texture " << texturePath << " from " << texWidth << "x" << texHeight << " to 64x64";
 
         // Allocate resized buffer - stbir can allocate for us
         unsigned char* resizedPixels = nullptr;

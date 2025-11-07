@@ -216,36 +216,73 @@ void Chunk::generate() {
  * @param world World instance to query neighboring chunks
  */
 void Chunk::generateMesh(World* world) {
-    // Define a 0.5-unit cube (4 vertices per face, 24 total) - indexed rendering
+    /**
+     * Cube Vertex Layout (indexed rendering):
+     * ========================================
+     *
+     * Each face is a quad defined by 4 vertices (counter-clockwise winding order).
+     * Blocks are 0.5 world units in size (1 block = 0.5 units).
+     *
+     * Vertex ordering per face (looking at face from outside):
+     *   3 -------- 2
+     *   |          |
+     *   |          |
+     *   0 -------- 1
+     *
+     * Index formula: Two triangles per quad
+     *   Triangle 1: (0, 1, 2) - bottom-left, bottom-right, top-right
+     *   Triangle 2: (0, 2, 3) - bottom-left, top-right, top-left
+     *
+     * Face storage order (offsets into cube array):
+     *   0-11:  Front face (z=0, facing -Z)
+     *   12-23: Back face (z=0.5, facing +Z)
+     *   24-35: Left face (x=0, facing -X)
+     *   36-47: Right face (x=0.5, facing +X)
+     *   48-59: Top face (y=0.5, facing +Y)
+     *   60-71: Bottom face (y=0, facing -Y)
+     *
+     * Each face offset contains 12 floats (4 vertices × 3 components).
+     */
     static constexpr std::array<float, 72> cube = {{
-        // front face (z = 0) - 4 vertices
+        // Front face (z = 0, facing -Z) - vertices: BL, BR, TR, TL
         0,0,0,  0.5f,0,0,  0.5f,0.5f,0,  0,0.5f,0,
-        // back face (z = 0.5) - 4 vertices
+        // Back face (z = 0.5, facing +Z) - vertices: BR, BL, TL, TR (reversed for correct winding)
         0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
-        // left face (x = 0) - 4 vertices
+        // Left face (x = 0, facing -X) - vertices: BL, BR, TR, TL
         0,0,0.5f,  0,0,0,  0,0.5f,0,  0,0.5f,0.5f,
-        // right face (x = 0.5) - 4 vertices
+        // Right face (x = 0.5, facing +X) - vertices: BL, BR, TR, TL
         0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
-        // top face (y = 0.5) - 4 vertices
+        // Top face (y = 0.5, facing +Y) - vertices: BL, BR, TR, TL
         0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
-        // bottom face (y = 0) - 4 vertices
+        // Bottom face (y = 0, facing -Y) - vertices: BL, BR, TR, TL
         0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,  0,0,0
     }};
 
-    // UV coordinates for each vertex (4 per face)
-    // Note: V coordinates are flipped for side faces to prevent upside-down textures
+    /**
+     * UV Coordinate Layout:
+     * =====================
+     *
+     * UV coordinates map quad corners to texture atlas cells.
+     * Standard UV space: (0,0) = top-left, (1,1) = bottom-right
+     *
+     * V-flip for side faces: Side faces need V-flip to prevent upside-down textures
+     * because Vulkan's texture coordinate system differs from OpenGL.
+     *
+     * Top/Bottom faces: Use standard UV orientation
+     * Side faces: Use V-flipped orientation (V: 0→1 instead of 1→0)
+     */
     static constexpr std::array<float, 48> cubeUVs = {{
-        // front face: 4 vertices - V flipped
+        // Front face (4 UV pairs) - V flipped: BL(0,1), BR(1,1), TR(1,0), TL(0,0)
         0,1,  1,1,  1,0,  0,0,
-        // back face - V flipped
+        // Back face - V flipped
         0,1,  1,1,  1,0,  0,0,
-        // left face - V flipped
+        // Left face - V flipped
         0,1,  1,1,  1,0,  0,0,
-        // right face - V flipped
+        // Right face - V flipped
         0,1,  1,1,  1,0,  0,0,
-        // top face - normal orientation
+        // Top face - Standard orientation: BL(0,0), BR(1,0), TR(1,1), TL(0,1)
         0,0,  1,0,  1,1,  0,1,
-        // bottom face - normal orientation
+        // Bottom face - Standard orientation
         0,0,  1,0,  1,1,  0,1
     }};
 
@@ -261,44 +298,37 @@ void Chunk::generateMesh(World* world) {
     int atlasGridSize = registry.getAtlasGridSize();
     float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
 
+    // Helper: Convert local chunk coordinates to world position (eliminates code duplication)
+    auto localToWorldPos = [this](int x, int y, int z) -> glm::vec3 {
+        int worldBlockX = m_x * WIDTH + x;
+        int worldBlockY = m_y * HEIGHT + y;
+        int worldBlockZ = m_z * DEPTH + z;
+        return glm::vec3(worldBlockX * 0.5f, worldBlockY * 0.5f, worldBlockZ * 0.5f);
+    };
+
     // Helper lambda to check if a block is solid (non-air)
     // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
-    auto isSolid = [this, world](int x, int y, int z) -> bool {
+    auto isSolid = [this, world, &localToWorldPos](int x, int y, int z) -> bool {
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
             // Inside this chunk
             return m_blocks[x][y][z] != 0;
         }
 
         // Out of bounds - check neighboring chunk via World
-        // Convert local coordinates to world coordinates
-        int worldBlockX = m_x * WIDTH + x;
-        int worldBlockY = m_y * HEIGHT + y;
-        int worldBlockZ = m_z * DEPTH + z;
-
-        // Convert to world position (blocks are 0.5 units)
-        float worldX = worldBlockX * 0.5f;
-        float worldY = worldBlockY * 0.5f;
-        float worldZ = worldBlockZ * 0.5f;
-
-        // Query the world (returns 0 for air or out-of-world bounds)
-        int blockID = world->getBlockAt(worldX, worldY, worldZ);
+        glm::vec3 worldPos = localToWorldPos(x, y, z);
+        int blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         return blockID != 0;
     };
 
     // Helper lambda to check if a block is liquid
-    auto isLiquid = [this, world, &registry](int x, int y, int z) -> bool {
+    auto isLiquid = [this, world, &registry, &localToWorldPos](int x, int y, int z) -> bool {
         int blockID;
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
             blockID = m_blocks[x][y][z];
         } else {
             // Out of bounds - check world
-            int worldBlockX = m_x * WIDTH + x;
-            int worldBlockY = m_y * HEIGHT + y;
-            int worldBlockZ = m_z * DEPTH + z;
-            float worldX = worldBlockX * 0.5f;
-            float worldY = worldBlockY * 0.5f;
-            float worldZ = worldBlockZ * 0.5f;
-            blockID = world->getBlockAt(worldX, worldY, worldZ);
+            glm::vec3 worldPos = localToWorldPos(x, y, z);
+            blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         }
         if (blockID == 0) return false;
         return registry.get(blockID).isLiquid;
