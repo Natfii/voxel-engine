@@ -1,3 +1,18 @@
+/**
+ * @file world.cpp
+ * @brief Voxel world management with chunk generation, culling, and rendering
+ *
+ * This file implements the World class which manages:
+ * - Procedural chunk generation in a 3D grid
+ * - View frustum culling for efficient rendering
+ * - Distance-based culling with hysteresis
+ * - Block placement and removal
+ * - Chunk mesh updates and Vulkan buffer management
+ * - Coordinate system conversions (world ↔ chunk ↔ local)
+ *
+ * Created by original author
+ */
+
 #include "world.h"
 #include "world_utils.h"
 #include "world_constants.h"

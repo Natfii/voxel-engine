@@ -1,4 +1,21 @@
-// block_system.cpp
+/**
+ * @file block_system.cpp
+ * @brief Block registry and texture atlas generation system
+ *
+ * This file implements the BlockRegistry and BlockSystemManager which handle:
+ * - Loading block definitions from YAML files (assets/blocks/)
+ * - Texture loading and automatic downscaling to 64x64
+ * - Cube-mapped texture atlas generation (NxN grid of block faces)
+ * - Mipmap generation for smooth LOD transitions
+ * - UV coordinate calculation for texture atlas indexing
+ * - Block type registry (singleton pattern)
+ *
+ * The texture atlas packs all block textures into a single GPU texture
+ * for efficient rendering without texture switching.
+ *
+ * Created by original author
+ */
+
 #include "block_system.h"
 #include "vulkan_renderer.h"
 #include <iostream>

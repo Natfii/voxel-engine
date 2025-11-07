@@ -1,3 +1,20 @@
+/**
+ * @file vulkan_renderer.cpp
+ * @brief Vulkan rendering backend implementation for the voxel engine
+ *
+ * This file implements the VulkanRenderer class which manages:
+ * - Vulkan instance, device, and swapchain initialization
+ * - Graphics pipeline creation (vertex/fragment shaders, depth testing)
+ * - Command buffer recording and submission
+ * - Frame synchronization (semaphores, fences)
+ * - Buffer and image resource management
+ * - Texture atlas loading and mipmapping
+ * - Cube-mapped textures for voxel faces
+ * - Framebuffer resizing and recreation
+ *
+ * Created by original author
+ */
+
 #include "vulkan_renderer.h"
 #include "chunk.h"
 #include <stdexcept>

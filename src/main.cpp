@@ -1,3 +1,18 @@
+/**
+ * @file main.cpp
+ * @brief Main entry point for the voxel engine application
+ *
+ * This file initializes and runs the main game loop, coordinating:
+ * - GLFW window and input management
+ * - Vulkan renderer initialization
+ * - World generation and chunk management
+ * - Player controller and physics
+ * - ImGui-based developer console and debug UI
+ * - Pause menu and input handling
+ *
+ * Created by original author
+ */
+
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
