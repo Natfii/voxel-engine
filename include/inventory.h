@@ -8,6 +8,32 @@
 class BlockRegistry;
 class VulkanRenderer;
 
+// Inventory item type
+enum class InventoryItemType {
+    BLOCK,
+    STRUCTURE
+};
+
+// Inventory item (can be block or structure)
+struct InventoryItem {
+    InventoryItemType type;
+    int blockID;                // Used when type == BLOCK
+    std::string structureName;  // Used when type == STRUCTURE
+    std::string displayName;
+
+    InventoryItem() : type(InventoryItemType::BLOCK), blockID(0) {}
+    InventoryItem(int id, const std::string& name)
+        : type(InventoryItemType::BLOCK), blockID(id), displayName(name) {}
+    InventoryItem(const std::string& structName, const std::string& dispName)
+        : type(InventoryItemType::STRUCTURE), blockID(-1), structureName(structName), displayName(dispName) {}
+};
+
+// Inventory tabs
+enum class InventoryTab {
+    BLOCKS,
+    STRUCTURES
+};
+
 // Creative mode inventory system with hotbar and full inventory grid
 class Inventory {
 public:
@@ -27,8 +53,9 @@ public:
 
     // Hotbar management
     int getSelectedSlot() const { return m_selectedHotbarSlot; }
-    int getSelectedBlockID() const;
-    void setHotbarSlot(int slot, int blockID);
+    InventoryItem getSelectedItem() const;
+    int getSelectedBlockID() const;  // Legacy compatibility
+    void setHotbarSlot(int slot, const InventoryItem& item);
     void selectSlot(int slot);
     void scrollHotbar(int direction);
 
@@ -39,22 +66,30 @@ private:
     // Inventory state
     bool m_isOpen;
     int m_selectedHotbarSlot; // 0-9 for 10 slots
-    std::vector<int> m_hotbar; // Block IDs in hotbar slots (10 slots)
+    std::vector<InventoryItem> m_hotbar; // Items in hotbar slots (10 slots)
+
+    // Tab state
+    InventoryTab m_currentTab;
 
     // Full inventory grid
     std::vector<int> m_availableBlocks; // All block IDs from registry
+    std::vector<std::string> m_availableStructures; // All structure names
     float m_inventoryScrollOffset;
     char m_searchBuffer[256];
 
     // UI rendering helpers
     void renderInventoryGrid(VulkanRenderer* renderer);
+    void renderTabs();
+    void renderBlocksGrid(VulkanRenderer* renderer);
+    void renderStructuresGrid(VulkanRenderer* renderer);
     void renderSearchBar();
     void filterBlocksBySearch();
     bool isBlockVisible(int blockID) const;
+    bool isStructureVisible(const std::string& structureName) const;
 
     // Input handling
     void handleHotbarInput(GLFWwindow* window);
-    void handleInventoryClick(int blockID);
+    void handleInventoryClick(const InventoryItem& item);
 
     // UI layout constants
     static constexpr int HOTBAR_SLOTS = 10;

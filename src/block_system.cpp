@@ -17,6 +17,7 @@
  */
 
 #include "block_system.h"
+#include "structure_system.h"
 #include "vulkan_renderer.h"
 #include <iostream>
 #include <filesystem>
@@ -935,4 +936,95 @@ void BlockIconRenderer::drawIsometricCube(ImDrawList* drawList, const ImVec2& ce
                             ImGui::ColorConvertFloat4ToU32(topColor));
     drawList->AddQuad(topFace[0], topFace[1], topFace[2], topFace[3],
                       IM_COL32(0, 0, 0, 120), 1.5f);
+}
+
+// ============================================================================
+// StructureIconRenderer Implementation
+// ============================================================================
+
+void StructureIconRenderer::drawStructureIcon(ImDrawList* drawList, const ImVec2& center, float size, const std::string& structureName) {
+    auto& registry = StructureRegistry::instance();
+    const StructureDefinition* structure = registry.get(structureName);
+
+    if (!structure) {
+        // Draw placeholder if structure not found
+        drawList->AddRectFilled(
+            ImVec2(center.x - size * 0.5f, center.y - size * 0.5f),
+            ImVec2(center.x + size * 0.5f, center.y + size * 0.5f),
+            IM_COL32(100, 50, 50, 255)
+        );
+        return;
+    }
+
+    drawStructureMini(drawList, center, size * 0.15f, structure);
+}
+
+void StructureIconRenderer::drawStructurePreview(ImDrawList* drawList, const ImVec2& center, float size, const std::string& structureName) {
+    auto& registry = StructureRegistry::instance();
+    const StructureDefinition* structure = registry.get(structureName);
+
+    if (!structure) {
+        // Draw placeholder if structure not found
+        drawList->AddRectFilled(
+            ImVec2(center.x - size * 0.5f, center.y - size * 0.5f),
+            ImVec2(center.x + size * 0.5f, center.y + size * 0.5f),
+            IM_COL32(100, 50, 50, 255)
+        );
+        return;
+    }
+
+    drawStructureMini(drawList, center, size * 0.15f, structure);
+}
+
+void StructureIconRenderer::drawStructureMini(ImDrawList* drawList, const ImVec2& center, float blockSize, const StructureDefinition* structure) {
+    if (!structure || structure->variations.empty()) return;
+
+    // Use first variation for preview
+    const auto& variation = structure->variations[0];
+    if (variation.structure.empty()) return;
+
+    // Isometric projection angles
+    const float isoAngle = 0.5f;  // tan(26.565°) ≈ 0.5 for isometric
+
+    // Calculate drawing position offsets (center the structure)
+    int halfLength = variation.length / 2;
+    int halfWidth = variation.width / 2;
+
+    // Sample blocks intelligently (draw a subset to keep it readable)
+    int sampleInterval = 1;
+    if (variation.length > 7 || variation.width > 7 || variation.height > 7) {
+        sampleInterval = 2;  // Skip every other block for large structures
+    }
+
+    // Draw blocks in back-to-front order for proper occlusion
+    for (int y = 0; y < (int)variation.structure.size(); y += sampleInterval) {
+        const auto& layer = variation.structure[y];
+
+        for (int z = (int)layer.size() - 1; z >= 0; z -= sampleInterval) {
+            if (z >= (int)layer.size()) continue;
+            const auto& row = layer[z];
+
+            for (int x = 0; x < (int)row.size(); x += sampleInterval) {
+                if (x >= (int)row.size()) continue;
+                int blockID = row[x];
+
+                // Skip air blocks
+                if (blockID == 0) continue;
+
+                // Calculate isometric screen position
+                // Center the structure around (0,0,0)
+                int relX = x - halfLength;
+                int relY = y;
+                int relZ = z - halfWidth;
+
+                // Isometric projection
+                float screenX = center.x + (relX - relZ) * blockSize * isoAngle;
+                float screenY = center.y - relY * blockSize * 0.6f + (relX + relZ) * blockSize * isoAngle * 0.5f;
+
+                // Draw the block as a small isometric cube
+                ImVec2 blockCenter(screenX, screenY);
+                BlockIconRenderer::drawBlockIcon(drawList, blockCenter, blockSize, blockID);
+            }
+        }
+    }
 }

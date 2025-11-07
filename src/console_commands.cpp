@@ -5,6 +5,8 @@
 #include "player.h"
 #include "world.h"
 #include "vulkan_renderer.h"
+#include "structure_system.h"
+#include "raycast.h"
 #include <sstream>
 #include <iomanip>
 #include <cmath>
@@ -86,6 +88,11 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
 
     registry.registerCommand("timespeed", "Set the time progression speed (0=paused, 1=normal, higher=faster)",
                            "timespeed <value>", cmdTimeSpeed, {"0", "0.1", "1", "10", "100"});
+
+    // Get all loaded structure names for autocomplete
+    std::vector<std::string> structureNames = StructureRegistry::instance().getAllStructureNames();
+    registry.registerCommand("spawnstructure", "Spawn a structure at the targeted ground position",
+                           "spawnstructure <name>", cmdSpawnStructure, structureNames);
 }
 
 void ConsoleCommands::cmdHelp(const std::vector<std::string>& args) {
@@ -374,4 +381,82 @@ void ConsoleCommands::updateSkyTime(float deltaTime) {
 
     // Update renderer
     s_renderer->setSkyTime(s_currentSkyTime);
+}
+
+void ConsoleCommands::cmdSpawnStructure(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        s_console->addMessage("Usage: spawnstructure <name>", ConsoleMessageType::WARNING);
+
+        // List available structures
+        auto& registry = StructureRegistry::instance();
+        if (registry.count() > 0) {
+            s_console->addMessage("Available structures:", ConsoleMessageType::INFO);
+            for (const auto& name : registry.getAllStructureNames()) {
+                s_console->addMessage("  " + name, ConsoleMessageType::INFO);
+            }
+        } else {
+            s_console->addMessage("No structures loaded. Check assets/structures/ directory.", ConsoleMessageType::WARNING);
+        }
+        return;
+    }
+
+    if (!s_player) {
+        s_console->addMessage("Error: Player not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    if (!s_world) {
+        s_console->addMessage("Error: World not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    // Get structure name (rejoin all args after command in case name has spaces)
+    std::string structureName = args[1];
+    for (size_t i = 2; i < args.size(); i++) {
+        structureName += " " + args[i];
+    }
+
+    // Perform a long raycast from player's crosshair to find ground
+    // We'll cast multiple rays downward if needed
+    float maxDistance = 1000.0f;  // Very far away
+
+    // First, cast ray in the direction player is looking
+    RaycastHit hit = Raycast::castRay(s_world, s_player->Position, s_player->Front, maxDistance);
+
+    if (!hit.hit) {
+        s_console->addMessage("No ground found in crosshair direction", ConsoleMessageType::WARNING);
+        return;
+    }
+
+    // The hit position is where we found a solid block
+    // We want to place the structure on top of this block
+    glm::ivec3 groundPos(hit.blockX, hit.blockY, hit.blockZ);
+
+    // Calculate the position on top of the hit block (using the normal)
+    glm::ivec3 spawnPos = groundPos + glm::ivec3(hit.normal);
+
+    // However, for structures we want to find the actual ground level
+    // Cast a ray downward from the hit point to ensure we're at ground level
+    glm::vec3 downDirection(0.0f, -1.0f, 0.0f);
+    RaycastHit groundHit = Raycast::castRay(s_world, glm::vec3(spawnPos), downDirection, 256.0f);
+
+    if (groundHit.hit) {
+        // Found solid ground below, place structure on top of it
+        groundPos = glm::ivec3(groundHit.blockX, groundHit.blockY, groundHit.blockZ);
+        spawnPos = groundPos + glm::ivec3(0, 1, 0);  // One block above ground
+    }
+
+    // Spawn the structure with renderer for mesh updates
+    auto& registry = StructureRegistry::instance();
+    bool success = registry.spawnStructure(structureName, s_world, spawnPos, s_renderer);
+
+    if (success) {
+        std::ostringstream oss;
+        oss << "Spawned structure '" << structureName << "' at ("
+            << spawnPos.x << ", " << spawnPos.y << ", " << spawnPos.z << ")";
+        s_console->addMessage(oss.str(), ConsoleMessageType::INFO);
+    } else {
+        s_console->addMessage("Failed to spawn structure '" + structureName + "'", ConsoleMessageType::ERROR);
+        s_console->addMessage("Structure may not exist. Use 'spawnstructure' without args to see available structures.", ConsoleMessageType::INFO);
+    }
 }

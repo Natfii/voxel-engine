@@ -31,6 +31,7 @@
 #include "chunk.h"
 #include "world.h"
 #include "block_system.h"
+#include "structure_system.h"
 #include "player.h"
 #include "pause_menu.h"
 #include "config.h"
@@ -38,6 +39,7 @@
 #include "console_commands.h"
 #include "debug_state.h"
 #include "targeting_system.h"
+#include "raycast.h"
 #include "input_manager.h"
 #include "inventory.h"
 // BlockIconRenderer is now part of block_system.h
@@ -155,6 +157,9 @@ int main() {
 
         std::cout << "Loading block registry with textures..." << std::endl;
         BlockRegistry::instance().loadBlocks("assets/blocks", &renderer);
+
+        std::cout << "Loading structure registry..." << std::endl;
+        StructureRegistry::instance().loadStructures("assets/structures");
 
         // Bind texture atlas to renderer descriptor sets
         std::cout << "Binding texture atlas..." << std::endl;
@@ -381,21 +386,47 @@ int main() {
                 leftMousePressed = false;
             }
 
-            // Handle block placement on right mouse click (creative mode)
+            // Handle block/structure placement on right mouse click (creative mode)
             static bool rightMousePressed = false;
             if (InputManager::instance().canPlaceBlocks() &&
                 glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
                 if (!rightMousePressed && target.hasTarget) {
                     rightMousePressed = true;
 
-                    // Get selected block from hotbar
-                    int selectedBlockID = inventory.getSelectedBlockID();
+                    // Get selected item from hotbar
+                    InventoryItem selectedItem = inventory.getSelectedItem();
 
-                    // Place block adjacent to the targeted block (using hit normal)
-                    if (selectedBlockID > 0) {
-                        // Calculate placement position using the hit normal
-                        glm::vec3 placePosition = target.blockPosition + target.hitNormal * 0.5f;
-                        world.placeBlock(placePosition, selectedBlockID, &renderer);
+                    if (selectedItem.type == InventoryItemType::BLOCK) {
+                        // Place block adjacent to the targeted block (using hit normal)
+                        if (selectedItem.blockID > 0) {
+                            glm::vec3 placePosition = target.blockPosition + target.hitNormal * 0.5f;
+                            world.placeBlock(placePosition, selectedItem.blockID, &renderer);
+                        }
+                    } else if (selectedItem.type == InventoryItemType::STRUCTURE) {
+                        // Place structure at ground level below targeted position
+                        // Convert target block position to block coordinates
+                        glm::ivec3 targetBlockCoords(
+                            (int)(target.blockPosition.x / 0.5f),
+                            (int)(target.blockPosition.y / 0.5f),
+                            (int)(target.blockPosition.z / 0.5f)
+                        );
+
+                        // Find ground level by casting ray downward
+                        glm::vec3 downDirection(0.0f, -1.0f, 0.0f);
+                        RaycastHit groundHit = Raycast::castRay(&world, target.blockPosition, downDirection, 256.0f);
+
+                        glm::ivec3 spawnPos;
+                        if (groundHit.hit) {
+                            // Found solid ground below, place structure on top of it
+                            spawnPos = glm::ivec3(groundHit.blockX, groundHit.blockY, groundHit.blockZ);
+                            spawnPos.y += 1;  // One block above ground
+                        } else {
+                            // No ground found below, place at target level
+                            spawnPos = targetBlockCoords;
+                        }
+
+                        // Spawn the structure
+                        StructureRegistry::instance().spawnStructure(selectedItem.structureName, &world, spawnPos, &renderer);
                     }
                 }
             } else {

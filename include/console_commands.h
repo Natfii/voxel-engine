@@ -41,4 +41,5 @@ private:
     static void cmdListConVars(const std::vector<std::string>& args);
     static void cmdSkyTime(const std::vector<std::string>& args);
     static void cmdTimeSpeed(const std::vector<std::string>& args);
+    static void cmdSpawnStructure(const std::vector<std::string>& args);
 };

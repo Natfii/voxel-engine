@@ -9,5 +9,5 @@ texture_variation: 1.2    # Slight variation for natural look
 durability: 8
 liquid: false
 affected_by_gravity: false
-flammability: 5
+flammability: 1
 transparency: 0.0

@@ -20,7 +20,8 @@
       "Bash(git add:*)",
       "WebFetch(domain:fgiesen.wordpress.com)",
       "WebFetch(domain:www.geoffblair.com)",
-      "WebFetch(domain:luisreis.net)"
+      "WebFetch(domain:luisreis.net)",
+      "Bash(./build/Release/voxel-engine.exe:*)"
     ],
     "deny": [],
     "ask": []

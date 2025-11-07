@@ -322,3 +322,43 @@ private:
 
     static VkDescriptorSet s_atlasDescriptorSet; ///< ImGui descriptor set for texture atlas
 };
+
+// Forward declare structure types
+struct StructureDefinition;
+
+/**
+ * @brief Renders structures as mini isometric scenes using ImGui draw commands
+ *
+ * Draws simplified isometric previews of structures showing a few key blocks.
+ * Similar to BlockIconRenderer but for entire structures.
+ */
+class StructureIconRenderer {
+public:
+    /**
+     * @brief Draw an isometric structure icon at the specified position
+     * @param drawList ImGui draw list to render into
+     * @param center Center position
+     * @param size Icon size in pixels
+     * @param structureName Structure name
+     */
+    static void drawStructureIcon(ImDrawList* drawList, const ImVec2& center, float size, const std::string& structureName);
+
+    /**
+     * @brief Draw a larger isometric structure preview
+     * @param drawList ImGui draw list to render into
+     * @param center Center position
+     * @param size Preview size in pixels
+     * @param structureName Structure name
+     */
+    static void drawStructurePreview(ImDrawList* drawList, const ImVec2& center, float size, const std::string& structureName);
+
+private:
+    /**
+     * @brief Draw a simplified structure preview
+     * @param drawList ImGui draw list to render into
+     * @param center Center position
+     * @param size Base block size in pixels
+     * @param structure Structure definition to render
+     */
+    static void drawStructureMini(ImDrawList* drawList, const ImVec2& center, float size, const StructureDefinition* structure);
+};

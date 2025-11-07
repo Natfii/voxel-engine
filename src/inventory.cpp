@@ -1,5 +1,6 @@
 #include "inventory.h"
 #include "block_system.h"
+#include "structure_system.h"
 #include "vulkan_renderer.h"
 #include "input_manager.h"
 // BlockIconRenderer is now part of block_system.h
@@ -9,19 +10,24 @@
 Inventory::Inventory()
     : m_isOpen(false)
     , m_selectedHotbarSlot(0)
+    , m_currentTab(InventoryTab::BLOCKS)
     , m_inventoryScrollOffset(0.0f)
 {
     // Initialize hotbar with first 10 blocks (air + first solid blocks)
     m_hotbar.resize(HOTBAR_SLOTS);
-    auto& registry = BlockRegistry::instance();
-    for (int i = 0; i < HOTBAR_SLOTS && i < registry.count(); i++) {
-        m_hotbar[i] = i;
+    auto& blockRegistry = BlockRegistry::instance();
+    for (int i = 0; i < HOTBAR_SLOTS && i < blockRegistry.count(); i++) {
+        m_hotbar[i] = InventoryItem(i, blockRegistry.get(i).name);
     }
 
     // Initialize available blocks from registry
-    for (int i = 0; i < registry.count(); i++) {
+    for (int i = 0; i < blockRegistry.count(); i++) {
         m_availableBlocks.push_back(i);
     }
+
+    // Initialize available structures from registry
+    auto& structRegistry = StructureRegistry::instance();
+    m_availableStructures = structRegistry.getAllStructureNames();
 
     // Clear search buffer
     m_searchBuffer[0] = '\0';
@@ -88,10 +94,16 @@ void Inventory::renderHotbar(VulkanRenderer* renderer) {
             drawList->AddRect(slotMin, slotMax, IM_COL32(80, 80, 80, 255), 2.0f, 0, 1.0f);
         }
 
-        // Draw block icon using isometric renderer
-        if (m_hotbar[i] > 0 && m_hotbar[i] < registry.count()) {
-            ImVec2 iconCenter = ImVec2(slotMin.x + HOTBAR_SLOT_SIZE * 0.5f, slotMin.y + HOTBAR_SLOT_SIZE * 0.5f);
-            BlockIconRenderer::drawBlockIcon(drawList, iconCenter, HOTBAR_SLOT_SIZE * 0.7f, m_hotbar[i]);
+        // Draw item icon using isometric renderer
+        const auto& item = m_hotbar[i];
+        ImVec2 iconCenter = ImVec2(slotMin.x + HOTBAR_SLOT_SIZE * 0.5f, slotMin.y + HOTBAR_SLOT_SIZE * 0.5f);
+
+        if (item.type == InventoryItemType::BLOCK) {
+            if (item.blockID > 0 && item.blockID < registry.count()) {
+                BlockIconRenderer::drawBlockIcon(drawList, iconCenter, HOTBAR_SLOT_SIZE * 0.7f, item.blockID);
+            }
+        } else if (item.type == InventoryItemType::STRUCTURE) {
+            StructureIconRenderer::drawStructureIcon(drawList, iconCenter, HOTBAR_SLOT_SIZE * 0.7f, item.structureName);
         }
 
         // Draw slot number
@@ -130,11 +142,57 @@ void Inventory::renderInventoryGrid(VulkanRenderer* renderer) {
     ImGui::Text("Creative Inventory");
     ImGui::Separator();
 
+    // Tabs
+    renderTabs();
+    ImGui::Spacing();
+
     // Search bar
     renderSearchBar();
     ImGui::Spacing();
 
-    // Block grid with scrolling
+    // Render appropriate grid based on active tab
+    if (m_currentTab == InventoryTab::BLOCKS) {
+        renderBlocksGrid(renderer);
+    } else {
+        renderStructuresGrid(renderer);
+    }
+
+    // Instructions at bottom
+    ImGui::Separator();
+    ImGui::TextDisabled("Click an item to add to hotbar | I/ESC to close");
+
+    ImGui::End();
+    ImGui::PopStyleColor();
+
+    // Handle clicking outside to close
+    if (ImGui::IsMouseClicked(0)) {
+        ImVec2 mousePos = io.MousePos;
+        if (mousePos.x < invX || mousePos.x > invX + invWidth ||
+            mousePos.y < invY || mousePos.y > invY + invHeight) {
+            setOpen(false);
+        }
+    }
+}
+
+void Inventory::renderTabs() {
+    ImGui::PushStyleColor(ImGuiCol_Button, m_currentTab == InventoryTab::BLOCKS ? ImVec4(0.4f, 0.4f, 0.8f, 1.0f) : ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
+    if (ImGui::Button("Blocks", ImVec2(100, 30))) {
+        m_currentTab = InventoryTab::BLOCKS;
+        m_searchBuffer[0] = '\0';  // Clear search when switching tabs
+    }
+    ImGui::PopStyleColor();
+
+    ImGui::SameLine();
+
+    ImGui::PushStyleColor(ImGuiCol_Button, m_currentTab == InventoryTab::STRUCTURES ? ImVec4(0.4f, 0.4f, 0.8f, 1.0f) : ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
+    if (ImGui::Button("Structures", ImVec2(100, 30))) {
+        m_currentTab = InventoryTab::STRUCTURES;
+        m_searchBuffer[0] = '\0';  // Clear search when switching tabs
+    }
+    ImGui::PopStyleColor();
+}
+
+void Inventory::renderBlocksGrid(VulkanRenderer* renderer) {
     ImGui::BeginChild("BlockGrid", ImVec2(0, -35), true);
 
     auto& registry = BlockRegistry::instance();
@@ -170,7 +228,7 @@ void Inventory::renderInventoryGrid(VulkanRenderer* renderer) {
         ImGui::InvisibleButton("slot", ImVec2(INVENTORY_SLOT_SIZE, INVENTORY_SLOT_SIZE));
 
         if (ImGui::IsItemClicked(0)) {
-            handleInventoryClick(blockID);
+            handleInventoryClick(InventoryItem(blockID, block.name));
         }
 
         // Tooltip with block name
@@ -189,22 +247,58 @@ void Inventory::renderInventoryGrid(VulkanRenderer* renderer) {
     }
 
     ImGui::EndChild();
+}
 
-    // Instructions at bottom
-    ImGui::Separator();
-    ImGui::TextDisabled("Click a block to add to hotbar | I/ESC to close");
+void Inventory::renderStructuresGrid(VulkanRenderer* renderer) {
+    ImGui::BeginChild("StructureGrid", ImVec2(0, -35), true);
 
-    ImGui::End();
-    ImGui::PopStyleColor();
+    int column = 0;
 
-    // Handle clicking outside to close
-    if (ImGui::IsMouseClicked(0)) {
-        ImVec2 mousePos = io.MousePos;
-        if (mousePos.x < invX || mousePos.x > invX + invWidth ||
-            mousePos.y < invY || mousePos.y > invY + invHeight) {
-            setOpen(false);
+    for (const auto& structureName : m_availableStructures) {
+        // Filter by search
+        if (!isStructureVisible(structureName)) continue;
+
+        if (column > 0) ImGui::SameLine();
+
+        ImGui::PushID(structureName.c_str());
+
+        // Draw structure slot
+        ImVec2 cursorPos = ImGui::GetCursorScreenPos();
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        // Background
+        ImVec2 slotMin = cursorPos;
+        ImVec2 slotMax = ImVec2(cursorPos.x + INVENTORY_SLOT_SIZE, cursorPos.y + INVENTORY_SLOT_SIZE);
+        drawList->AddRectFilled(slotMin, slotMax, IM_COL32(50, 50, 50, 255), 2.0f);
+        drawList->AddRect(slotMin, slotMax, IM_COL32(100, 100, 100, 255), 2.0f);
+
+        // Structure icon using isometric renderer
+        ImVec2 iconCenter = ImVec2(cursorPos.x + INVENTORY_SLOT_SIZE * 0.5f, cursorPos.y + INVENTORY_SLOT_SIZE * 0.5f);
+        StructureIconRenderer::drawStructureIcon(drawList, iconCenter, INVENTORY_SLOT_SIZE * 0.7f, structureName);
+
+        // Invisible button for clicking
+        ImGui::InvisibleButton("slot", ImVec2(INVENTORY_SLOT_SIZE, INVENTORY_SLOT_SIZE));
+
+        if (ImGui::IsItemClicked(0)) {
+            handleInventoryClick(InventoryItem(structureName, structureName));
+        }
+
+        // Tooltip with structure name
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::Text("%s", structureName.c_str());
+            ImGui::EndTooltip();
+        }
+
+        ImGui::PopID();
+
+        column++;
+        if (column >= INVENTORY_COLUMNS) {
+            column = 0;
         }
     }
+
+    ImGui::EndChild();
 }
 
 void Inventory::renderSearchBar() {
@@ -231,6 +325,19 @@ bool Inventory::isBlockVisible(int blockID) const {
     return nameLower.find(searchLower) != std::string::npos;
 }
 
+bool Inventory::isStructureVisible(const std::string& structureName) const {
+    if (m_searchBuffer[0] == '\0') return true;
+
+    std::string searchLower = m_searchBuffer;
+    std::string nameLower = structureName;
+
+    // Convert to lowercase for case-insensitive search
+    std::transform(searchLower.begin(), searchLower.end(), searchLower.begin(), ::tolower);
+    std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+
+    return nameLower.find(searchLower) != std::string::npos;
+}
+
 void Inventory::handleHotbarInput(GLFWwindow* window) {
     static bool numberKeysPressed[10] = {false};
 
@@ -246,10 +353,10 @@ void Inventory::handleHotbarInput(GLFWwindow* window) {
     }
 }
 
-void Inventory::handleInventoryClick(int blockID) {
-    // Add clicked block to currently selected hotbar slot
+void Inventory::handleInventoryClick(const InventoryItem& item) {
+    // Add clicked item to currently selected hotbar slot
     if (m_selectedHotbarSlot >= 0 && m_selectedHotbarSlot < HOTBAR_SLOTS) {
-        m_hotbar[m_selectedHotbarSlot] = blockID;
+        m_hotbar[m_selectedHotbarSlot] = item;
     }
 }
 
@@ -270,16 +377,26 @@ void Inventory::scrollHotbar(int direction) {
     }
 }
 
-int Inventory::getSelectedBlockID() const {
+InventoryItem Inventory::getSelectedItem() const {
     if (m_selectedHotbarSlot >= 0 && m_selectedHotbarSlot < HOTBAR_SLOTS) {
         return m_hotbar[m_selectedHotbarSlot];
+    }
+    return InventoryItem(); // Default (Air)
+}
+
+int Inventory::getSelectedBlockID() const {
+    if (m_selectedHotbarSlot >= 0 && m_selectedHotbarSlot < HOTBAR_SLOTS) {
+        const auto& item = m_hotbar[m_selectedHotbarSlot];
+        if (item.type == InventoryItemType::BLOCK) {
+            return item.blockID;
+        }
     }
     return 0; // Air
 }
 
-void Inventory::setHotbarSlot(int slot, int blockID) {
+void Inventory::setHotbarSlot(int slot, const InventoryItem& item) {
     if (slot >= 0 && slot < HOTBAR_SLOTS) {
-        m_hotbar[slot] = blockID;
+        m_hotbar[slot] = item;
     }
 }
 
@@ -291,13 +408,8 @@ void Inventory::handleMouseScroll(double yoffset) {
 }
 
 void Inventory::renderSelectedBlockPreview(VulkanRenderer* renderer) {
-    int selectedBlockID = getSelectedBlockID();
-    if (selectedBlockID <= 0) return;
-
-    auto& registry = BlockRegistry::instance();
-    if (selectedBlockID >= registry.count()) return;
-
-    const BlockDefinition& block = registry.get(selectedBlockID);
+    InventoryItem selectedItem = getSelectedItem();
+    if (selectedItem.type == InventoryItemType::BLOCK && selectedItem.blockID <= 0) return;
 
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 displaySize = io.DisplaySize;
@@ -319,7 +431,7 @@ void Inventory::renderSelectedBlockPreview(VulkanRenderer* renderer) {
                             ImGuiWindowFlags_NoBackground;
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0.0f));
-    ImGui::Begin("BlockPreview", nullptr, flags);
+    ImGui::Begin("ItemPreview", nullptr, flags);
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImVec2 windowPos = ImGui::GetWindowPos();
@@ -330,17 +442,25 @@ void Inventory::renderSelectedBlockPreview(VulkanRenderer* renderer) {
     drawList->AddRectFilled(boxMin, boxMax, IM_COL32(30, 30, 30, 200), 4.0f);
     drawList->AddRect(boxMin, boxMax, IM_COL32(100, 100, 100, 255), 4.0f, 0, 2.0f);
 
-    // Draw large isometric block icon
+    // Draw large isometric icon
     ImVec2 iconCenter = ImVec2(windowPos.x + boxSize * 0.5f, windowPos.y + boxSize * 0.5f);
-    BlockIconRenderer::drawBlockPreview(drawList, iconCenter, previewSize, selectedBlockID);
 
-    // Draw block name below
-    const char* blockName = block.name.c_str();
-    ImVec2 textSize = ImGui::CalcTextSize(blockName);
+    if (selectedItem.type == InventoryItemType::BLOCK) {
+        auto& registry = BlockRegistry::instance();
+        if (selectedItem.blockID < registry.count()) {
+            BlockIconRenderer::drawBlockPreview(drawList, iconCenter, previewSize, selectedItem.blockID);
+        }
+    } else if (selectedItem.type == InventoryItemType::STRUCTURE) {
+        StructureIconRenderer::drawStructurePreview(drawList, iconCenter, previewSize, selectedItem.structureName);
+    }
+
+    // Draw item name below
+    const char* itemName = selectedItem.displayName.c_str();
+    ImVec2 textSize = ImGui::CalcTextSize(itemName);
     ImVec2 textPos = ImVec2(windowPos.x + (boxSize - textSize.x) * 0.5f, windowPos.y + boxSize - textSize.y - 5.0f);
     ImGui::SetCursorScreenPos(textPos);
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 0.9f));
-    ImGui::Text("%s", blockName);
+    ImGui::Text("%s", itemName);
     ImGui::PopStyleColor();
 
     ImGui::End();

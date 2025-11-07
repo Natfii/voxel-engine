@@ -1,0 +1,12 @@
+id: 6
+name: "Oak Log"
+cube_map:
+  top: "oak log top.png"      # Tree ring pattern on top
+  bottom: "oak log top.png"   # Tree ring pattern on bottom
+  sides: "oak log.png"   # Bark texture on all 4 sides
+texture_variation: 1    
+durability: 8
+liquid: false
+affected_by_gravity: false
+flammability: 1
+transparency: 0.0

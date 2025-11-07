@@ -1,0 +1,9 @@
+id: 7
+name: "Leaves"
+texture: "leaves.png"
+texture_variation: 1.1    
+durability: 1
+liquid: false
+affected_by_gravity: false
+flammability: 1
+transparency: 0.0
