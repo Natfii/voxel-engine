@@ -1,0 +1,81 @@
+# Example Structure: Stone Pillar
+# ================================
+# This is a simple example structure to demonstrate the structure system format.
+#
+# Structure dimensions: 3x3x5 blocks (length x width x height)
+# Features:
+#   - Stone base and body
+#   - Decorative top layer
+#   - Two variations for variety
+#
+# Block IDs used:
+#   0 = Air
+#   1 = Stone
+#   3 = Grass Block (decorative top)
+
+name: Stone Pillar
+
+variations:
+  # Variation 1 - Standard pillar with stone top (70% chance)
+  - length: 3      # 3 blocks along X axis
+    width: 3       # 3 blocks along Z axis
+    height: 5      # 5 blocks tall (Y axis)
+    depth: 0       # Start at surface level (no underground portion)
+    chance: 70     # 70% of spawns will be this variation
+    structure:
+      # Layer 0 (bottom/base) - Solid stone foundation
+      - [[1, 1, 1],
+         [1, 1, 1],
+         [1, 1, 1]]
+
+      # Layer 1 - Hollow center
+      - [[1, 1, 1],
+         [1, 0, 1],   # 0 = air (hollow center)
+         [1, 1, 1]]
+
+      # Layer 2 - Hollow center
+      - [[1, 1, 1],
+         [1, 0, 1],
+         [1, 1, 1]]
+
+      # Layer 3 - Hollow center
+      - [[1, 1, 1],
+         [1, 0, 1],
+         [1, 1, 1]]
+
+      # Layer 4 (top) - Solid stone cap
+      - [[1, 1, 1],
+         [1, 1, 1],
+         [1, 1, 1]]
+
+  # Variation 2 - Decorative pillar with grass top (30% chance)
+  - length: 3
+    width: 3
+    height: 5
+    depth: 0
+    chance: 30     # 30% of spawns will be this variation
+    structure:
+      # Layer 0 - Solid stone base
+      - [[1, 1, 1],
+         [1, 1, 1],
+         [1, 1, 1]]
+
+      # Layer 1 - Hollow center
+      - [[1, 1, 1],
+         [1, 0, 1],
+         [1, 1, 1]]
+
+      # Layer 2 - Hollow center
+      - [[1, 1, 1],
+         [1, 0, 1],
+         [1, 1, 1]]
+
+      # Layer 3 - Hollow center
+      - [[1, 1, 1],
+         [1, 0, 1],
+         [1, 1, 1]]
+
+      # Layer 4 (top) - Decorative grass block cap
+      - [[3, 3, 3],   # 3 = grass block
+         [3, 3, 3],
+         [3, 3, 3]]
