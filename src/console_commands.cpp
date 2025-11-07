@@ -121,15 +121,15 @@ void ConsoleCommands::cmdClear(const std::vector<std::string>& args) {
 }
 
 void ConsoleCommands::cmdNoclip(const std::vector<std::string>& args) {
-    DebugState& debug = DebugState::instance();
-    debug.noclip.setValue(!debug.noclip.getValue());
-
-    // Sync with player
-    if (s_player) {
-        s_player->NoclipMode = debug.noclip.getValue();
+    if (!s_player) {
+        s_console->addMessage("Error: Player not available", ConsoleMessageType::ERROR);
+        return;
     }
 
-    s_console->addMessage("Noclip: " + std::string(debug.noclip.getValue() ? "ON" : "OFF"),
+    // Toggle player's noclip state (player owns this state)
+    s_player->NoclipMode = !s_player->NoclipMode;
+
+    s_console->addMessage("Noclip: " + std::string(s_player->NoclipMode ? "ON" : "OFF"),
                          ConsoleMessageType::INFO);
 }
 

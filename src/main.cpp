@@ -261,9 +261,6 @@ int main() {
                 InputManager::instance().setContext(InputManager::Context::GAMEPLAY);
             }
 
-            // Sync player noclip with debug state
-            player.NoclipMode = DebugState::instance().noclip.getValue();
-
             // Always update player physics, but only process input during gameplay
             bool canProcessInput = InputManager::instance().canMove();
             player.update(window, deltaTime, &world, canProcessInput);
