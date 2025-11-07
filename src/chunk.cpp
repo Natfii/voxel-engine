@@ -203,219 +203,209 @@ void Chunk::generate() {
  *
  * @param world World instance to query neighboring chunks
  */
-void Chunk::generateMesh(class World* world) {
-    m_vertices.clear();
-    m_indices.clear();
+void Chunk::generateMesh(World* world) {
+    // Define a 0.5-unit cube (4 vertices per face, 24 total) - indexed rendering
+    static constexpr std::array<float, 72> cube = {{
+        // front face (z = 0) - 4 vertices
+        0,0,0,  0.5f,0,0,  0.5f,0.5f,0,  0,0.5f,0,
+        // back face (z = 0.5) - 4 vertices
+        0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
+        // left face (x = 0) - 4 vertices
+        0,0,0.5f,  0,0,0,  0,0.5f,0,  0,0.5f,0.5f,
+        // right face (x = 0.5) - 4 vertices
+        0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
+        // top face (y = 0.5) - 4 vertices
+        0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
+        // bottom face (y = 0) - 4 vertices
+        0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,  0,0,0
+    }};
 
-    const float BLOCK_SIZE = 0.5f;  // Blocks are 0.5 world units
-    const BlockRegistry& blockRegistry = BlockRegistry::instance();
-    const int atlasGridSize = blockRegistry.getAtlasGridSize();
-    const float uvStep = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
+    // UV coordinates for each vertex (4 per face)
+    // Note: V coordinates are flipped for side faces to prevent upside-down textures
+    static constexpr std::array<float, 48> cubeUVs = {{
+        // front face: 4 vertices - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // back face - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // left face - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // right face - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        // top face - normal orientation
+        0,0,  1,0,  1,1,  0,1,
+        // bottom face - normal orientation
+        0,0,  1,0,  1,1,  0,1
+    }};
 
-    // Iterate through all blocks in this chunk
-    for (int x = 0; x < WIDTH; x++) {
-        for (int y = 0; y < HEIGHT; y++) {
-            for (int z = 0; z < DEPTH; z++) {
-                int blockID = m_blocks[x][y][z];
+    std::vector<Vertex> verts;
+    std::vector<uint32_t> indices;
+    // Reserve space for estimated visible faces (roughly 30% of blocks visible, 3 faces each on average)
+    // With indexed rendering: 4 vertices per face instead of 6
+    verts.reserve(WIDTH * HEIGHT * DEPTH * 12 / 10);  // 4 vertices per face
+    indices.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10); // 6 indices per face (same as before)
 
-                // Skip air blocks (no geometry needed)
-                if (blockID == 0) continue;
+    // Helper lambda to check if a block is solid (non-air)
+    // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
+    auto isSolid = [this, world](int x, int y, int z) -> bool {
+        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
+            // Inside this chunk
+            return m_blocks[x][y][z] != 0;
+        }
 
-                // Get block definition for texture coordinates
-                const BlockDefinition* blockDef = nullptr;
-                try {
-                    blockDef = &blockRegistry.get(blockID);
-                } catch (...) {
-                    continue;  // Skip invalid block IDs
+        // Out of bounds - check neighboring chunk via World
+        // Convert local coordinates to world coordinates
+        int worldBlockX = m_x * WIDTH + x;
+        int worldBlockY = m_y * HEIGHT + y;
+        int worldBlockZ = m_z * DEPTH + z;
+
+        // Convert to world position (blocks are 0.5 units)
+        float worldX = worldBlockX * 0.5f;
+        float worldY = worldBlockY * 0.5f;
+        float worldZ = worldBlockZ * 0.5f;
+
+        // Query the world (returns 0 for air or out-of-world bounds)
+        int blockID = world->getBlockAt(worldX, worldY, worldZ);
+        return blockID != 0;
+    };
+
+    // Get atlas grid size for UV calculations
+    auto& registry = BlockRegistry::instance();
+    int atlasGridSize = registry.getAtlasGridSize();
+    float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
+
+    // Iterate over every block in the chunk (optimized order for cache locality)
+    for(int X = 0; X < WIDTH;  ++X) {
+        for(int Y = 0; Y < HEIGHT; ++Y) {
+            for(int Z = 0; Z < DEPTH;  ++Z) {
+                int id = m_blocks[X][Y][Z];
+                if (id == 0) continue; // Skip air
+
+                // Look up block definition by ID
+                const BlockDefinition& def = registry.get(id);
+                float cr, cg, cb;
+                if (def.hasColor) {
+                    // Use the block's defined color
+                    cr = def.color.r;
+                    cg = def.color.g;
+                    cb = def.color.b;
+                } else {
+                    // No color defined (likely has a texture); use white
+                    cr = cg = cb = 1.0f;
                 }
 
-                // Calculate world position
-                float worldX = (m_x * WIDTH + x) * BLOCK_SIZE;
-                float worldY = (m_y * HEIGHT + y) * BLOCK_SIZE;
-                float worldZ = (m_z * DEPTH + z) * BLOCK_SIZE;
+                // Helper to get UV coordinates for a specific face with texture variation
+                auto getUVsForFace = [&](const BlockDefinition::FaceTexture& face) -> std::pair<float, float> {
+                    float uMin = face.atlasX * uvScale;
+                    float vMin = face.atlasY * uvScale;
 
-                // Face generation: Check all 6 faces for visibility
-                // Each face is only generated if the neighbor in that direction is air
+                    // Apply texture variation if enabled (per-face variation)
+                    float zoomFactor = face.variation;
+                    if (zoomFactor > 1.0f) {
+                        int worldX = m_x * WIDTH + X;
+                        int worldY = m_y * HEIGHT + Y;
+                        int worldZ = m_z * DEPTH + Z;
 
-                // Helper lambda to check if a face should be rendered
-                auto shouldRenderFace = [&](int dx, int dy, int dz) -> bool {
-                    int nx = x + dx;
-                    int ny = y + dy;
-                    int nz = z + dz;
+                        // Simple hash function for pseudo-random offset
+                        unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
+                        float randU = ((seed >> 0) & 0xFF) / 255.0f;
+                        float randV = ((seed >> 8) & 0xFF) / 255.0f;
 
-                    // Check if neighbor is within this chunk
-                    if (nx >= 0 && nx < WIDTH && ny >= 0 && ny < HEIGHT && nz >= 0 && nz < DEPTH) {
-                        // Neighbor in same chunk
-                        return m_blocks[nx][ny][nz] == 0;  // Visible if neighbor is air
-                    } else {
-                        // Neighbor in adjacent chunk - query world
-                        float neighborWorldX = worldX + dx * BLOCK_SIZE;
-                        float neighborWorldY = worldY + dy * BLOCK_SIZE;
-                        float neighborWorldZ = worldZ + dz * BLOCK_SIZE;
-                        int neighborBlockID = world->getBlockAt(neighborWorldX, neighborWorldY, neighborWorldZ);
-                        return neighborBlockID == 0;  // Visible if neighbor is air
+                        // Calculate how much space we can shift within
+                        float maxShift = uvScale * (1.0f - 1.0f / zoomFactor);
+                        float uShift = randU * maxShift;
+                        float vShift = randV * maxShift;
+
+                        uMin += uShift;
+                        vMin += vShift;
                     }
+
+                    return {uMin, vMin};
                 };
 
-                // Get texture coordinates for each face
-                auto getFaceTexture = [&](int faceIndex) -> BlockDefinition::FaceTexture {
-                    if (!blockDef->useCubeMap) {
-                        return blockDef->all;  // Use same texture for all faces
+                // Calculate world position for this block
+                float bx = float(m_x * WIDTH + X) * 0.5f;
+                float by = float(m_y * HEIGHT + Y) * 0.5f;
+                float bz = float(m_z * DEPTH + Z) * 0.5f;
+
+                // Helper to render a face with the appropriate texture (indexed rendering)
+                auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart) {
+                    auto [uMin, vMin] = getUVsForFace(faceTexture);
+                    float uvScaleZoomed = uvScale;
+
+                    // Recalculate uvScaleZoomed if texture variation is enabled (per-face)
+                    if (faceTexture.variation > 1.0f) {
+                        uvScaleZoomed = uvScale / faceTexture.variation;
                     }
 
-                    // Cube-mapped textures (different per face)
-                    switch (faceIndex) {
-                        case 0: return blockDef->right;   // +X
-                        case 1: return blockDef->left;    // -X
-                        case 2: return blockDef->top;     // +Y
-                        case 3: return blockDef->bottom;  // -Y
-                        case 4: return blockDef->front;   // +Z
-                        case 5: return blockDef->back;    // -Z
-                        default: return blockDef->all;
+                    // Get the base index for these vertices
+                    uint32_t baseIndex = static_cast<uint32_t>(verts.size());
+
+                    // Create 4 vertices for this face (corners of the quad)
+                    for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
+                        Vertex v;
+                        v.x = cube[i+0] + bx;
+                        v.y = cube[i+1] + by;
+                        v.z = cube[i+2] + bz;
+                        v.r = cr; v.g = cg; v.b = cb;
+                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
+                        verts.push_back(v);
                     }
+
+                    // Create 6 indices for 2 triangles (0,1,2 and 0,2,3)
+                    indices.push_back(baseIndex + 0);
+                    indices.push_back(baseIndex + 1);
+                    indices.push_back(baseIndex + 2);
+                    indices.push_back(baseIndex + 0);
+                    indices.push_back(baseIndex + 2);
+                    indices.push_back(baseIndex + 3);
                 };
 
-                // Generate each face if visible
-                // Face index: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
+                // Select appropriate texture for each face
+                const BlockDefinition::FaceTexture& frontTex = def.useCubeMap ? def.front : def.all;
+                const BlockDefinition::FaceTexture& backTex = def.useCubeMap ? def.back : def.all;
+                const BlockDefinition::FaceTexture& leftTex = def.useCubeMap ? def.left : def.all;
+                const BlockDefinition::FaceTexture& rightTex = def.useCubeMap ? def.right : def.all;
+                const BlockDefinition::FaceTexture& topTex = def.useCubeMap ? def.top : def.all;
+                const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
 
-                // +X face (right)
-                if (shouldRenderFace(1, 0, 0)) {
-                    auto tex = getFaceTexture(0);
-                    float u0 = tex.atlasX * uvStep;
-                    float v0 = tex.atlasY * uvStep;
-                    float u1 = u0 + uvStep;
-                    float v1 = v0 + uvStep;
-
-                    uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY, worldZ, 1,1,1, u0, v1});
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY + BLOCK_SIZE, worldZ, 1,1,1, u0, v0});
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY + BLOCK_SIZE, worldZ + BLOCK_SIZE, 1,1,1, u1, v0});
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY, worldZ + BLOCK_SIZE, 1,1,1, u1, v1});
-
-                    // Two triangles forming the quad
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 1);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 3);
+                // Front face (z=0, facing -Z direction)
+                if (!isSolid(X, Y, Z - 1)) {
+                    renderFace(frontTex, 0, 0);
                 }
 
-                // -X face (left)
-                if (shouldRenderFace(-1, 0, 0)) {
-                    auto tex = getFaceTexture(1);
-                    float u0 = tex.atlasX * uvStep;
-                    float v0 = tex.atlasY * uvStep;
-                    float u1 = u0 + uvStep;
-                    float v1 = v0 + uvStep;
-
-                    uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
-                    m_vertices.push_back({worldX, worldY, worldZ + BLOCK_SIZE, 1,1,1, u0, v1});
-                    m_vertices.push_back({worldX, worldY + BLOCK_SIZE, worldZ + BLOCK_SIZE, 1,1,1, u0, v0});
-                    m_vertices.push_back({worldX, worldY + BLOCK_SIZE, worldZ, 1,1,1, u1, v0});
-                    m_vertices.push_back({worldX, worldY, worldZ, 1,1,1, u1, v1});
-
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 1);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 3);
+                // Back face (z=0.5, facing +Z direction)
+                if (!isSolid(X, Y, Z + 1)) {
+                    renderFace(backTex, 12, 8);
                 }
 
-                // +Y face (top)
-                if (shouldRenderFace(0, 1, 0)) {
-                    auto tex = getFaceTexture(2);
-                    float u0 = tex.atlasX * uvStep;
-                    float v0 = tex.atlasY * uvStep;
-                    float u1 = u0 + uvStep;
-                    float v1 = v0 + uvStep;
-
-                    uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
-                    m_vertices.push_back({worldX, worldY + BLOCK_SIZE, worldZ, 1,1,1, u0, v1});
-                    m_vertices.push_back({worldX, worldY + BLOCK_SIZE, worldZ + BLOCK_SIZE, 1,1,1, u0, v0});
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY + BLOCK_SIZE, worldZ + BLOCK_SIZE, 1,1,1, u1, v0});
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY + BLOCK_SIZE, worldZ, 1,1,1, u1, v1});
-
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 1);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 3);
+                // Left face (x=0, facing -X direction)
+                if (!isSolid(X - 1, Y, Z)) {
+                    renderFace(leftTex, 24, 16);
                 }
 
-                // -Y face (bottom)
-                if (shouldRenderFace(0, -1, 0)) {
-                    auto tex = getFaceTexture(3);
-                    float u0 = tex.atlasX * uvStep;
-                    float v0 = tex.atlasY * uvStep;
-                    float u1 = u0 + uvStep;
-                    float v1 = v0 + uvStep;
-
-                    uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
-                    m_vertices.push_back({worldX, worldY, worldZ + BLOCK_SIZE, 1,1,1, u0, v1});
-                    m_vertices.push_back({worldX, worldY, worldZ, 1,1,1, u0, v0});
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY, worldZ, 1,1,1, u1, v0});
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY, worldZ + BLOCK_SIZE, 1,1,1, u1, v1});
-
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 1);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 3);
+                // Right face (x=0.5, facing +X direction)
+                if (!isSolid(X + 1, Y, Z)) {
+                    renderFace(rightTex, 36, 24);
                 }
 
-                // +Z face (front)
-                if (shouldRenderFace(0, 0, 1)) {
-                    auto tex = getFaceTexture(4);
-                    float u0 = tex.atlasX * uvStep;
-                    float v0 = tex.atlasY * uvStep;
-                    float u1 = u0 + uvStep;
-                    float v1 = v0 + uvStep;
-
-                    uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
-                    m_vertices.push_back({worldX, worldY, worldZ + BLOCK_SIZE, 1,1,1, u0, v1});
-                    m_vertices.push_back({worldX, worldY + BLOCK_SIZE, worldZ + BLOCK_SIZE, 1,1,1, u0, v0});
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY + BLOCK_SIZE, worldZ + BLOCK_SIZE, 1,1,1, u1, v0});
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY, worldZ + BLOCK_SIZE, 1,1,1, u1, v1});
-
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 1);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 3);
+                // Top face (y=0.5, facing +Y direction)
+                if (!isSolid(X, Y + 1, Z)) {
+                    renderFace(topTex, 48, 32);
                 }
 
-                // -Z face (back)
-                if (shouldRenderFace(0, 0, -1)) {
-                    auto tex = getFaceTexture(5);
-                    float u0 = tex.atlasX * uvStep;
-                    float v0 = tex.atlasY * uvStep;
-                    float u1 = u0 + uvStep;
-                    float v1 = v0 + uvStep;
-
-                    uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY, worldZ, 1,1,1, u0, v1});
-                    m_vertices.push_back({worldX + BLOCK_SIZE, worldY + BLOCK_SIZE, worldZ, 1,1,1, u0, v0});
-                    m_vertices.push_back({worldX, worldY + BLOCK_SIZE, worldZ, 1,1,1, u1, v0});
-                    m_vertices.push_back({worldX, worldY, worldZ, 1,1,1, u1, v1});
-
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 1);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 0);
-                    m_indices.push_back(baseIndex + 2);
-                    m_indices.push_back(baseIndex + 3);
+                // Bottom face (y=0, facing -Y direction)
+                if (!isSolid(X, Y - 1, Z)) {
+                    renderFace(bottomTex, 60, 40);
                 }
             }
         }
     }
 
-    m_vertexCount = static_cast<uint32_t>(m_vertices.size());
-    m_indexCount = static_cast<uint32_t>(m_indices.size());
+    m_vertexCount = static_cast<uint32_t>(verts.size());
+    m_indexCount = static_cast<uint32_t>(indices.size());
+    m_vertices = std::move(verts);
+    m_indices = std::move(indices);
 }
 
 void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
