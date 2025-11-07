@@ -64,6 +64,7 @@ void World::generateWorld() {
     std::vector<std::thread> threads;
     threads.reserve(numThreads);
 
+    // Step 1: Generate terrain blocks in parallel
     for (unsigned int i = 0; i < numThreads; ++i) {
         size_t startIdx = i * chunksPerThread;
         size_t endIdx = std::min(startIdx + chunksPerThread, m_chunks.size());
@@ -77,7 +78,28 @@ void World::generateWorld() {
         });
     }
 
-    // Wait for all threads to complete
+    // Wait for all threads to complete terrain generation
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Step 2: Generate meshes for all chunks (must be done after ALL terrain is generated
+    // so that neighbor checks work correctly across chunk boundaries)
+    threads.clear();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, m_chunks.size());
+
+        if (startIdx >= m_chunks.size()) break;
+
+        threads.emplace_back([this, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                m_chunks[j]->generateMesh(this);
+            }
+        });
+    }
+
+    // Wait for all threads to complete mesh generation
     for (auto& thread : threads) {
         thread.join();
     }
