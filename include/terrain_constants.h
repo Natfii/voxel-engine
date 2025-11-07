@@ -13,11 +13,11 @@ namespace TerrainGeneration {
     constexpr float HEIGHT_VARIATION = 12.0f;    ///< Max height variation above/below base (blocks)
     constexpr int TOPSOIL_DEPTH = 4;             ///< Depth of dirt layer below grass (blocks)
 
-    // Block type IDs (should match block registry)
+    // Block type IDs (must match block registry YAML files)
     constexpr int BLOCK_AIR = 0;                 ///< Air block ID
-    constexpr int BLOCK_STONE = 1;               ///< Stone block ID
-    constexpr int BLOCK_GRASS = 2;               ///< Grass block ID
-    constexpr int BLOCK_DIRT = 3;                ///< Dirt block ID
+    constexpr int BLOCK_STONE = 1;               ///< Stone block ID (stone.yaml)
+    constexpr int BLOCK_DIRT = 2;                ///< Dirt block ID (dirt.yaml)
+    constexpr int BLOCK_GRASS = 3;               ///< Grass block ID (grass.yaml)
 }
 
 namespace PhysicsConstants {
