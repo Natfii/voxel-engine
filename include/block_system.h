@@ -86,6 +86,17 @@ struct BlockDefinition {
     bool isLiquid = false;             ///< If true, no outline when targeting
     int animatedTiles = 1;             ///< Number of tiles for animation (1=static, 2=2x2 grid, etc.)
 
+    // ========== Liquid Properties ==========
+    struct LiquidProperties {
+        glm::vec3 fogColor = glm::vec3(0.1f, 0.3f, 0.5f);     ///< Underwater fog color (RGB)
+        float fogDensity = 0.8f;                              ///< Fog density (0-1)
+        float fogStart = 1.0f;                                ///< Distance where fog starts
+        float fogEnd = 8.0f;                                  ///< Distance where fog is fully opaque
+        glm::vec3 tintColor = glm::vec3(0.4f, 0.7f, 1.0f);    ///< Tint color when submerged (RGB)
+        float darkenFactor = 0.4f;                            ///< How much darker underwater (0-1)
+    };
+    LiquidProperties liquidProps;      ///< Properties used when camera is in this liquid
+
     // ========== Custom Data ==========
     YAML::Node metadata;               ///< Raw YAML node for custom properties
 };

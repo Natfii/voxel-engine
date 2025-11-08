@@ -3,7 +3,6 @@
 #include "structure_system.h"
 #include "vulkan_renderer.h"
 #include "input_manager.h"
-// BlockIconRenderer is now part of block_system.h
 #include <algorithm>
 #include <imgui.h>
 
@@ -69,13 +68,16 @@ void Inventory::renderHotbar(VulkanRenderer* renderer) {
 
     auto& registry = BlockRegistry::instance();
 
-    // Draw each hotbar slot
-    for (int i = 0; i < HOTBAR_SLOTS; i++) {
-        ImVec2 slotPos = ImVec2(HOTBAR_PADDING + i * (HOTBAR_SLOT_SIZE + HOTBAR_PADDING), HOTBAR_PADDING);
+    // Draw each hotbar slot in keyboard order: 1,2,3,4,5,6,7,8,9,0
+    for (int visualPos = 0; visualPos < HOTBAR_SLOTS; visualPos++) {
+        // Map visual position to actual slot index (slot 0 appears at end)
+        int slotIndex = (visualPos + 1) % HOTBAR_SLOTS;  // 1,2,3,4,5,6,7,8,9,0
+
+        ImVec2 slotPos = ImVec2(HOTBAR_PADDING + visualPos * (HOTBAR_SLOT_SIZE + HOTBAR_PADDING), HOTBAR_PADDING);
         ImGui::SetCursorPos(slotPos);
 
         // Draw slot background
-        ImVec4 bgColor = (i == m_selectedHotbarSlot)
+        ImVec4 bgColor = (slotIndex == m_selectedHotbarSlot)
             ? ImVec4(0.8f, 0.8f, 0.8f, 0.9f)  // Selected: bright
             : ImVec4(0.2f, 0.2f, 0.2f, 0.7f); // Unselected: dark
 
@@ -88,14 +90,14 @@ void Inventory::renderHotbar(VulkanRenderer* renderer) {
         drawList->AddRectFilled(slotMin, slotMax, ImGui::ColorConvertFloat4ToU32(bgColor), 2.0f);
 
         // Draw white outline for selected slot
-        if (i == m_selectedHotbarSlot) {
+        if (slotIndex == m_selectedHotbarSlot) {
             drawList->AddRect(slotMin, slotMax, IM_COL32(255, 255, 255, 255), 2.0f, 0, 3.0f);
         } else {
             drawList->AddRect(slotMin, slotMax, IM_COL32(80, 80, 80, 255), 2.0f, 0, 1.0f);
         }
 
         // Draw item icon using isometric renderer
-        const auto& item = m_hotbar[i];
+        const auto& item = m_hotbar[slotIndex];
         ImVec2 iconCenter = ImVec2(slotMin.x + HOTBAR_SLOT_SIZE * 0.5f, slotMin.y + HOTBAR_SLOT_SIZE * 0.5f);
 
         if (item.type == InventoryItemType::BLOCK) {
@@ -106,10 +108,10 @@ void Inventory::renderHotbar(VulkanRenderer* renderer) {
             StructureIconRenderer::drawStructureIcon(drawList, iconCenter, HOTBAR_SLOT_SIZE * 0.7f, item.structureName);
         }
 
-        // Draw slot number
+        // Draw slot number (keyboard key: 1-9, then 0)
         ImGui::SetCursorPos(ImVec2(slotPos.x + 2, slotPos.y + 2));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 0.8f));
-        ImGui::Text("%d", i);
+        ImGui::Text("%d", slotIndex);
         ImGui::PopStyleColor();
     }
 

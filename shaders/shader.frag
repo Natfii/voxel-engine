@@ -4,8 +4,11 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 projection;
-    vec4 cameraPos;    // .xyz = camera position, .w = render distance
-    vec4 skyTimeData;  // .x = time of day (0-1), .y = sun intensity, .z = moon intensity, .w = star intensity
+    vec4 cameraPos;       // .xyz = camera position, .w = render distance
+    vec4 skyTimeData;     // .x = time of day (0-1), .y = sun intensity, .z = moon intensity, .w = underwater 0/1
+    vec4 liquidFogColor;  // .rgb = fog color, .a = fog density
+    vec4 liquidFogDist;   // .x = fog start, .y = fog end, .zw = unused
+    vec4 liquidTint;      // .rgb = tint color, .a = darken factor
 } ubo;
 
 layout(binding = 1) uniform sampler2D texSampler;
@@ -13,25 +16,51 @@ layout(binding = 1) uniform sampler2D texSampler;
 layout(location = 0) in vec4 fragColor;  // Now vec4 with alpha
 layout(location = 1) in vec3 fragWorldPos;
 layout(location = 2) in vec2 fragTexCoord;
+layout(location = 3) in float fragWaveIntensity;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
     vec2 texCoord = fragTexCoord;
 
-    // TODO: Water animation disabled
-    // The 2x2 atlas allocation system needs refactoring to work properly
-    // Currently consecutive indices don't form a 2x2 block in the grid
-    // For now, water remains static with proper transparency
-    // if (fragColor.a < 0.99) {
-    //     // Animation code here
-    // }
+    // Parallax scrolling for water (constrained to atlas cell)
+    if (fragColor.a < 0.99) {  // Transparent blocks (water)
+        // Water is in an atlas, need to wrap within cell boundaries
+        const float atlasSize = 4.0;  // 4x4 atlas
+        const float cellSize = 1.0 / atlasSize;
+
+        // Find which atlas cell we're in
+        vec2 cellIndex = floor(texCoord * atlasSize);
+
+        // Convert to cell-local coordinates (0-1 within cell)
+        vec2 localUV = fract(texCoord * atlasSize);
+
+        // Apply diagonal scrolling to local coordinates
+        float scrollSpeed = 250.0;  // Fast, smooth flow
+        localUV.y += ubo.skyTimeData.x * scrollSpeed;        // Downward
+        localUV.x += ubo.skyTimeData.x * scrollSpeed * 0.5;  // Diagonal drift
+
+        // Wrap within cell (seamless tiling)
+        localUV = fract(localUV);
+
+        // Convert back to global atlas coordinates
+        texCoord = (cellIndex + localUV) * cellSize;
+    }
 
     // Sample texture and multiply by vertex color
     // Textured blocks have white (1,1,1,1) vertex color → shows texture
     // Colored blocks have colored vertex color → shows solid color (default white texture)
     vec4 texColor = texture(texSampler, texCoord);
     vec3 baseColor = texColor.rgb * fragColor.rgb;
+
+    // Darken and tint water to reduce bright patches (not too dark)
+    if (fragColor.a < 0.99) {  // Transparent blocks (water)
+        baseColor *= 0.65;  // Darken by 35% (less aggressive)
+        baseColor *= vec3(0.75, 0.9, 1.0);  // Subtle blue tint
+    }
+
+    // Foam effect disabled - didn't fit the aesthetic
+    // Clean water surface with just waves and flowing texture
 
     // Extract camera position and render distance from packed vec4
     vec3 camPos = ubo.cameraPos.xyz;
@@ -41,6 +70,7 @@ void main() {
     float time = ubo.skyTimeData.x;
     float sunIntensity = ubo.skyTimeData.y;
     float moonIntensity = ubo.skyTimeData.z;
+    bool cameraUnderwater = (ubo.skyTimeData.w > 0.5);  // Passed from CPU
 
     // Calculate distance from camera to fragment
     float distance = length(fragWorldPos - camPos);
@@ -58,8 +88,16 @@ void main() {
     vec3 fogColor = mix(dayFogColor, dawnDuskFogColor, dawnDuskFactor);
     fogColor = mix(fogColor, nightFogColor, moonIntensity * 0.8);
 
-    const float fogStart = renderDistance * 0.7;   // Fog starts at 70% of render distance
-    const float fogEnd = renderDistance * 0.95;    // Full fog at 95% of render distance
+    // Fog settings (default above water)
+    float fogStart = renderDistance * 0.7;   // Fog starts at 70% of render distance
+    float fogEnd = renderDistance * 0.95;    // Full fog at 95% of render distance
+
+    // Underwater fog settings (use dynamic liquid properties from YAML)
+    if (cameraUnderwater) {
+        fogColor = ubo.liquidFogColor.rgb;   // Custom fog color from liquid YAML
+        fogStart = ubo.liquidFogDist.x;       // Custom fog start distance
+        fogEnd = ubo.liquidFogDist.y;         // Custom fog end distance
+    }
 
     // Discard fragments well beyond fog end to avoid visible banding
     if (distance > renderDistance * 1.05) {
@@ -77,6 +115,20 @@ void main() {
 
     // Apply time-of-day lighting
     float ambientLight = 0.3 + 0.7 * sunIntensity + 0.15 * moonIntensity;
+
+    // Underwater lighting - use dynamic liquid properties
+    if (cameraUnderwater) {
+        // Reduce ambient light underwater using custom darken factor
+        ambientLight *= ubo.liquidTint.a;  // Custom darken factor from YAML
+
+        // Add depth-based darkening (deeper = darker)
+        float depthFactor = clamp(distance / 10.0, 0.0, 0.8);
+        ambientLight *= (1.0 - depthFactor * 0.5);
+
+        // Apply custom tint color that increases with depth
+        finalColor = mix(finalColor, finalColor * ubo.liquidTint.rgb, depthFactor);
+    }
+
     finalColor *= ambientLight;
 
     // Output with alpha from vertex color (for liquid transparency)

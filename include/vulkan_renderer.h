@@ -28,7 +28,10 @@ struct UniformBufferObject {
     alignas(16) glm::mat4 view;          ///< View (camera) matrix
     alignas(16) glm::mat4 projection;    ///< Projection matrix
     alignas(16) glm::vec4 cameraPos;     ///< Camera position (.xyz) + render distance (.w)
-    alignas(16) glm::vec4 skyTimeData;   ///< Time data (.x=time 0-1, .y=sun, .z=moon, .w=stars)
+    alignas(16) glm::vec4 skyTimeData;   ///< Time data (.x=time 0-1, .y=sun, .z=moon, .w=underwater 0/1)
+    alignas(16) glm::vec4 liquidFogColor;///< Liquid fog color (.rgb) + density (.a)
+    alignas(16) glm::vec4 liquidFogDist; ///< Fog distances (.x=start, .y=end) + unused (.zw)
+    alignas(16) glm::vec4 liquidTint;    ///< Liquid tint color (.rgb) + darken factor (.a)
 };
 
 /**
@@ -136,9 +139,9 @@ public:
     void endFrame();
 
     /**
-     * @brief Updates uniform buffer with current frame data
+     * @brief Updates uniform buffer with current frame data and liquid properties
      *
-     * Uploads MVP matrices, camera position, and render distance to GPU.
+     * Uploads MVP matrices, camera position, render distance, and liquid properties to GPU.
      *
      * @param currentImage Swapchain image index
      * @param model Model transformation matrix
@@ -146,8 +149,16 @@ public:
      * @param projection Projection matrix
      * @param cameraPos Camera position in world space
      * @param renderDistance Maximum render distance for fog
+     * @param underwater Whether camera is submerged in liquid
+     * @param liquidFogColor Liquid fog color (RGB)
+     * @param liquidFogStart Distance where fog starts
+     * @param liquidFogEnd Distance where fog is fully opaque
+     * @param liquidTintColor Liquid tint color applied when submerged (RGB)
+     * @param liquidDarkenFactor How much darker it gets underwater (0-1)
      */
-    void updateUniformBuffer(uint32_t currentImage, const glm::mat4& model, const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos, float renderDistance);
+    void updateUniformBuffer(uint32_t currentImage, const glm::mat4& model, const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos, float renderDistance, bool underwater = false,
+                            const glm::vec3& liquidFogColor = glm::vec3(0.1f, 0.3f, 0.5f), float liquidFogStart = 1.0f, float liquidFogEnd = 8.0f,
+                            const glm::vec3& liquidTintColor = glm::vec3(0.4f, 0.7f, 1.0f), float liquidDarkenFactor = 0.4f);
 
     // ========== Sky System ==========
 
@@ -497,7 +508,7 @@ private:
     VkDeviceMemory m_skyboxVertexBufferMemory;
 
     // Sky time for day/night cycle
-    float m_skyTime = 0.25f;  // 0.25 = morning (sunrise)
+    float m_skyTime = 0.30f;  // 0.30 = morning (after sunrise)
 
     // Synchronization
     std::vector<VkSemaphore> m_imageAvailableSemaphores;

@@ -15,13 +15,21 @@ layout(location = 2) in vec2 inTexCoord;
 layout(location = 0) out vec4 fragColor;  // Now vec4 with alpha
 layout(location = 1) out vec3 fragWorldPos;
 layout(location = 2) out vec2 fragTexCoord;
+layout(location = 3) out float fragWaveIntensity;  // For wave effects
 
 void main() {
     // Calculate world position
     vec4 worldPos = ubo.model * vec4(inPosition, 1.0);
-    fragWorldPos = worldPos.xyz;
+    vec3 finalPosition = worldPos.xyz;
 
-    gl_Position = ubo.projection * ubo.view * worldPos;
+    // Wave effects disabled - caused geometry distortion on water top faces
+    // Water animation now handled purely by scrolling texture in fragment shader
+    float waveIntensity = 0.0;
+
+    fragWorldPos = finalPosition;
+    fragWaveIntensity = waveIntensity;
+
+    gl_Position = ubo.projection * ubo.view * vec4(finalPosition, 1.0);
     fragColor = inColor;
     fragTexCoord = inTexCoord;
 }

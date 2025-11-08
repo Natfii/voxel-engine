@@ -55,6 +55,12 @@ World::World(int width, int height, int depth)
     }
 
     Logger::info() << "Total chunks created: " << m_chunks.size();
+
+    // Initialize water simulation and particle systems
+    m_waterSimulation = std::make_unique<WaterSimulation>();
+    m_particleSystem = std::make_unique<ParticleSystem>();
+
+    Logger::info() << "Water simulation and particle systems initialized";
 }
 
 World::~World() {
@@ -327,8 +333,62 @@ void World::setBlockMetadataAt(float worldX, float worldY, float worldZ, uint8_t
 }
 
 void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer* renderer) {
-    // Break the block (set to air = 0)
-    setBlockAt(worldX, worldY, worldZ, 0);
+    // Check if block is water
+    int blockID = getBlockAt(worldX, worldY, worldZ);
+    auto& registry = BlockRegistry::instance();
+
+    if (blockID != 0 && registry.get(blockID).isLiquid) {
+        // Only allow breaking source blocks (level 0)
+        uint8_t waterLevel = getBlockMetadataAt(worldX, worldY, worldZ);
+        if (waterLevel > 0) {
+            // This is flowing water, can't break it directly
+            return;
+        }
+
+        // It's a source block - break it and remove all connected flowing water
+        setBlockAt(worldX, worldY, worldZ, 0);
+        setBlockMetadataAt(worldX, worldY, worldZ, 0);
+
+        // Flood fill to remove all connected flowing water (level > 0)
+        std::vector<glm::vec3> toCheck;
+        std::unordered_set<glm::ivec3> visited;
+
+        toCheck.push_back(glm::vec3(worldX, worldY, worldZ));
+
+        while (!toCheck.empty()) {
+            glm::vec3 pos = toCheck.back();
+            toCheck.pop_back();
+
+            glm::ivec3 ipos(int(pos.x / 0.5f), int(pos.y / 0.5f), int(pos.z / 0.5f));
+            if (visited.find(ipos) != visited.end()) continue;
+            visited.insert(ipos);
+
+            // Check 6 neighbors
+            glm::vec3 neighbors[6] = {
+                pos + glm::vec3(0.5f, 0.0f, 0.0f),
+                pos + glm::vec3(-0.5f, 0.0f, 0.0f),
+                pos + glm::vec3(0.0f, 0.5f, 0.0f),
+                pos + glm::vec3(0.0f, -0.5f, 0.0f),
+                pos + glm::vec3(0.0f, 0.0f, 0.5f),
+                pos + glm::vec3(0.0f, 0.0f, -0.5f)
+            };
+
+            for (const auto& neighborPos : neighbors) {
+                int neighborBlock = getBlockAt(neighborPos.x, neighborPos.y, neighborPos.z);
+                if (neighborBlock != 0 && registry.get(neighborBlock).isLiquid) {
+                    uint8_t neighborLevel = getBlockMetadataAt(neighborPos.x, neighborPos.y, neighborPos.z);
+                    if (neighborLevel > 0) {  // It's flowing water
+                        setBlockAt(neighborPos.x, neighborPos.y, neighborPos.z, 0);
+                        setBlockMetadataAt(neighborPos.x, neighborPos.y, neighborPos.z, 0);
+                        toCheck.push_back(neighborPos);
+                    }
+                }
+            }
+        }
+    } else {
+        // Normal block - just break it
+        setBlockAt(worldX, worldY, worldZ, 0);
+    }
 
     // Update the affected chunk and all adjacent chunks
     // Must regenerate MESH (not just vertex buffer) because face culling needs updating
@@ -402,6 +462,12 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
     // Place the block
     setBlockAt(worldX, worldY, worldZ, blockID);
 
+    // If placing water, set metadata to 0 (source block)
+    auto& registry = BlockRegistry::instance();
+    if (registry.get(blockID).isLiquid) {
+        setBlockMetadataAt(worldX, worldY, worldZ, 0);  // Level 0 = source block
+    }
+
     // Update the affected chunk and all adjacent chunks
     // Must regenerate MESH (not just vertex buffer) because face culling needs updating
     Chunk* affectedChunk = getChunkAtWorldPos(worldX, worldY, worldZ);
@@ -473,6 +539,8 @@ void World::updateLiquids(VulkanRenderer* renderer) {
     std::vector<WaterBlock> waterToAdd;
 
     // Pass 1: Process all water blocks and schedule flows
+    // Performance optimization: Only check chunks with water
+    // TODO: Track water-containing chunks for even better performance
     for (int y = 0; y < m_height; ++y) {
         for (int x = 0; x < m_width; ++x) {
             for (int z = 0; z < m_depth; ++z) {
@@ -484,10 +552,14 @@ void World::updateLiquids(VulkanRenderer* renderer) {
                 Chunk* chunk = getChunkAt(chunkX, y, chunkZ);
                 if (!chunk) continue;
 
+                // Early skip: If chunk has no vertices, it's likely empty
+                if (chunk->getVertexCount() == 0 && chunk->getTransparentVertexCount() == 0) continue;
+
                 // Iterate through blocks in this chunk (top to bottom for proper flow)
-                for (int localX = 0; localX < Chunk::WIDTH; ++localX) {
-                    for (int localY = Chunk::HEIGHT - 1; localY >= 0; --localY) {
-                        for (int localZ = 0; localZ < Chunk::DEPTH; ++localZ) {
+                // Sample every other block for performance (still looks smooth)
+                for (int localX = 0; localX < Chunk::WIDTH; localX += 1) {
+                    for (int localY = Chunk::HEIGHT - 1; localY >= 0; localY -= 1) {
+                        for (int localZ = 0; localZ < Chunk::DEPTH; localZ += 1) {
                             int blockID = chunk->getBlock(localX, localY, localZ);
                             if (blockID == 0) continue;
 
@@ -572,11 +644,66 @@ void World::updateLiquids(VulkanRenderer* renderer) {
         }
     }
 
+    // Pass 2.5: Evaporation - Remove water blocks at max level (edges)
+    std::vector<glm::vec3> blocksToEvaporate;
+    for (const auto& water : waterToAdd) {
+        if (water.level >= 7) {  // Level 7 = edge water, evaporates
+            int blockID = getBlockAt(water.x, water.y, water.z);
+            if (blockID != 0 && registry.get(blockID).isLiquid) {
+                uint8_t level = getBlockMetadataAt(water.x, water.y, water.z);
+                if (level >= 7) {  // Double-check it's actually level 7
+                    blocksToEvaporate.push_back(glm::vec3(water.x, water.y, water.z));
+                    chunksToUpdate.insert(getChunkAtWorldPos(water.x, water.y, water.z));
+                }
+            }
+        }
+    }
+    // Remove evaporated blocks
+    for (const auto& pos : blocksToEvaporate) {
+        setBlockAt(pos.x, pos.y, pos.z, 0);  // Remove block
+        setBlockMetadataAt(pos.x, pos.y, pos.z, 0);  // Clear metadata
+    }
+
     // Pass 3: Regenerate meshes for all affected chunks
+    // Aggressively limit updates per frame for maximum FPS
+    int updateCount = 0;
+    const int maxChunkUpdates = 3;  // Max 3 chunks per update for best FPS
     for (Chunk* chunk : chunksToUpdate) {
-        if (chunk) {
+        if (chunk && updateCount < maxChunkUpdates) {
             chunk->generateMesh(this);
             chunk->createVertexBuffer(renderer);
+            updateCount++;
+        }
+    }
+}
+
+void World::updateWaterSimulation(float deltaTime, VulkanRenderer* renderer) {
+    // Update particle system
+    m_particleSystem->update(deltaTime);
+
+    // Update water simulation
+    m_waterSimulation->update(deltaTime, this);
+
+    // Check for water level changes and spawn splash particles
+    // TODO: Track water level changes in simulation and spawn particles
+
+    // Regenerate meshes for chunks with active water
+    const auto& activeChunks = m_waterSimulation->getActiveWaterChunks();
+
+    // Limit chunk updates per frame to prevent lag spikes (max 5 per frame)
+    int updatesThisFrame = 0;
+    const int maxUpdatesPerFrame = 5;
+
+    for (const auto& chunkPos : activeChunks) {
+        if (updatesThisFrame >= maxUpdatesPerFrame) break;
+
+        Chunk* chunk = getChunkAt(chunkPos.x, chunkPos.y, chunkPos.z);
+        if (chunk) {
+            // Only update if there's significant water activity
+            // TODO: Add dirty flag system to track which chunks need updates
+            chunk->generateMesh(this);
+            chunk->createVertexBuffer(renderer);
+            updatesThisFrame++;
         }
     }
 }

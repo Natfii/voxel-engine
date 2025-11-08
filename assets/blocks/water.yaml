@@ -8,3 +8,12 @@ affected_by_gravity: false
 flammability: 0
 transparency: 0.25  # 25% transparent
 color: [1.5, 1.8, 2.0]  # Brighten the dark blue water texture
+
+# Liquid-specific rendering properties
+liquid_properties:
+  fog_color: [0.1, 0.3, 0.5]      # Deep blue underwater fog (RGB 0-1)
+  fog_density: 0.8                # How dense the fog is (0=none, 1=very dense)
+  fog_start: 1.0                  # Distance where fog starts (in blocks)
+  fog_end: 8.0                    # Distance where fog is fully opaque (in blocks)
+  tint_color: [0.4, 0.7, 1.0]     # Blue tint applied when submerged (RGB 0-1)
+  darken_factor: 0.4              # How much darker it gets underwater (0-1)

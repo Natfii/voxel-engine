@@ -192,14 +192,14 @@ int main() {
         float spawnX = 0.0f;
         float spawnZ = 0.0f;
         int terrainHeight = Chunk::getTerrainHeightAt(spawnX, spawnZ);
-        // Convert terrain height (in blocks) to world units, add 5 blocks clearance, then add eye height
+        // Convert terrain height (in blocks) to world units, add 10 blocks clearance (for water/structures), then add eye height
         // Player position is at eye level, not feet level
-        float spawnY = (terrainHeight + 5) * 0.5f + 0.8f;  // terrain + 5 blocks clearance + eye height
+        float spawnY = (terrainHeight + 10) * 0.5f + 0.8f;  // terrain + 10 blocks clearance + eye height
 
-        // Ensure player never spawns below safe height (minimum y = 35.0 - well above terrain)
-        if (spawnY < 35.0f) {
-            std::cout << "Warning: Calculated spawn Y (" << spawnY << ") from terrain height " << terrainHeight << " is too low, setting to 35.0" << std::endl;
-            spawnY = 35.0f;
+        // Ensure player never spawns below safe height (minimum y = 40.0 - well above terrain and water)
+        if (spawnY < 40.0f) {
+            std::cout << "Warning: Calculated spawn Y (" << spawnY << ") from terrain height " << terrainHeight << " is too low, setting to 40.0" << std::endl;
+            spawnY = 40.0f;
         }
 
         std::cout << "Spawning player at (" << spawnX << ", " << spawnY << ", " << spawnZ << ") - terrain height: " << terrainHeight << " blocks" << std::endl;
@@ -327,6 +327,19 @@ int main() {
             // Update inventory system
             inventory.update(window, deltaTime);
 
+            // Particles disabled for performance
+            // world.getParticleSystem()->update(deltaTime);
+
+            // Simple liquid physics (existing system)
+            // Heavily optimized for performance
+            static float liquidUpdateTimer = 0.0f;
+            liquidUpdateTimer += deltaTime;
+            const float liquidUpdateInterval = 1.0f;  // Update liquids 1 time per second (very performant)
+            if (liquidUpdateTimer >= liquidUpdateInterval) {
+                liquidUpdateTimer = 0.0f;
+                world.updateLiquids(&renderer);
+            }
+
             // Check if console/inventory was closed (by clicking outside or ESC)
             // and we need to reset mouse for gameplay
             static bool wasConsoleOpen = false;
@@ -362,7 +375,38 @@ int main() {
 
             // Update uniform buffer with camera position and render distance for fog
             const float renderDistance = 80.0f;
-            renderer.updateUniformBuffer(renderer.getCurrentFrame(), model, view, projection, player.Position, renderDistance);
+
+            // Detect which liquid the camera is in and get its properties
+            bool underwater = player.isSwimming();
+            glm::vec3 liquidFogColor(0.1f, 0.3f, 0.5f);
+            float liquidFogStart = 1.0f;
+            float liquidFogEnd = 8.0f;
+            glm::vec3 liquidTintColor(0.4f, 0.7f, 1.0f);
+            float liquidDarkenFactor = 0.4f;
+
+            if (underwater) {
+                // Get the block at camera position
+                int camX = static_cast<int>(std::floor(player.Position.x / 0.5f));
+                int camY = static_cast<int>(std::floor(player.Position.y / 0.5f));
+                int camZ = static_cast<int>(std::floor(player.Position.z / 0.5f));
+                int liquidBlockID = world.getBlockAt(camX, camY, camZ);
+
+                // If it's a liquid block, use its properties from YAML
+                auto& registry = BlockRegistry::instance();
+                if (liquidBlockID > 0 && liquidBlockID < registry.count()) {
+                    const auto& blockDef = registry.get(liquidBlockID);
+                    if (blockDef.isLiquid) {
+                        liquidFogColor = blockDef.liquidProps.fogColor;
+                        liquidFogStart = blockDef.liquidProps.fogStart;
+                        liquidFogEnd = blockDef.liquidProps.fogEnd;
+                        liquidTintColor = blockDef.liquidProps.tintColor;
+                        liquidDarkenFactor = blockDef.liquidProps.darkenFactor;
+                    }
+                }
+            }
+
+            renderer.updateUniformBuffer(renderer.getCurrentFrame(), model, view, projection, player.Position, renderDistance, underwater,
+                                       liquidFogColor, liquidFogStart, liquidFogEnd, liquidTintColor, liquidDarkenFactor);
 
             // Update targeting system (single raycast per frame!)
             targetingSystem.setEnabled(InputManager::instance().isGameplayEnabled());

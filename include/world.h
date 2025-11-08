@@ -13,6 +13,8 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 #include "chunk.h"
+#include "water_simulation.h"
+#include "particle_system.h"
 
 // Forward declaration
 class VulkanRenderer;
@@ -276,8 +278,36 @@ public:
      */
     void updateLiquids(VulkanRenderer* renderer);
 
+    // ========== Water Simulation ==========
+
+    /**
+     * @brief Updates water simulation and particles
+     *
+     * Should be called every frame to update water flow and particle effects.
+     *
+     * @param deltaTime Time elapsed since last frame
+     * @param renderer Vulkan renderer for buffer recreation
+     */
+    void updateWaterSimulation(float deltaTime, VulkanRenderer* renderer);
+
+    /**
+     * @brief Gets the water simulation system
+     * @return Pointer to water simulation
+     */
+    WaterSimulation* getWaterSimulation() { return m_waterSimulation.get(); }
+
+    /**
+     * @brief Gets the particle system
+     * @return Pointer to particle system
+     */
+    ParticleSystem* getParticleSystem() { return m_particleSystem.get(); }
+
 private:
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_chunkMap;  ///< Fast O(1) chunk lookup by coordinates
     std::vector<Chunk*> m_chunks;  ///< All chunks for iteration (does not own memory)
+
+    // Water simulation and particles
+    std::unique_ptr<WaterSimulation> m_waterSimulation;  ///< Water flow simulation
+    std::unique_ptr<ParticleSystem> m_particleSystem;    ///< Particle effects for splashes
 };

@@ -25,7 +25,17 @@
       "WebFetch(domain:github.com)",
       "Bash(ninja -C build:*)",
       "Bash(copy /Y:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(tskill:*)",
+      "WebFetch(domain:wolthera.info)",
+      "WebFetch(domain:minecraft.fandom.com)",
+      "Bash(glslc:*)",
+      "Bash(nul)",
+      "Bash(dir /b \"c:\\Users\\Natal\\Downloads\\How Water Works in Dwarfcorp – DwarfCorp_files\")",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []

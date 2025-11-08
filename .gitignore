@@ -166,3 +166,4 @@ build/x64/Release/ZERO_CHECK/ZERO_CHECK.tlog/CustomBuild.write.1.tlog
 build
 shaders/*.spv
 .claude
+nul

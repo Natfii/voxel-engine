@@ -194,13 +194,13 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
         }
     }
 
-    // Check if player is in liquid (check center of player)
-    glm::vec3 checkPos = Position;
-    int blockID = world->getBlockAt(checkPos.x, checkPos.y, checkPos.z);
+    // Check if player is in liquid (check head position, not feet)
+    // Position is at eye level, head is slightly above
+    glm::vec3 playerFeet = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+    glm::vec3 headPos = playerFeet + glm::vec3(0.0f, PLAYER_HEIGHT * 0.9f, 0.0f);  // Check near top of head
+    int blockID = world->getBlockAt(headPos.x, headPos.y, headPos.z);
 
     // Check if the block is a liquid using BlockRegistry
-    // NOTE: Currently no liquid blocks are defined in assets/blocks/
-    // When liquid blocks are added (water, lava), set their "isLiquid: true" in YAML
     m_inLiquid = false;
     if (blockID > 0) {
         try {
@@ -222,8 +222,8 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     // Jumping (only if processing input)
     if (processInput && glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
         if (m_inLiquid) {
-            // Swim up in liquid
-            m_velocity.y = SWIM_SPEED * 0.8f;
+            // Strong jump in water to allow jumping out when at surface
+            m_velocity.y = JUMP_VELOCITY * 0.6f;  // 60% of normal jump - enough to exit water
         } else if (m_onGround) {
             // Jump if on ground
             m_velocity.y = JUMP_VELOCITY;
@@ -474,7 +474,8 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     testPos = Position + glm::vec3(movement.x, 0.0f, 0.0f);
 
     // Use horizontal collision check (from step height up) to allow ledge walking
-    if (checkHorizontalCollision(testPos, world)) {
+    // Skip collision when swimming - allow free movement through water
+    if (!m_inLiquid && checkHorizontalCollision(testPos, world)) {
         // Collision detected - stop horizontal movement
         movement.x = 0.0f;
         m_velocity.x = 0.0f;
@@ -484,11 +485,13 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     testPos = Position + glm::vec3(0.0f, 0.0f, movement.z);
 
     // Use horizontal collision check (from step height up) to allow ledge walking
-    if (checkHorizontalCollision(testPos, world)) {
+    // Skip collision when swimming - allow free movement through water
+    if (!m_inLiquid && checkHorizontalCollision(testPos, world)) {
         // Collision detected - stop horizontal movement
         movement.z = 0.0f;
         m_velocity.z = 0.0f;
     }
+
 }
 
 /**

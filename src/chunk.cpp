@@ -408,20 +408,21 @@ void Chunk::generateMesh(World* world) {
                 float by = float(m_y * HEIGHT + Y) * 0.5f;
                 float bz = float(m_z * DEPTH + Z) * 0.5f;
 
-                // TODO: Water level height adjustment (Minecraft-style flowing water)
-                // Disabled for now - causes rendering issues with side faces
-                // Need to implement proper sloped water surface with vertex interpolation
+                // Water level height adjustment (Minecraft-style flowing water)
+                // Level 0 = source (full height), Level 7 = edge (very low)
                 float waterHeightAdjust = 0.0f;
-                // if (def.isLiquid) {
-                //     uint8_t waterLevel = m_blockMetadata[X][Y][Z];
-                //     waterHeightAdjust = -waterLevel * (0.5f / 9.0f);
-                // }
+                if (def.isLiquid) {
+                    uint8_t waterLevel = m_blockMetadata[X][Y][Z];
+                    // Each level reduces height by 1/8th of a block (0.0625 world units)
+                    waterHeightAdjust = -waterLevel * (0.5f / 8.0f);
+                }
 
                 // Helper to render a face with the appropriate texture (indexed rendering)
-                // heightAdjust: Optional Y-offset for water level rendering (top face only)
+                // heightAdjust: Optional Y-offset for water level rendering
+                // adjustTopOnly: If true, only apply heightAdjust to vertices with y=0.5 (top of block)
                 // useTransparent: If true, adds to transparent buffers; if false, adds to opaque buffers
                 auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart,
-                                      float heightAdjust = 0.0f, bool useTransparent = false) {
+                                      float heightAdjust = 0.0f, bool adjustTopOnly = false, bool useTransparent = false) {
                     auto [uMin, vMin] = getUVsForFace(faceTexture);
                     float uvScaleZoomed = uvScale;
 
@@ -446,7 +447,13 @@ void Chunk::generateMesh(World* world) {
                     for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by + heightAdjust;  // Apply height adjustment (for water)
+                        float yPos = cube[i+1];
+                        // Apply height adjustment: if adjustTopOnly=true, only adjust top vertices (y=0.5)
+                        if (adjustTopOnly) {
+                            v.y = yPos + by + (yPos > 0.4f ? heightAdjust : 0.0f);
+                        } else {
+                            v.y = yPos + by + heightAdjust;
+                        }
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb; v.a = ca;
                         v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
@@ -484,15 +491,21 @@ void Chunk::generateMesh(World* world) {
 
                     bool shouldRender;
                     if (isCurrentLiquid) {
-                        // Water: render against non-water (air or solid)
-                        shouldRender = !neighborIsLiquid;
+                        // Water: render if neighbor is not water, OR if water at different level
+                        if (neighborIsLiquid) {
+                            uint8_t currentLevel = m_blockMetadata[X][Y][Z];
+                            uint8_t neighborLevel = (Z > 0) ? m_blockMetadata[X][Y][Z-1] : 0;
+                            shouldRender = (currentLevel != neighborLevel);
+                        } else {
+                            shouldRender = true;
+                        }
                     } else {
                         // Solid: render against non-solid (air or water)
                         shouldRender = !neighborIsSolid;
                     }
 
                     if (shouldRender) {
-                        renderFace(frontTex, 0, 0, 0.0f, isCurrentTransparent);
+                        renderFace(frontTex, 0, 0, waterHeightAdjust, true, isCurrentTransparent);
                     }
                 }
 
@@ -500,9 +513,20 @@ void Chunk::generateMesh(World* world) {
                 {
                     bool neighborIsLiquid = isLiquid(X, Y, Z + 1);
                     bool neighborIsSolid = isSolid(X, Y, Z + 1);
-                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
+                    bool shouldRender;
+                    if (isCurrentLiquid) {
+                        if (neighborIsLiquid) {
+                            uint8_t currentLevel = m_blockMetadata[X][Y][Z];
+                            uint8_t neighborLevel = (Z < DEPTH-1) ? m_blockMetadata[X][Y][Z+1] : 0;
+                            shouldRender = (currentLevel != neighborLevel);
+                        } else {
+                            shouldRender = true;
+                        }
+                    } else {
+                        shouldRender = !neighborIsSolid;
+                    }
                     if (shouldRender) {
-                        renderFace(backTex, 12, 8, 0.0f, isCurrentTransparent);
+                        renderFace(backTex, 12, 8, waterHeightAdjust, true, isCurrentTransparent);
                     }
                 }
 
@@ -510,9 +534,20 @@ void Chunk::generateMesh(World* world) {
                 {
                     bool neighborIsLiquid = isLiquid(X - 1, Y, Z);
                     bool neighborIsSolid = isSolid(X - 1, Y, Z);
-                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
+                    bool shouldRender;
+                    if (isCurrentLiquid) {
+                        if (neighborIsLiquid) {
+                            uint8_t currentLevel = m_blockMetadata[X][Y][Z];
+                            uint8_t neighborLevel = (X > 0) ? m_blockMetadata[X-1][Y][Z] : 0;
+                            shouldRender = (currentLevel != neighborLevel);
+                        } else {
+                            shouldRender = true;
+                        }
+                    } else {
+                        shouldRender = !neighborIsSolid;
+                    }
                     if (shouldRender) {
-                        renderFace(leftTex, 24, 16, 0.0f, isCurrentTransparent);
+                        renderFace(leftTex, 24, 16, waterHeightAdjust, true, isCurrentTransparent);
                     }
                 }
 
@@ -520,9 +555,20 @@ void Chunk::generateMesh(World* world) {
                 {
                     bool neighborIsLiquid = isLiquid(X + 1, Y, Z);
                     bool neighborIsSolid = isSolid(X + 1, Y, Z);
-                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
+                    bool shouldRender;
+                    if (isCurrentLiquid) {
+                        if (neighborIsLiquid) {
+                            uint8_t currentLevel = m_blockMetadata[X][Y][Z];
+                            uint8_t neighborLevel = (X < WIDTH-1) ? m_blockMetadata[X+1][Y][Z] : 0;
+                            shouldRender = (currentLevel != neighborLevel);
+                        } else {
+                            shouldRender = true;
+                        }
+                    } else {
+                        shouldRender = !neighborIsSolid;
+                    }
                     if (shouldRender) {
-                        renderFace(rightTex, 36, 24, 0.0f, isCurrentTransparent);
+                        renderFace(rightTex, 36, 24, waterHeightAdjust, true, isCurrentTransparent);
                     }
                 }
 
@@ -532,7 +578,8 @@ void Chunk::generateMesh(World* world) {
                     bool neighborIsSolid = isSolid(X, Y + 1, Z);
                     bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
-                        renderFace(topTex, 48, 32, 0.0f, isCurrentTransparent);
+                        // Apply water height adjustment to entire top face for flowing water effect
+                        renderFace(topTex, 48, 32, waterHeightAdjust, false, isCurrentTransparent);
                     }
                 }
 
@@ -550,7 +597,7 @@ void Chunk::generateMesh(World* world) {
                         shouldRender = !neighborIsSolid;
                     }
                     if (shouldRender) {
-                        renderFace(bottomTex, 60, 40, 0.0f, isCurrentTransparent);
+                        renderFace(bottomTex, 60, 40, 0.0f, false, isCurrentTransparent);
                     }
                 }
             }

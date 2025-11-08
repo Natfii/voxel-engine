@@ -191,6 +191,28 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         if (doc["animated_tiles"]) {
             def.animatedTiles = doc["animated_tiles"].as<int>();
         }
+        // Optional: liquid_properties (for custom fog/tint when submerged)
+        if (doc["liquid_properties"]) {
+            auto lp = doc["liquid_properties"];
+            if (lp["fog_color"] && lp["fog_color"].IsSequence() && lp["fog_color"].size() == 3) {
+                def.liquidProps.fogColor = glm::vec3(
+                    lp["fog_color"][0].as<float>(),
+                    lp["fog_color"][1].as<float>(),
+                    lp["fog_color"][2].as<float>()
+                );
+            }
+            if (lp["fog_density"]) def.liquidProps.fogDensity = lp["fog_density"].as<float>();
+            if (lp["fog_start"]) def.liquidProps.fogStart = lp["fog_start"].as<float>();
+            if (lp["fog_end"]) def.liquidProps.fogEnd = lp["fog_end"].as<float>();
+            if (lp["tint_color"] && lp["tint_color"].IsSequence() && lp["tint_color"].size() == 3) {
+                def.liquidProps.tintColor = glm::vec3(
+                    lp["tint_color"][0].as<float>(),
+                    lp["tint_color"][1].as<float>(),
+                    lp["tint_color"][2].as<float>()
+                );
+            }
+            if (lp["darken_factor"]) def.liquidProps.darkenFactor = lp["darken_factor"].as<float>();
+        }
         // Store metadata node if exists
         if (doc["metadata"]) {
             def.metadata = doc["metadata"];
@@ -272,6 +294,28 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
             // Optional: animated_tiles (for water animation, etc.)
             if (doc["animated_tiles"]) {
                 def.animatedTiles = doc["animated_tiles"].as<int>();
+            }
+            // Optional: liquid_properties (for custom fog/tint when submerged)
+            if (doc["liquid_properties"]) {
+                auto lp = doc["liquid_properties"];
+                if (lp["fog_color"] && lp["fog_color"].IsSequence() && lp["fog_color"].size() == 3) {
+                    def.liquidProps.fogColor = glm::vec3(
+                        lp["fog_color"][0].as<float>(),
+                        lp["fog_color"][1].as<float>(),
+                        lp["fog_color"][2].as<float>()
+                    );
+                }
+                if (lp["fog_density"]) def.liquidProps.fogDensity = lp["fog_density"].as<float>();
+                if (lp["fog_start"]) def.liquidProps.fogStart = lp["fog_start"].as<float>();
+                if (lp["fog_end"]) def.liquidProps.fogEnd = lp["fog_end"].as<float>();
+                if (lp["tint_color"] && lp["tint_color"].IsSequence() && lp["tint_color"].size() == 3) {
+                    def.liquidProps.tintColor = glm::vec3(
+                        lp["tint_color"][0].as<float>(),
+                        lp["tint_color"][1].as<float>(),
+                        lp["tint_color"][2].as<float>()
+                    );
+                }
+                if (lp["darken_factor"]) def.liquidProps.darkenFactor = lp["darken_factor"].as<float>();
             }
             // Store metadata node if exists
             if (doc["metadata"]) {

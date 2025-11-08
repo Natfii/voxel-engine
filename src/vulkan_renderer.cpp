@@ -1350,21 +1350,28 @@ void VulkanRenderer::endFrame() {
 }
 
 // Update uniform buffer
-void VulkanRenderer::updateUniformBuffer(uint32_t currentImage, const glm::mat4& model, const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos, float renderDistance) {
+void VulkanRenderer::updateUniformBuffer(uint32_t currentImage, const glm::mat4& model, const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos, float renderDistance, bool underwater,
+                                        const glm::vec3& liquidFogColor, float liquidFogStart, float liquidFogEnd,
+                                        const glm::vec3& liquidTintColor, float liquidDarkenFactor) {
     UniformBufferObject ubo{};
     ubo.model = model;
     ubo.view = view;
     ubo.projection = projection;
     ubo.cameraPos = glm::vec4(cameraPos, renderDistance);  // Pack camera position and render distance into vec4
 
-    // Calculate sun, moon, and star intensities based on time of day
+    // Calculate sun, moon intensities based on time of day
     // Time: 0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset, 1.0 = midnight
     float sunIntensity = glm::smoothstep(0.2f, 0.3f, m_skyTime) * (1.0f - glm::smoothstep(0.7f, 0.8f, m_skyTime));
     float moonIntensity = 1.0f - glm::smoothstep(0.15f, 0.25f, m_skyTime) + glm::smoothstep(0.75f, 0.85f, m_skyTime);
     moonIntensity = glm::clamp(moonIntensity, 0.0f, 1.0f);
-    float starIntensity = moonIntensity;  // Stars visible when moon is visible
+    float underwaterFlag = underwater ? 1.0f : 0.0f;
 
-    ubo.skyTimeData = glm::vec4(m_skyTime, sunIntensity, moonIntensity, starIntensity);
+    ubo.skyTimeData = glm::vec4(m_skyTime, sunIntensity, moonIntensity, underwaterFlag);
+
+    // Pack liquid properties (from YAML or defaults)
+    ubo.liquidFogColor = glm::vec4(liquidFogColor, 1.0f);  // RGB + unused alpha
+    ubo.liquidFogDist = glm::vec4(liquidFogStart, liquidFogEnd, 0.0f, 0.0f);  // Start, end, unused, unused
+    ubo.liquidTint = glm::vec4(liquidTintColor, liquidDarkenFactor);  // RGB tint + darken factor
 
     memcpy(m_uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
