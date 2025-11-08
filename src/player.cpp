@@ -373,10 +373,17 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     // Apply final movement
     Position += movement;
 
-    // After movement, if we detected ground and are now on it, stop falling
-    // But not if in liquid - let buoyancy/gravity handle vertical motion
-    if (m_onGround && m_velocity.y < 0.0f && !m_inLiquid) {
-        m_velocity.y = 0.0f;
+    // After movement, stabilize velocity based on ground state
+    if (m_onGround) {
+        if (!m_inLiquid) {
+            // On land: completely zero vertical velocity to prevent bobbling
+            m_velocity.y = 0.0f;
+        } else {
+            // In water on floor: only zero if velocity is very small
+            if (m_velocity.y < 0.0f && std::abs(m_velocity.y) < 0.1f) {
+                m_velocity.y = 0.0f;
+            }
+        }
     }
 }
 
