@@ -19,8 +19,9 @@
 Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     : Position(position), WorldUp(up), Yaw(yaw), Pitch(pitch),
       MovementSpeed(5.0f), MouseSensitivity(0.1f), m_firstMouse(true),
-      m_velocity(0.0f), m_onGround(false), m_inLiquid(false), m_nKeyPressed(false),
-      NoclipMode(false), m_isSprinting(false), m_sprintKeyPressed(false)
+      m_velocity(0.0f), m_onGround(false), m_inLiquid(false), m_cameraUnderwater(false),
+      m_submergence(0.0f), m_nKeyPressed(false), NoclipMode(false), m_isSprinting(false),
+      m_sprintKeyPressed(false)
 {
     updateVectors();
 }
@@ -194,23 +195,46 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
         }
     }
 
-    // Check if player is in liquid (check head position, not feet)
-    // Position is at eye level, head is slightly above
+    // Calculate submergence level by checking multiple points along player height
+    // Position is at eye level, feet are below
     glm::vec3 playerFeet = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
-    glm::vec3 headPos = playerFeet + glm::vec3(0.0f, PLAYER_HEIGHT * 0.9f, 0.0f);  // Check near top of head
-    int blockID = world->getBlockAt(headPos.x, headPos.y, headPos.z);
+    glm::vec3 headPos = playerFeet + glm::vec3(0.0f, PLAYER_HEIGHT, 0.0f);
 
-    // Check if the block is a liquid using BlockRegistry
-    m_inLiquid = false;
-    if (blockID > 0) {
+    // Check if camera (eye position) is specifically in liquid for fog effect
+    int cameraBlockID = world->getBlockAt(Position.x, Position.y, Position.z);
+    m_cameraUnderwater = false;
+    if (cameraBlockID > 0) {
         try {
-            const auto& blockDef = BlockRegistry::instance().get(blockID);
-            m_inLiquid = blockDef.isLiquid;
+            const auto& blockDef = BlockRegistry::instance().get(cameraBlockID);
+            m_cameraUnderwater = blockDef.isLiquid;
         } catch (...) {
-            // Invalid block ID, treat as air
-            m_inLiquid = false;
+            m_cameraUnderwater = false;
         }
     }
+
+    // Sample 5 points from feet to head to calculate submergence
+    int liquidCount = 0;
+    const int samplePoints = 5;
+    for (int i = 0; i < samplePoints; ++i) {
+        float t = static_cast<float>(i) / (samplePoints - 1);
+        glm::vec3 samplePos = playerFeet + glm::vec3(0.0f, PLAYER_HEIGHT * t, 0.0f);
+        int blockID = world->getBlockAt(samplePos.x, samplePos.y, samplePos.z);
+
+        if (blockID > 0) {
+            try {
+                const auto& blockDef = BlockRegistry::instance().get(blockID);
+                if (blockDef.isLiquid) {
+                    liquidCount++;
+                }
+            } catch (...) {
+                // Invalid block ID, treat as air
+            }
+        }
+    }
+
+    // Calculate submergence (0.0 = not in water, 1.0 = fully submerged)
+    m_submergence = static_cast<float>(liquidCount) / static_cast<float>(samplePoints);
+    m_inLiquid = (m_submergence > 0.0f);
 
     // Apply movement speed with sprint multiplier
     float moveSpeed = m_inLiquid ? SWIM_SPEED : WALK_SPEED;
@@ -222,28 +246,34 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     // Jumping (only if processing input)
     if (processInput && glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
         if (m_inLiquid) {
-            // Strong jump in water to allow jumping out when at surface
-            m_velocity.y = JUMP_VELOCITY * 0.6f;  // 60% of normal jump - enough to exit water
+            // Jump strength scales with submergence
+            // Less submerged = stronger jump (can exit water easier)
+            float jumpStrength = JUMP_VELOCITY * (0.3f + 0.4f * (1.0f - m_submergence));
+            m_velocity.y = jumpStrength;
         } else if (m_onGround) {
             // Jump if on ground
             m_velocity.y = JUMP_VELOCITY;
         }
     }
 
-    // Apply gravity (only when not on ground or in liquid)
-    // This prevents slow sinking when standing still
-    if (!m_inLiquid && !m_onGround) {
+    // Water physics overrides ground detection
+    // If in liquid, treat as "not on ground" for physics purposes
+    bool physicsOnGround = m_onGround && !m_inLiquid;
+
+    // Apply gravity and buoyancy
+    if (!physicsOnGround) {
+        // Always apply gravity
         m_velocity.y -= GRAVITY * deltaTime;
-    } else if (m_inLiquid) {
-        // In liquid, apply gentle downward drift (only if not processing input, or no keys pressed)
-        if (!processInput || (glfwGetKey(window, GLFW_KEY_SPACE) != GLFW_PRESS &&
-            glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) != GLFW_PRESS)) {
-            m_velocity.y = -SWIM_SPEED * 0.3f;
+
+        // Apply buoyancy force when in water (counters gravity)
+        if (m_inLiquid) {
+            m_velocity.y += BUOYANCY_FORCE * m_submergence * deltaTime;
         }
-        // Swim down with shift (only if processing input)
-        if (processInput && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-            m_velocity.y = -SWIM_SPEED * 0.8f;
-        }
+    }
+
+    // Swim down with shift (only if processing input and in water)
+    if (m_inLiquid && processInput && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+        m_velocity.y -= SWIM_SPEED * 1.5f * deltaTime;  // Extra downward force
     }
 
     // Terminal velocity
@@ -321,6 +351,17 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
         // This prevents teleporting/floating when detecting ground early
     }
 
+    // Apply water drag to reduce velocity when in water
+    if (m_inLiquid) {
+        float drag = 1.0f - (WATER_DRAG * m_submergence * deltaTime);
+        drag = glm::max(drag, 0.0f);  // Prevent negative drag
+        horizontalVel *= drag;
+        m_velocity.x *= drag;
+        m_velocity.z *= drag;
+        // Also apply some drag to vertical velocity
+        m_velocity.y *= glm::max(1.0f - (WATER_DRAG * 0.5f * m_submergence * deltaTime), 0.0f);
+    }
+
     // Now calculate movement and apply physics
     // Calculate total movement
     glm::vec3 movement = horizontalVel * deltaTime;
@@ -333,7 +374,8 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     Position += movement;
 
     // After movement, if we detected ground and are now on it, stop falling
-    if (m_onGround && m_velocity.y < 0.0f) {
+    // But not if in liquid - let buoyancy/gravity handle vertical motion
+    if (m_onGround && m_velocity.y < 0.0f && !m_inLiquid) {
         m_velocity.y = 0.0f;
     }
 }
@@ -426,10 +468,9 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
 
     // CRITICAL FIX: If player is ALREADY stuck inside a block, push them out
     // But only if they're SIGNIFICANTLY stuck (not just barely touching)
-    // SKIP this when swimming - liquids don't count as solid blocks
     using namespace PhysicsConstants;
 
-    if (!m_inLiquid && checkCollision(Position, world)) {
+    if (checkCollision(Position, world)) {
         // Player is currently inside a block - calculate correction
         glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
         float blockGridY = std::ceil(feetPos.y / 0.5f) * 0.5f;
@@ -457,25 +498,34 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     if (yCollision) {
         // Collision detected!
         if (movement.y < 0.0f) {
-            // Falling downward - snap feet to top of block grid
-            glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
-            // Round feet position UP to next 0.5 block boundary
-            float blockGridY = std::ceil(feetPos.y / 0.5f) * 0.5f;
-            // Set movement to place feet exactly on block grid
-            movement.y = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
+            // Falling downward
+            if (!m_inLiquid) {
+                // On land: snap feet to top of block grid for precise landing
+                glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+                // Round feet position UP to next 0.5 block boundary
+                float blockGridY = std::ceil(feetPos.y / 0.5f) * 0.5f;
+                // Set movement to place feet exactly on block grid
+                movement.y = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
+            } else {
+                // In water: don't snap to grid, just stop movement to prevent bouncing
+                movement.y = 0.0f;
+            }
         } else {
             // Moving upward (hitting ceiling) - just stop
             movement.y = 0.0f;
         }
-        m_velocity.y = 0.0f;
+
+        // Don't zero velocity in water - let buoyancy/drag handle it
+        if (!m_inLiquid) {
+            m_velocity.y = 0.0f;
+        }
     }
 
     // ===== Test X axis (horizontal movement) =====
     testPos = Position + glm::vec3(movement.x, 0.0f, 0.0f);
 
     // Use horizontal collision check (from step height up) to allow ledge walking
-    // Skip collision when swimming - allow free movement through water
-    if (!m_inLiquid && checkHorizontalCollision(testPos, world)) {
+    if (checkHorizontalCollision(testPos, world)) {
         // Collision detected - stop horizontal movement
         movement.x = 0.0f;
         m_velocity.x = 0.0f;
@@ -485,8 +535,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     testPos = Position + glm::vec3(0.0f, 0.0f, movement.z);
 
     // Use horizontal collision check (from step height up) to allow ledge walking
-    // Skip collision when swimming - allow free movement through water
-    if (!m_inLiquid && checkHorizontalCollision(testPos, world)) {
+    if (checkHorizontalCollision(testPos, world)) {
         // Collision detected - stop horizontal movement
         movement.z = 0.0f;
         m_velocity.z = 0.0f;

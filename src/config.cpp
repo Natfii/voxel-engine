@@ -109,3 +109,34 @@ std::string Config::trim(const std::string& str) const {
     size_t last = str.find_last_not_of(" \t\r\n");
     return str.substr(first, last - first + 1);
 }
+
+bool Config::saveToFile(const std::string& filepath) const {
+    std::ofstream file(filepath);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open config file for writing: " << filepath << std::endl;
+        return false;
+    }
+
+    for (const auto& section : m_data) {
+        file << "[" << section.first << "]\n";
+        for (const auto& keyValue : section.second) {
+            file << keyValue.first << " = " << keyValue.second << "\n";
+        }
+        file << "\n";
+    }
+
+    file.close();
+    return true;
+}
+
+void Config::setInt(const std::string& section, const std::string& key, int value) {
+    m_data[section][key] = std::to_string(value);
+}
+
+void Config::setFloat(const std::string& section, const std::string& key, float value) {
+    m_data[section][key] = std::to_string(value);
+}
+
+void Config::setString(const std::string& section, const std::string& key, const std::string& value) {
+    m_data[section][key] = value;
+}

@@ -89,6 +89,13 @@ public:
      */
     bool isSwimming() const { return m_inLiquid; }
 
+    /**
+     * @brief Checks if the camera/head is specifically underwater
+     *
+     * @return True if the camera position (eye level) is in liquid
+     */
+    bool isCameraUnderwater() const { return m_cameraUnderwater; }
+
     // ========== Public Camera State ==========
     // Public for easy access from rendering and gameplay code
 
@@ -115,6 +122,8 @@ private:
     glm::vec3 m_velocity;    ///< Current velocity vector (world units/second)
     bool m_onGround;         ///< True if player is standing on a solid block
     bool m_inLiquid;         ///< True if player is submerged in liquid (reserved for future)
+    bool m_cameraUnderwater; ///< True if camera/head is specifically in liquid (for fog)
+    float m_submergence;     ///< How deep in liquid (0.0 = not submerged, 1.0 = fully submerged)
     bool m_nKeyPressed;      ///< Tracks N key state for noclip toggle
     bool m_isSprinting;      ///< True if currently sprinting
     bool m_sprintKeyPressed; ///< Tracks sprint key state for toggle mode (reserved)
@@ -131,6 +140,8 @@ private:
     static constexpr float WALK_SPEED = 2.15f;         ///< Base walk speed (4.3 blocks/s, 2.15 world units/s)
     static constexpr float SPRINT_MULTIPLIER = 1.5f;   ///< Sprint speed multiplier (6.45 blocks/s when sprinting)
     static constexpr float SWIM_SPEED = 1.5f;          ///< Swimming speed (reserved for future)
+    static constexpr float BUOYANCY_FORCE = 15.5f;     ///< Upward force when in water (almost neutral buoyancy)
+    static constexpr float WATER_DRAG = 5.0f;          ///< Water drag coefficient (higher = more drag, damping)
 
     // ========== Private Methods ==========
 

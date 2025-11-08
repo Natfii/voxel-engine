@@ -73,10 +73,21 @@ static void check_vk_result(VkResult err) {
 
 int main() {
     try {
+        // Load configuration first
+        Config& config = Config::instance();
+        if (!config.loadFromFile("config.ini")) {
+            std::cerr << "Warning: Failed to load config.ini, using default values" << std::endl;
+        }
+
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // No OpenGL context
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);     // Allow window resizing
-        GLFWwindow* window = glfwCreateWindow(800, 600, "Voxel Engine - Vulkan", nullptr, nullptr);
+
+        // Load window size from config
+        int windowWidth = config.getInt("Window", "width", 800);
+        int windowHeight = config.getInt("Window", "height", 600);
+
+        GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "Voxel Engine - Vulkan", nullptr, nullptr);
         if (!window) {
             std::cerr << "Failed to create GLFW window\n";
             glfwTerminate();
@@ -142,12 +153,6 @@ int main() {
         // Upload ImGui fonts
         ImGui_ImplVulkan_CreateFontsTexture();
         // Note: ImGui will handle font upload in the next frame
-
-        // Load configuration
-        Config& config = Config::instance();
-        if (!config.loadFromFile("config.ini")) {
-            std::cerr << "Warning: Failed to load config.ini, using default values" << std::endl;
-        }
 
         // Get world configuration from config file
         int seed = config.getInt("World", "seed", 1124345);
@@ -376,8 +381,8 @@ int main() {
             // Update uniform buffer with camera position and render distance for fog
             const float renderDistance = 80.0f;
 
-            // Detect which liquid the camera is in and get its properties
-            bool underwater = player.isSwimming();
+            // Detect if camera is specifically underwater (not just feet in water)
+            bool underwater = player.isCameraUnderwater();
             glm::vec3 liquidFogColor(0.1f, 0.3f, 0.5f);
             float liquidFogStart = 1.0f;
             float liquidFogEnd = 8.0f;
@@ -627,6 +632,13 @@ int main() {
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
         vkDestroyDescriptorPool(renderer.getDevice(), imguiPool, nullptr);
+
+        // Save current window size to config
+        int currentWidth, currentHeight;
+        glfwGetWindowSize(window, &currentWidth, &currentHeight);
+        config.setInt("Window", "width", currentWidth);
+        config.setInt("Window", "height", currentHeight);
+        config.saveToFile("config.ini");
 
         glfwDestroyWindow(window);
         glfwTerminate();
