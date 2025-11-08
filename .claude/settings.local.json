@@ -21,7 +21,11 @@
       "WebFetch(domain:fgiesen.wordpress.com)",
       "WebFetch(domain:www.geoffblair.com)",
       "WebFetch(domain:luisreis.net)",
-      "Bash(./build/Release/voxel-engine.exe:*)"
+      "Bash(./build/Release/voxel-engine.exe:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(ninja -C build:*)",
+      "Bash(copy /Y:*)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []

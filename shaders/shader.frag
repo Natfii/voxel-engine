@@ -19,19 +19,13 @@ layout(location = 0) out vec4 outColor;
 void main() {
     vec2 texCoord = fragTexCoord;
 
-    // Liquid animation: if alpha < 1.0, apply diagonal scrolling
-    if (fragColor.a < 0.99) {
-        // Use time of day for animation
-        float time = ubo.skyTimeData.x * 100.0;  // Scale time for visible movement
-
-        // Diagonal scrolling (both U and V move)
-        float scrollSpeed = 0.02;
-        texCoord.x += time * scrollSpeed;
-        texCoord.y += time * scrollSpeed * 0.7;  // Slightly different speed for diagonal effect
-
-        // Keep UVs in valid range
-        texCoord = fract(texCoord);
-    }
+    // TODO: Water animation disabled
+    // The 2x2 atlas allocation system needs refactoring to work properly
+    // Currently consecutive indices don't form a 2x2 block in the grid
+    // For now, water remains static with proper transparency
+    // if (fragColor.a < 0.99) {
+    //     // Animation code here
+    // }
 
     // Sample texture and multiply by vertex color
     // Textured blocks have white (1,1,1,1) vertex color → shows texture

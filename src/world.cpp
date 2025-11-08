@@ -127,7 +127,7 @@ void World::cleanup(VulkanRenderer* renderer) {
     }
 }
 
-void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, const glm::mat4& viewProj, float renderDistance) {
+void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, const glm::mat4& viewProj, float renderDistance, VulkanRenderer* renderer) {
     // Validate camera position for NaN/Inf to prevent rendering errors
     if (!std::isfinite(cameraPos.x) || !std::isfinite(cameraPos.y) || !std::isfinite(cameraPos.z)) {
         return; // Skip rendering if camera position is invalid
@@ -152,9 +152,33 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     int distanceCulled = 0;
     int frustumCulled = 0;
 
+    // Store transparent chunks for second pass (sorted back-to-front)
+    std::vector<std::pair<Chunk*, float>> transparentChunks;
+
+    // ========== PASS 1: RENDER OPAQUE GEOMETRY ==========
     for (auto& chunk : m_chunks) {
-        // Skip chunks with no vertices (optimization)
+        // Skip chunks with no opaque vertices
         if (chunk->getVertexCount() == 0) {
+            // Still need to check for transparent geometry
+            if (chunk->getTransparentVertexCount() > 0) {
+                // Stage 1: Distance culling
+                glm::vec3 delta = chunk->getCenter() - cameraPos;
+                float distanceSquared = glm::dot(delta, delta);
+
+                if (distanceSquared <= renderDistanceSquared) {
+                    // Stage 2: Frustum culling
+                    glm::vec3 chunkMin = chunk->getMin();
+                    glm::vec3 chunkMax = chunk->getMax();
+
+                    if (frustumAABBIntersect(frustum, chunkMin, chunkMax, frustumMargin)) {
+                        transparentChunks.push_back(std::make_pair(chunk, distanceSquared));
+                    } else{
+                        frustumCulled++;
+                    }
+                } else {
+                    distanceCulled++;
+                }
+            }
             continue;
         }
 
@@ -177,9 +201,37 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
             continue;
         }
 
-        // Chunk passed all culling tests - render it
-        chunk->render(commandBuffer);
+        // Chunk passed all culling tests - render opaque geometry
+        chunk->render(commandBuffer, false);  // false = opaque
         renderedCount++;
+
+        // If chunk has transparent geometry, add to transparent list
+        if (chunk->getTransparentVertexCount() > 0) {
+            transparentChunks.push_back(std::make_pair(chunk, distanceSquared));
+        }
+    }
+
+    // ========== PASS 2: RENDER TRANSPARENT GEOMETRY (SORTED) ==========
+    if (!transparentChunks.empty() && renderer != nullptr) {
+        // Bind transparent pipeline (depth test enabled, depth write disabled)
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->getTransparentPipeline());
+
+        // IMPORTANT: Rebind descriptor sets (contains texture atlas)
+        VkDescriptorSet descriptorSet = renderer->getCurrentDescriptorSet();
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                               renderer->getPipelineLayout(), 0, 1,
+                               &descriptorSet, 0, nullptr);
+
+        // Sort transparent chunks back-to-front (farthest first)
+        std::sort(transparentChunks.begin(), transparentChunks.end(),
+                  [](const auto& a, const auto& b) {
+                      return a.second > b.second;  // Greater distance first
+                  });
+
+        // Render transparent chunks in sorted order
+        for (const auto& pair : transparentChunks) {
+            pair.first->render(commandBuffer, true);  // true = transparent
+        }
     }
 
     // Store stats in DebugState for display

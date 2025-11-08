@@ -133,7 +133,7 @@ public:
      * @param viewProj Combined view-projection matrix for frustum extraction
      * @param renderDistance Maximum render distance in world units (default: 50.0)
      */
-    void renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, const glm::mat4& viewProj, float renderDistance = 50.0f);
+    void renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPos, const glm::mat4& viewProj, float renderDistance = 50.0f, class VulkanRenderer* renderer = nullptr);
 
     // ========== Block Querying and Modification ==========
 

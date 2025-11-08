@@ -466,7 +466,7 @@ int main() {
             vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipeline);
             vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
-            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, 80.0f);
+            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, 80.0f, &renderer);
 
             // Render block outline with line pipeline
             if (target.hasTarget) {
