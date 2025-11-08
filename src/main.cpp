@@ -434,12 +434,14 @@ int main() {
             }
 
             // Update liquid physics periodically
-            // DISABLED: Scanning all blocks in the world is too expensive for large worlds (14M+ checks per update)
-            // TODO: Optimize by maintaining a list of active liquid blocks instead of scanning entire world
+            // DISABLED: Causes severe lag (scans millions of blocks per update)
+            // TODO: Optimize by maintaining a dirty list of only water blocks that need updates
+            // Current implementation: O(chunks * 32^3) = O(millions) per update
+            // Needed: Only track changed water blocks in a queue/set for O(changed blocks) updates
             /*
             static float liquidUpdateTimer = 0.0f;
             liquidUpdateTimer += deltaTime;
-            const float liquidUpdateInterval = 0.5f;  // Update liquids 2 times per second
+            const float liquidUpdateInterval = 0.1f;  // Update liquids 10 times per second for smooth flow
             if (liquidUpdateTimer >= liquidUpdateInterval) {
                 liquidUpdateTimer = 0.0f;
                 world.updateLiquids(&renderer);
@@ -464,7 +466,7 @@ int main() {
             vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipeline);
             vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
-            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, 80.0f);
+            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, 80.0f, &renderer);
 
             // Render block outline with line pipeline
             if (target.hasTarget) {

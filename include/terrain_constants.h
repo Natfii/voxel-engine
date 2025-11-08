@@ -18,6 +18,10 @@ namespace TerrainGeneration {
     constexpr int BLOCK_STONE = 1;               ///< Stone block ID (stone.yaml)
     constexpr int BLOCK_DIRT = 2;                ///< Dirt block ID (dirt.yaml)
     constexpr int BLOCK_GRASS = 3;               ///< Grass block ID (grass.yaml)
+    constexpr int BLOCK_WATER = 5;               ///< Water block ID (water.yaml)
+
+    // Water physics
+    constexpr int WATER_LEVEL = 62;              ///< Sea level height in blocks (Y coordinate)
 }
 
 namespace PhysicsConstants {

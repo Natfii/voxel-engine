@@ -193,6 +193,7 @@ public:
     VkPipeline getGraphicsPipeline() const { return m_graphicsPipeline; }       ///< Get standard pipeline
     VkPipeline getWireframePipeline() const { return m_wireframePipeline; }     ///< Get wireframe pipeline
     VkPipeline getLinePipeline() const { return m_linePipeline; }               ///< Get line pipeline
+    VkPipeline getTransparentPipeline() const { return m_transparentPipeline; } ///< Get transparent pipeline (no depth write)
     VkPipelineLayout getPipelineLayout() const { return m_pipelineLayout; }     ///< Get pipeline layout
     VkCommandBuffer getCurrentCommandBuffer() const { return m_commandBuffers[m_currentFrame]; }  ///< Get current cmd buffer
     VkDescriptorSetLayout getDescriptorSetLayout() const { return m_descriptorSetLayout; }  ///< Get descriptor layout
@@ -375,6 +376,7 @@ private:
     void createRenderPass();
     void createDescriptorSetLayout();
     void createGraphicsPipeline();
+    void createTransparentPipeline();
     void createWireframePipeline();
     void createLinePipeline();
     void createSkyboxPipeline();
@@ -452,6 +454,7 @@ private:
     VkPipeline m_graphicsPipeline;
     VkPipeline m_wireframePipeline;
     VkPipeline m_linePipeline;
+    VkPipeline m_transparentPipeline;  // Same as graphics pipeline but with depth writes disabled
     VkPipeline m_skyboxPipeline;
 
     // Command buffers

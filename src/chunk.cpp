@@ -51,13 +51,20 @@ Chunk::Chunk(int x, int y, int z)
       m_indexBufferMemory(VK_NULL_HANDLE),
       m_vertexCount(0),
       m_indexCount(0),
+      m_transparentVertexBuffer(VK_NULL_HANDLE),
+      m_transparentVertexBufferMemory(VK_NULL_HANDLE),
+      m_transparentIndexBuffer(VK_NULL_HANDLE),
+      m_transparentIndexBufferMemory(VK_NULL_HANDLE),
+      m_transparentVertexCount(0),
+      m_transparentIndexCount(0),
       m_visible(false) {
 
-    // Initialize all blocks to air
+    // Initialize all blocks to air and metadata to 0
     for (int i = 0; i < WIDTH; i++) {
         for (int j = 0; j < HEIGHT; j++) {
             for (int k = 0; k < DEPTH; k++) {
                 m_blocks[i][j][k] = 0;
+                m_blockMetadata[i][j][k] = 0;
             }
         }
     }
@@ -160,8 +167,12 @@ void Chunk::generate() {
                     } else {
                         m_blocks[x][y][z] = BLOCK_STONE;  // Stone at bottom
                     }
+                } else if (worldY < WATER_LEVEL) {
+                    // Fill with water up to water level
+                    m_blocks[x][y][z] = BLOCK_WATER;
+                    m_blockMetadata[x][y][z] = 0;  // 0 = source block (infinite water)
                 } else {
-                    m_blocks[x][y][z] = BLOCK_AIR;  // Air above terrain
+                    m_blocks[x][y][z] = BLOCK_AIR;  // Air above water level
                 }
             }
         }
@@ -286,12 +297,17 @@ void Chunk::generateMesh(World* world) {
         0,0,  1,0,  1,1,  0,1
     }};
 
-    std::vector<Vertex> verts;
+    std::vector<Vertex> verts;          // Opaque geometry
     std::vector<uint32_t> indices;
+    std::vector<Vertex> transparentVerts;  // Transparent geometry (water, glass, etc.)
+    std::vector<uint32_t> transparentIndices;
+
     // Reserve space for estimated visible faces (roughly 30% of blocks visible, 3 faces each on average)
     // With indexed rendering: 4 vertices per face instead of 6
     verts.reserve(WIDTH * HEIGHT * DEPTH * 12 / 10);  // 4 vertices per face
     indices.reserve(WIDTH * HEIGHT * DEPTH * 18 / 10); // 6 indices per face (same as before)
+    transparentVerts.reserve(WIDTH * HEIGHT * DEPTH * 6 / 10);  // Less transparent blocks typically
+    transparentIndices.reserve(WIDTH * HEIGHT * DEPTH * 9 / 10);
 
     // Get block registry (needed for liquid checks)
     auto& registry = BlockRegistry::instance();
@@ -308,16 +324,18 @@ void Chunk::generateMesh(World* world) {
 
     // Helper lambda to check if a block is solid (non-air)
     // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
-    auto isSolid = [this, world, &localToWorldPos](int x, int y, int z) -> bool {
+    auto isSolid = [this, world, &registry, &localToWorldPos](int x, int y, int z) -> bool {
+        int blockID;
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
             // Inside this chunk
-            return m_blocks[x][y][z] != 0;
+            blockID = m_blocks[x][y][z];
+        } else {
+            // Out of bounds - check neighboring chunk via World
+            glm::vec3 worldPos = localToWorldPos(x, y, z);
+            blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         }
-
-        // Out of bounds - check neighboring chunk via World
-        glm::vec3 worldPos = localToWorldPos(x, y, z);
-        int blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
-        return blockID != 0;
+        if (blockID == 0) return false;
+        return !registry.get(blockID).isLiquid;  // Solid = not air and not liquid
     };
 
     // Helper lambda to check if a block is liquid
@@ -390,38 +408,59 @@ void Chunk::generateMesh(World* world) {
                 float by = float(m_y * HEIGHT + Y) * 0.5f;
                 float bz = float(m_z * DEPTH + Z) * 0.5f;
 
+                // TODO: Water level height adjustment (Minecraft-style flowing water)
+                // Disabled for now - causes rendering issues with side faces
+                // Need to implement proper sloped water surface with vertex interpolation
+                float waterHeightAdjust = 0.0f;
+                // if (def.isLiquid) {
+                //     uint8_t waterLevel = m_blockMetadata[X][Y][Z];
+                //     waterHeightAdjust = -waterLevel * (0.5f / 9.0f);
+                // }
+
                 // Helper to render a face with the appropriate texture (indexed rendering)
-                auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart) {
+                // heightAdjust: Optional Y-offset for water level rendering (top face only)
+                // useTransparent: If true, adds to transparent buffers; if false, adds to opaque buffers
+                auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart,
+                                      float heightAdjust = 0.0f, bool useTransparent = false) {
                     auto [uMin, vMin] = getUVsForFace(faceTexture);
                     float uvScaleZoomed = uvScale;
 
+                    // For animated textures, scale UVs to cover the full animation area
+                    // e.g., if animatedTiles=2, UVs should span 2x2 cells instead of 1 cell
+                    if (def.animatedTiles > 1) {
+                        uvScaleZoomed = uvScale * def.animatedTiles;
+                    }
                     // Recalculate uvScaleZoomed if texture variation is enabled (per-face)
-                    if (faceTexture.variation > 1.0f) {
+                    else if (faceTexture.variation > 1.0f) {
                         uvScaleZoomed = uvScale / faceTexture.variation;
                     }
 
+                    // Choose which vectors to use based on transparency
+                    auto& targetVerts = useTransparent ? transparentVerts : verts;
+                    auto& targetIndices = useTransparent ? transparentIndices : indices;
+
                     // Get the base index for these vertices
-                    uint32_t baseIndex = static_cast<uint32_t>(verts.size());
+                    uint32_t baseIndex = static_cast<uint32_t>(targetVerts.size());
 
                     // Create 4 vertices for this face (corners of the quad)
                     for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
                         Vertex v;
                         v.x = cube[i+0] + bx;
-                        v.y = cube[i+1] + by;
+                        v.y = cube[i+1] + by + heightAdjust;  // Apply height adjustment (for water)
                         v.z = cube[i+2] + bz;
                         v.r = cr; v.g = cg; v.b = cb; v.a = ca;
                         v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
                         v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        verts.push_back(v);
+                        targetVerts.push_back(v);
                     }
 
                     // Create 6 indices for 2 triangles (0,1,2 and 0,2,3)
-                    indices.push_back(baseIndex + 0);
-                    indices.push_back(baseIndex + 1);
-                    indices.push_back(baseIndex + 2);
-                    indices.push_back(baseIndex + 0);
-                    indices.push_back(baseIndex + 2);
-                    indices.push_back(baseIndex + 3);
+                    targetIndices.push_back(baseIndex + 0);
+                    targetIndices.push_back(baseIndex + 1);
+                    targetIndices.push_back(baseIndex + 2);
+                    targetIndices.push_back(baseIndex + 0);
+                    targetIndices.push_back(baseIndex + 2);
+                    targetIndices.push_back(baseIndex + 3);
                 };
 
                 // Select appropriate texture for each face
@@ -433,81 +472,106 @@ void Chunk::generateMesh(World* world) {
                 const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
 
                 // Face culling based on block type
-                // - Solid blocks: render faces against air and liquids (liquids are transparent)
-                // - Liquid blocks: render faces against air and solids (not other liquids)
+                // - Solid blocks: ALWAYS render faces against air and liquids (liquids are transparent)
+                // - Liquid blocks: render faces against air and solids (not other liquids to avoid z-fighting)
                 bool isCurrentLiquid = def.isLiquid;
+                bool isCurrentTransparent = (def.transparency > 0.0f);  // Has any transparency
 
                 // Front face (z=0, facing -Z direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X, Y, Z - 1)  // Liquid: render against air/solids, not other liquids
-                        : (!isSolid(X, Y, Z - 1) || isLiquid(X, Y, Z - 1));  // Solid: render against air/liquids
+                    bool neighborIsLiquid = isLiquid(X, Y, Z - 1);
+                    bool neighborIsSolid = isSolid(X, Y, Z - 1);
+
+                    bool shouldRender;
+                    if (isCurrentLiquid) {
+                        // Water: render against non-water (air or solid)
+                        shouldRender = !neighborIsLiquid;
+                    } else {
+                        // Solid: render against non-solid (air or water)
+                        shouldRender = !neighborIsSolid;
+                    }
+
                     if (shouldRender) {
-                        renderFace(frontTex, 0, 0);
+                        renderFace(frontTex, 0, 0, 0.0f, isCurrentTransparent);
                     }
                 }
 
                 // Back face (z=0.5, facing +Z direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X, Y, Z + 1)
-                        : (!isSolid(X, Y, Z + 1) || isLiquid(X, Y, Z + 1));
+                    bool neighborIsLiquid = isLiquid(X, Y, Z + 1);
+                    bool neighborIsSolid = isSolid(X, Y, Z + 1);
+                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
-                        renderFace(backTex, 12, 8);
+                        renderFace(backTex, 12, 8, 0.0f, isCurrentTransparent);
                     }
                 }
 
                 // Left face (x=0, facing -X direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X - 1, Y, Z)
-                        : (!isSolid(X - 1, Y, Z) || isLiquid(X - 1, Y, Z));
+                    bool neighborIsLiquid = isLiquid(X - 1, Y, Z);
+                    bool neighborIsSolid = isSolid(X - 1, Y, Z);
+                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
-                        renderFace(leftTex, 24, 16);
+                        renderFace(leftTex, 24, 16, 0.0f, isCurrentTransparent);
                     }
                 }
 
                 // Right face (x=0.5, facing +X direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X + 1, Y, Z)
-                        : (!isSolid(X + 1, Y, Z) || isLiquid(X + 1, Y, Z));
+                    bool neighborIsLiquid = isLiquid(X + 1, Y, Z);
+                    bool neighborIsSolid = isSolid(X + 1, Y, Z);
+                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
-                        renderFace(rightTex, 36, 24);
+                        renderFace(rightTex, 36, 24, 0.0f, isCurrentTransparent);
                     }
                 }
 
                 // Top face (y=0.5, facing +Y direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X, Y + 1, Z)
-                        : (!isSolid(X, Y + 1, Z) || isLiquid(X, Y + 1, Z));
+                    bool neighborIsLiquid = isLiquid(X, Y + 1, Z);
+                    bool neighborIsSolid = isSolid(X, Y + 1, Z);
+                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
-                        renderFace(topTex, 48, 32);
+                        renderFace(topTex, 48, 32, 0.0f, isCurrentTransparent);
                     }
                 }
 
                 // Bottom face (y=0, facing -Y direction)
                 {
-                    bool shouldRender = isCurrentLiquid
-                        ? !isLiquid(X, Y - 1, Z)
-                        : (!isSolid(X, Y - 1, Z) || isLiquid(X, Y - 1, Z));
+                    bool neighborIsLiquid = isLiquid(X, Y - 1, Z);
+                    bool neighborIsSolid = isSolid(X, Y - 1, Z);
+                    bool shouldRender;
+                    if (isCurrentLiquid) {
+                        // Water: render bottom if not water below
+                        // Render against both air AND solid blocks (visible from below)
+                        shouldRender = !neighborIsLiquid;
+                    } else {
+                        // Solid: render against air/water
+                        shouldRender = !neighborIsSolid;
+                    }
                     if (shouldRender) {
-                        renderFace(bottomTex, 60, 40);
+                        renderFace(bottomTex, 60, 40, 0.0f, isCurrentTransparent);
                     }
                 }
             }
         }
     }
 
+    // Store opaque geometry
     m_vertexCount = static_cast<uint32_t>(verts.size());
     m_indexCount = static_cast<uint32_t>(indices.size());
     m_vertices = std::move(verts);
     m_indices = std::move(indices);
+
+    // Store transparent geometry
+    m_transparentVertexCount = static_cast<uint32_t>(transparentVerts.size());
+    m_transparentIndexCount = static_cast<uint32_t>(transparentIndices.size());
+    m_transparentVertices = std::move(transparentVerts);
+    m_transparentIndices = std::move(transparentIndices);
 }
 
 void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
-    if (m_vertexCount == 0) {
+    if (m_vertexCount == 0 && m_transparentVertexCount == 0) {
         return;  // No vertices to upload
     }
 
@@ -516,13 +580,15 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
 
     VkDevice device = renderer->getDevice();
 
-    // Create vertex buffer with exception safety
-    VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
+    // ========== CREATE OPAQUE BUFFERS ==========
+    if (m_vertexCount > 0) {
+        // Create vertex buffer with exception safety
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
 
-    VkBuffer stagingBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
 
-    try {
+        try {
         renderer->createBuffer(vertexBufferSize,
                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -604,11 +670,105 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
         }
         throw;  // Re-throw to caller
     }
+    }  // End of opaque buffer creation
+
+    // ========== CREATE TRANSPARENT BUFFERS ==========
+    if (m_transparentVertexCount > 0) {
+        // Create transparent vertex buffer
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_transparentVertices.size();
+
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
+
+        try {
+            renderer->createBuffer(vertexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  stagingBuffer, stagingBufferMemory);
+
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, vertexBufferSize, 0, &data);
+            memcpy(data, m_transparentVertices.data(), (size_t)vertexBufferSize);
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            renderer->createBuffer(vertexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  m_transparentVertexBuffer, m_transparentVertexBufferMemory);
+
+            renderer->copyBuffer(stagingBuffer, m_transparentVertexBuffer, vertexBufferSize);
+
+            // Clean up staging buffer
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+            stagingBuffer = VK_NULL_HANDLE;
+            stagingBufferMemory = VK_NULL_HANDLE;
+
+        } catch (...) {
+            // Clean up staging buffer on exception
+            if (stagingBuffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device, stagingBuffer, nullptr);
+            }
+            if (stagingBufferMemory != VK_NULL_HANDLE) {
+                vkFreeMemory(device, stagingBufferMemory, nullptr);
+            }
+            throw;  // Re-throw to caller
+        }
+
+        // Create transparent index buffer
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_transparentIndices.size();
+
+        stagingBuffer = VK_NULL_HANDLE;
+        stagingBufferMemory = VK_NULL_HANDLE;
+
+        try {
+            renderer->createBuffer(indexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  stagingBuffer, stagingBufferMemory);
+
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, indexBufferSize, 0, &data);
+            memcpy(data, m_transparentIndices.data(), (size_t)indexBufferSize);
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            renderer->createBuffer(indexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  m_transparentIndexBuffer, m_transparentIndexBufferMemory);
+
+            renderer->copyBuffer(stagingBuffer, m_transparentIndexBuffer, indexBufferSize);
+
+            // Clean up staging buffer
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+        } catch (...) {
+            // Clean up staging buffer on exception
+            if (stagingBuffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device, stagingBuffer, nullptr);
+            }
+            if (stagingBufferMemory != VK_NULL_HANDLE) {
+                vkFreeMemory(device, stagingBufferMemory, nullptr);
+            }
+            // Also clean up partially created transparent vertex buffer
+            if (m_transparentVertexBuffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device, m_transparentVertexBuffer, nullptr);
+                m_transparentVertexBuffer = VK_NULL_HANDLE;
+            }
+            if (m_transparentVertexBufferMemory != VK_NULL_HANDLE) {
+                vkFreeMemory(device, m_transparentVertexBufferMemory, nullptr);
+                m_transparentVertexBufferMemory = VK_NULL_HANDLE;
+            }
+            throw;  // Re-throw to caller
+        }
+    }  // End of transparent buffer creation
 }
 
 void Chunk::destroyBuffers(VulkanRenderer* renderer) {
     VkDevice device = renderer->getDevice();
 
+    // Destroy opaque buffers
     if (m_vertexBuffer != VK_NULL_HANDLE) {
         vkDestroyBuffer(device, m_vertexBuffer, nullptr);
         m_vertexBuffer = VK_NULL_HANDLE;
@@ -628,23 +788,63 @@ void Chunk::destroyBuffers(VulkanRenderer* renderer) {
         vkFreeMemory(device, m_indexBufferMemory, nullptr);
         m_indexBufferMemory = VK_NULL_HANDLE;
     }
-}
 
-void Chunk::render(VkCommandBuffer commandBuffer) {
-    if (m_vertexCount == 0) {
-        return;  // Nothing to render
+    // Destroy transparent buffers
+    if (m_transparentVertexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, m_transparentVertexBuffer, nullptr);
+        m_transparentVertexBuffer = VK_NULL_HANDLE;
     }
 
-    // Bind vertex buffer
-    VkBuffer vertexBuffers[] = {m_vertexBuffer};
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+    if (m_transparentVertexBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, m_transparentVertexBufferMemory, nullptr);
+        m_transparentVertexBufferMemory = VK_NULL_HANDLE;
+    }
 
-    // Bind index buffer
-    vkCmdBindIndexBuffer(commandBuffer, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+    if (m_transparentIndexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, m_transparentIndexBuffer, nullptr);
+        m_transparentIndexBuffer = VK_NULL_HANDLE;
+    }
 
-    // Draw indexed
-    vkCmdDrawIndexed(commandBuffer, m_indexCount, 1, 0, 0, 0);
+    if (m_transparentIndexBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, m_transparentIndexBufferMemory, nullptr);
+        m_transparentIndexBufferMemory = VK_NULL_HANDLE;
+    }
+}
+
+void Chunk::render(VkCommandBuffer commandBuffer, bool transparent) {
+    if (transparent) {
+        // Render transparent geometry
+        if (m_transparentVertexCount == 0) {
+            return;  // Nothing to render
+        }
+
+        // Bind transparent vertex buffer
+        VkBuffer vertexBuffers[] = {m_transparentVertexBuffer};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+        // Bind transparent index buffer
+        vkCmdBindIndexBuffer(commandBuffer, m_transparentIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+        // Draw indexed
+        vkCmdDrawIndexed(commandBuffer, m_transparentIndexCount, 1, 0, 0, 0);
+    } else {
+        // Render opaque geometry
+        if (m_vertexCount == 0) {
+            return;  // Nothing to render
+        }
+
+        // Bind vertex buffer
+        VkBuffer vertexBuffers[] = {m_vertexBuffer};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+        // Bind index buffer
+        vkCmdBindIndexBuffer(commandBuffer, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+        // Draw indexed
+        vkCmdDrawIndexed(commandBuffer, m_indexCount, 1, 0, 0, 0);
+    }
 }
 
 int Chunk::getBlock(int x, int y, int z) const {
@@ -659,4 +859,18 @@ void Chunk::setBlock(int x, int y, int z, int blockID) {
         return;  // Out of bounds
     }
     m_blocks[x][y][z] = blockID;
+}
+
+uint8_t Chunk::getBlockMetadata(int x, int y, int z) const {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return 0;  // Out of bounds
+    }
+    return m_blockMetadata[x][y][z];
+}
+
+void Chunk::setBlockMetadata(int x, int y, int z, uint8_t metadata) {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return;  // Out of bounds
+    }
+    m_blockMetadata[x][y][z] = metadata;
 }

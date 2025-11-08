@@ -1,9 +1,10 @@
 id: 5
 name: "Water"
 texture: "water.png"
+# animated_tiles: 2  # TODO: Disabled - needs proper 2x2 grid allocation
 durability: 0
 liquid: true
 affected_by_gravity: false
 flammability: 0
-transparency: 0.6
-color: [0.2, 0.4, 0.8]  # Blue tint for water
+transparency: 0.25  # 25% transparent
+color: [1.5, 1.8, 2.0]  # Brighten the dark blue water texture

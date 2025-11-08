@@ -187,6 +187,10 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         if (doc["liquid"]) {
             def.isLiquid = doc["liquid"].as<bool>();
         }
+        // Optional: animated_tiles (for water animation, etc.)
+        if (doc["animated_tiles"]) {
+            def.animatedTiles = doc["animated_tiles"].as<int>();
+        }
         // Store metadata node if exists
         if (doc["metadata"]) {
             def.metadata = doc["metadata"];
@@ -264,6 +268,10 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
             }
             if (doc["liquid"]) {
                 def.isLiquid = doc["liquid"].as<bool>();
+            }
+            // Optional: animated_tiles (for water animation, etc.)
+            if (doc["animated_tiles"]) {
+                def.animatedTiles = doc["animated_tiles"].as<int>();
             }
             // Store metadata node if exists
             if (doc["metadata"]) {
@@ -345,7 +353,9 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
     std::vector<LoadedTexture> textures;
 
     // Helper to add a texture to the atlas if not already present
-    auto addTextureToAtlas = [&](const std::string& textureName, const std::string& blockName) -> int {
+    // animatedTiles: Number of tiles for animation (1=static, 2=2x2 grid=4 slots, etc.)
+    // Returns the starting atlas index
+    auto addTextureToAtlas = [&](const std::string& textureName, const std::string& blockName, int animatedTiles = 1) -> int {
         // Check if already loaded
         auto it = textureNameToAtlasIndex.find(textureName);
         if (it != textureNameToAtlasIndex.end()) {
@@ -362,9 +372,34 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
         }
 
         int atlasIndex = (int)textures.size();
-        textures.push_back(std::move(tex));  // Move unique_ptr ownership
+
+        // For animated textures, reserve multiple consecutive slots
+        if (animatedTiles > 1) {
+            int totalSlots = animatedTiles * animatedTiles;  // 2x2 = 4 slots, 3x3 = 9 slots
+            std::cout << "  Loaded texture: " << textureName << " (atlas index " << atlasIndex
+                      << ", " << animatedTiles << "x" << animatedTiles << " = " << totalSlots << " slots)" << std::endl;
+
+            // Add the same texture multiple times to reserve slots
+            for (int i = 0; i < totalSlots; i++) {
+                LoadedTexture texCopy;
+                texCopy.name = tex.name + "_tile" + std::to_string(i);
+                texCopy.width = tex.width;
+                texCopy.height = tex.height;
+
+                // Allocate new memory and copy pixels
+                size_t pixelDataSize = 64 * 64 * 4;  // RGBA
+                unsigned char* copiedPixels = (unsigned char*)malloc(pixelDataSize);
+                memcpy(copiedPixels, tex.pixels.get(), pixelDataSize);
+                texCopy.pixels.reset(copiedPixels);
+
+                textures.push_back(std::move(texCopy));
+            }
+        } else {
+            textures.push_back(std::move(tex));  // Move unique_ptr ownership
+            std::cout << "  Loaded texture: " << textureName << " (atlas index " << atlasIndex << ")" << std::endl;
+        }
+
         textureNameToAtlasIndex[textureName] = atlasIndex;
-        std::cout << "  Loaded texture: " << textureName << " (atlas index " << atlasIndex << ")" << std::endl;
         return atlasIndex;
     };
 
@@ -469,7 +504,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
                 // Parse texture filename and variation
                 auto [filename, variation] = parseTexture(texString);
 
-                int atlasIndex = addTextureToAtlas(filename, def.name);
+                int atlasIndex = addTextureToAtlas(filename, def.name, def.animatedTiles);
                 if (atlasIndex >= 0) {
                     // Atlas coordinates will be calculated after we know the grid size
                     face.atlasX = atlasIndex;  // Temporarily store atlas index
@@ -510,7 +545,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
                 }
             }
 
-            int atlasIndex = addTextureToAtlas(filename, def.name);
+            int atlasIndex = addTextureToAtlas(filename, def.name, def.animatedTiles);
             if (atlasIndex >= 0) {
                 def.hasTexture = true;
                 def.useCubeMap = false;
@@ -524,7 +559,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
             std::string defaultTexName = lowerName + ".png";
             std::cout << "  No texture defined for " << def.name << ", attempting to load " << defaultTexName << std::endl;
 
-            int atlasIndex = addTextureToAtlas(defaultTexName, def.name);
+            int atlasIndex = addTextureToAtlas(defaultTexName, def.name, def.animatedTiles);
             if (atlasIndex >= 0) {
                 def.hasTexture = true;
                 def.useCubeMap = false;
@@ -812,8 +847,11 @@ void BlockIconRenderer::getTextureUVs(int blockID, int face, ImVec2& uv0, ImVec2
 
     // Calculate UV coordinates from atlas grid position
     float cellSize = 1.0f / gridSize;
+
+    // For animated textures, UVs span multiple cells (e.g., 2x2 for animatedTiles=2)
+    int tileCoverage = block.animatedTiles;
     uv0 = ImVec2(faceTexture->atlasX * cellSize, faceTexture->atlasY * cellSize);
-    uv1 = ImVec2((faceTexture->atlasX + 1) * cellSize, (faceTexture->atlasY + 1) * cellSize);
+    uv1 = ImVec2((faceTexture->atlasX + tileCoverage) * cellSize, (faceTexture->atlasY + tileCoverage) * cellSize);
 }
 
 void BlockIconRenderer::drawIsometricCubeTextured(ImDrawList* drawList, const ImVec2& center, float size, int blockID) {

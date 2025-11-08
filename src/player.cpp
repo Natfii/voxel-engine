@@ -271,32 +271,47 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     if (blockAtCenter == 0) {  // Only check for ground if not inside a block
         // Check center first as fallback for edge cases
         int centerBelow = world->getBlockAt(feetPos.x, feetPos.y - checkDistance, feetPos.z);
-        if (centerBelow > 0) groundDetected = true;
+        if (centerBelow > 0) {
+            const auto& blockDef = BlockRegistry::instance().get(centerBelow);
+            if (!blockDef.isLiquid) groundDetected = true;  // Only solid blocks count as ground
+        }
 
         // Also check 4 corners - if ANY corner has solid block below, player is grounded
         // This allows jumping while walking off ledges (as long as one corner is still over ground)
         if (!groundDetected) {
             // Check back-left corner
             int bl = world->getBlockAt(feetPos.x - halfWidth, feetPos.y - checkDistance, feetPos.z - halfWidth);
-            if (bl > 0) groundDetected = true;
+            if (bl > 0) {
+                const auto& blockDef = BlockRegistry::instance().get(bl);
+                if (!blockDef.isLiquid) groundDetected = true;
+            }
         }
 
         if (!groundDetected) {
             // Check back-right corner
             int br = world->getBlockAt(feetPos.x + halfWidth, feetPos.y - checkDistance, feetPos.z - halfWidth);
-            if (br > 0) groundDetected = true;
+            if (br > 0) {
+                const auto& blockDef = BlockRegistry::instance().get(br);
+                if (!blockDef.isLiquid) groundDetected = true;
+            }
         }
 
         if (!groundDetected) {
             // Check front-left corner
             int fl = world->getBlockAt(feetPos.x - halfWidth, feetPos.y - checkDistance, feetPos.z + halfWidth);
-            if (fl > 0) groundDetected = true;
+            if (fl > 0) {
+                const auto& blockDef = BlockRegistry::instance().get(fl);
+                if (!blockDef.isLiquid) groundDetected = true;
+            }
         }
 
         if (!groundDetected) {
             // Check front-right corner
             int fr = world->getBlockAt(feetPos.x + halfWidth, feetPos.y - checkDistance, feetPos.z + halfWidth);
-            if (fr > 0) groundDetected = true;
+            if (fr > 0) {
+                const auto& blockDef = BlockRegistry::instance().get(fr);
+                if (!blockDef.isLiquid) groundDetected = true;
+            }
         }
     }
 
@@ -411,9 +426,10 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
 
     // CRITICAL FIX: If player is ALREADY stuck inside a block, push them out
     // But only if they're SIGNIFICANTLY stuck (not just barely touching)
+    // SKIP this when swimming - liquids don't count as solid blocks
     using namespace PhysicsConstants;
 
-    if (checkCollision(Position, world)) {
+    if (!m_inLiquid && checkCollision(Position, world)) {
         // Player is currently inside a block - calculate correction
         glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
         float blockGridY = std::ceil(feetPos.y / 0.5f) * 0.5f;
@@ -573,11 +589,15 @@ bool Player::checkCollision(const glm::vec3& position, World* world) {
                                     << ") = " << blockID;
                 }
 
-                if (blockID > 0) {  // Solid block (not air)
-                    if (shouldDebugCollision) {
-                        Logger::debug() << "  COLLISION at block (" << x << "," << y << "," << z << ")!";
+                // Check if block is solid (not air and not liquid)
+                if (blockID > 0) {
+                    const auto& blockDef = BlockRegistry::instance().get(blockID);
+                    if (!blockDef.isLiquid) {  // Only collide with solid blocks, not liquids
+                        if (shouldDebugCollision) {
+                            Logger::debug() << "  COLLISION at block (" << x << "," << y << "," << z << ")!";
+                        }
+                        return true;  // Collision detected
                     }
-                    return true;  // Collision detected
                 }
             }
         }
@@ -684,8 +704,12 @@ bool Player::checkHorizontalCollision(const glm::vec3& position, World* world) {
                 float worldZ = z * 0.5f;
 
                 int blockID = world->getBlockAt(worldX, worldY, worldZ);
-                if (blockID > 0) {  // Solid block (not air)
-                    return true;  // Collision detected
+                // Check if block is solid (not air and not liquid)
+                if (blockID > 0) {
+                    const auto& blockDef = BlockRegistry::instance().get(blockID);
+                    if (!blockDef.isLiquid) {  // Only collide with solid blocks, not liquids
+                        return true;  // Collision detected
+                    }
                 }
             }
         }

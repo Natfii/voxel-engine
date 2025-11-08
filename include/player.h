@@ -82,6 +82,13 @@ public:
      */
     glm::mat4 getViewMatrix() const;
 
+    /**
+     * @brief Checks if the player is currently in liquid (swimming)
+     *
+     * @return True if player is submerged in liquid (water, lava, etc.)
+     */
+    bool isSwimming() const { return m_inLiquid; }
+
     // ========== Public Camera State ==========
     // Public for easy access from rendering and gameplay code
 

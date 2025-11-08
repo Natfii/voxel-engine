@@ -189,8 +189,9 @@ public:
      * Binds vertex/index buffers and issues draw command.
      *
      * @param commandBuffer Vulkan command buffer for recording
+     * @param transparent If true, renders transparent geometry; if false, renders opaque geometry
      */
-    void render(VkCommandBuffer commandBuffer);
+    void render(VkCommandBuffer commandBuffer, bool transparent = false);
 
     // ========== Terrain Queries ==========
 
@@ -232,6 +233,12 @@ public:
      */
     uint32_t getVertexCount() const { return m_vertexCount; }
 
+    /**
+     * @brief Gets the number of transparent vertices in this chunk's mesh
+     * @return Transparent vertex count (0 if no transparent geometry)
+     */
+    uint32_t getTransparentVertexCount() const { return m_transparentVertexCount; }
+
     // ========== Block Access ==========
 
     /**
@@ -256,6 +263,28 @@ public:
      * @param blockID Block ID to set
      */
     void setBlock(int x, int y, int z, int blockID);
+
+    /**
+     * @brief Gets the block metadata at local chunk coordinates
+     *
+     * Metadata is used for water levels, block states, etc.
+     *
+     * @param x Local X coordinate (0-31)
+     * @param y Local Y coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @return Metadata value (0-255), or 0 if out of bounds
+     */
+    uint8_t getBlockMetadata(int x, int y, int z) const;
+
+    /**
+     * @brief Sets the block metadata at local chunk coordinates
+     *
+     * @param x Local X coordinate (0-31)
+     * @param y Local Y coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @param metadata Metadata value to set (0-255)
+     */
+    void setBlockMetadata(int x, int y, int z, uint8_t metadata);
 
     // ========== Chunk Position ==========
 
@@ -295,18 +324,29 @@ private:
     // ========== Position and Storage ==========
     int m_x, m_y, m_z;                      ///< Chunk coordinates in chunk space
     int m_blocks[WIDTH][HEIGHT][DEPTH];    ///< Block ID storage (32 KB)
+    uint8_t m_blockMetadata[WIDTH][HEIGHT][DEPTH]; ///< Block metadata (water levels, etc.) (32 KB)
 
     // ========== Mesh Data ==========
-    std::vector<Vertex> m_vertices;         ///< CPU-side vertex data
-    std::vector<uint32_t> m_indices;        ///< CPU-side index data
+    std::vector<Vertex> m_vertices;         ///< CPU-side vertex data (opaque)
+    std::vector<uint32_t> m_indices;        ///< CPU-side index data (opaque)
+    std::vector<Vertex> m_transparentVertices;   ///< CPU-side vertex data (transparent)
+    std::vector<uint32_t> m_transparentIndices;  ///< CPU-side index data (transparent)
 
-    // ========== Vulkan Buffers ==========
-    VkBuffer m_vertexBuffer;                ///< GPU vertex buffer
-    VkDeviceMemory m_vertexBufferMemory;    ///< Vertex buffer memory
-    VkBuffer m_indexBuffer;                 ///< GPU index buffer
-    VkDeviceMemory m_indexBufferMemory;     ///< Index buffer memory
-    uint32_t m_vertexCount;                 ///< Number of vertices
-    uint32_t m_indexCount;                  ///< Number of indices
+    // ========== Vulkan Buffers (Opaque) ==========
+    VkBuffer m_vertexBuffer;                ///< GPU vertex buffer (opaque)
+    VkDeviceMemory m_vertexBufferMemory;    ///< Vertex buffer memory (opaque)
+    VkBuffer m_indexBuffer;                 ///< GPU index buffer (opaque)
+    VkDeviceMemory m_indexBufferMemory;     ///< Index buffer memory (opaque)
+    uint32_t m_vertexCount;                 ///< Number of vertices (opaque)
+    uint32_t m_indexCount;                  ///< Number of indices (opaque)
+
+    // ========== Vulkan Buffers (Transparent) ==========
+    VkBuffer m_transparentVertexBuffer;           ///< GPU vertex buffer (transparent)
+    VkDeviceMemory m_transparentVertexBufferMemory; ///< Vertex buffer memory (transparent)
+    VkBuffer m_transparentIndexBuffer;            ///< GPU index buffer (transparent)
+    VkDeviceMemory m_transparentIndexBufferMemory; ///< Index buffer memory (transparent)
+    uint32_t m_transparentVertexCount;            ///< Number of vertices (transparent)
+    uint32_t m_transparentIndexCount;             ///< Number of indices (transparent)
 
     // ========== Culling Data ==========
     glm::vec3 m_minBounds;                  ///< AABB minimum corner (world space)
