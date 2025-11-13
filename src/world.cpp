@@ -30,6 +30,22 @@
 #include <cmath>
 #include <unordered_set>
 
+// ========== WORLD GENERATION CONFIGURATION ==========
+
+/**
+ * @brief Enable natural ocean generation
+ *
+ * When enabled, areas where terrain is significantly below water level become oceans.
+ * Oceans are hardcoded (not YAML-based) and consist of water blocks with sand/stone floors.
+ * This creates natural breaks in biome generation, making the world feel more realistic.
+ *
+ * Ocean threshold: Terrain height < (WATER_LEVEL - OCEAN_DEPTH_THRESHOLD) = ocean
+ */
+constexpr bool ENABLE_NATURAL_OCEANS = true;
+constexpr int OCEAN_DEPTH_THRESHOLD = 8;  // Blocks below water level to trigger ocean
+
+// ====================================================
+
 World::World(int width, int height, int depth, int seed)
     : m_width(width), m_height(height), m_depth(depth), m_seed(seed) {
     // Center world generation around origin (0, 0, 0)

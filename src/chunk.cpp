@@ -173,6 +173,10 @@ void Chunk::generate(BiomeMap* biomeMap) {
             // Get terrain height from biome map
             int terrainHeight = biomeMap->getTerrainHeightAt(worldX, worldZ);
 
+            // Check if this is an ocean area (hardcoded biome - not YAML)
+            // Ocean = terrain significantly below water level
+            bool isOcean = (terrainHeight < WATER_LEVEL - 8);  // 8+ blocks below water = ocean
+
             // Fill column
             for (int y = 0; y < HEIGHT; y++) {
                 int worldY = m_y * HEIGHT + y;
@@ -189,6 +193,22 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 if (worldY < terrainHeight) {
                     // Below surface
 
+                    // OCEAN BIOME LOGIC (hardcoded, not YAML)
+                    if (isOcean) {
+                        // Ocean floor - no caves in ocean areas for clean underwater terrain
+                        int depthFromSurface = terrainHeight - worldY;
+
+                        if (depthFromSurface <= 3) {
+                            // Ocean floor top layers - sand
+                            m_blocks[x][y][z] = BLOCK_SAND;
+                        } else {
+                            // Deep ocean floor - stone
+                            m_blocks[x][y][z] = BLOCK_STONE;
+                        }
+                        continue;
+                    }
+
+                    // LAND BIOME LOGIC
                     // If in cave, create air pocket (caves generate endlessly downward)
                     // Only prevent caves in the top 5 blocks below surface to avoid surface holes
                     if (isCave && worldY < terrainHeight - 5) {
