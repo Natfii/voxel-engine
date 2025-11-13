@@ -59,7 +59,8 @@ private:
     std::unique_ptr<FastNoiseLite> m_temperatureNoise;
     std::unique_ptr<FastNoiseLite> m_moistureNoise;
     std::unique_ptr<FastNoiseLite> m_terrainNoise;
-    std::unique_ptr<FastNoiseLite> m_caveNoise;
+    std::unique_ptr<FastNoiseLite> m_caveNoise;              // Chamber-style caves
+    std::unique_ptr<FastNoiseLite> m_caveTunnelNoise;        // Long winding tunnels
     std::unique_ptr<FastNoiseLite> m_undergroundChamberNoise;
 
     // Secondary noise for variation

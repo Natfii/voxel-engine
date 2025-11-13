@@ -138,17 +138,8 @@ void TreeGenerator::generateLargeTree(TreeTemplate& tree, int logID, int leavesI
     int height = heightDist(m_rng);
     tree.height = height;
 
-    // Add thick trunk (2x2 base for very tall trees)
-    if (height >= 13) {
-        for (int y = 0; y < height; y++) {
-            tree.blocks.push_back({{0, y, 0}, logID});
-            tree.blocks.push_back({{1, y, 0}, logID});
-            tree.blocks.push_back({{0, y, 1}, logID});
-            tree.blocks.push_back({{1, y, 1}, logID});
-        }
-    } else {
-        addTrunk(tree, height, logID);
-    }
+    // Add trunk (single block wide for all trees)
+    addTrunk(tree, height, logID);
 
     // Add large canopy
     addCanopy(tree, height, 4, leavesID);
