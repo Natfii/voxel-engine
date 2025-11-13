@@ -6,29 +6,30 @@
 #include <iostream>
 
 BiomeMap::BiomeMap(int seed) {
-    // Temperature noise - large scale, creates climate zones
+    // Temperature noise - VERY large scale, creates Minecraft-style massive climate zones
+    // Lower frequency = wider biomes (0.002 = ~500 block features)
     m_temperatureNoise = std::make_unique<FastNoiseLite>(seed);
     m_temperatureNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_temperatureNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
     m_temperatureNoise->SetFractalOctaves(4);
-    m_temperatureNoise->SetFrequency(0.008f);  // Very large features
+    m_temperatureNoise->SetFrequency(0.002f);  // Massive biomes (Minecraft-scale)
 
-    // Temperature variation - adds local temperature changes
+    // Temperature variation - adds local temperature changes within biomes
     m_temperatureVariation = std::make_unique<FastNoiseLite>(seed + 1000);
     m_temperatureVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    m_temperatureVariation->SetFrequency(0.02f);  // Smaller features
+    m_temperatureVariation->SetFrequency(0.015f);  // Medium features for variation
 
-    // Moisture noise - large scale, creates wet/dry zones
+    // Moisture noise - VERY large scale, creates Minecraft-style massive wet/dry zones
     m_moistureNoise = std::make_unique<FastNoiseLite>(seed + 100);
     m_moistureNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_moistureNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
     m_moistureNoise->SetFractalOctaves(4);
-    m_moistureNoise->SetFrequency(0.009f);  // Very large features
+    m_moistureNoise->SetFrequency(0.0025f);  // Massive biomes (Minecraft-scale)
 
-    // Moisture variation - adds local moisture changes
+    // Moisture variation - adds local moisture changes within biomes
     m_moistureVariation = std::make_unique<FastNoiseLite>(seed + 1100);
     m_moistureVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    m_moistureVariation->SetFrequency(0.025f);  // Smaller features
+    m_moistureVariation->SetFrequency(0.018f);  // Medium features for variation
 
     // Terrain height noise - controlled by biome age
     m_terrainNoise = std::make_unique<FastNoiseLite>(seed + 200);
@@ -46,12 +47,13 @@ BiomeMap::BiomeMap(int seed) {
     m_caveNoise->SetCellularReturnType(FastNoiseLite::CellularReturnType_Distance);
     m_caveNoise->SetFrequency(0.03f);  // Frequency controls cave size
 
-    // Underground chamber noise - creates large underground caverns
+    // Underground chamber noise - creates contained underground biome pockets
+    // Higher frequency than surface biomes = smaller, more contained underground areas
     m_undergroundChamberNoise = std::make_unique<FastNoiseLite>(seed + 400);
     m_undergroundChamberNoise->SetNoiseType(FastNoiseLite::NoiseType_Cellular);
     m_undergroundChamberNoise->SetCellularDistanceFunction(FastNoiseLite::CellularDistanceFunction_Euclidean);
     m_undergroundChamberNoise->SetCellularReturnType(FastNoiseLite::CellularReturnType_Distance2);
-    m_undergroundChamberNoise->SetFrequency(0.006f);  // Very large chambers
+    m_undergroundChamberNoise->SetFrequency(0.006f);  // Contained chambers (3x smaller than surface biomes)
 }
 
 float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
