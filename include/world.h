@@ -177,14 +177,17 @@ public:
     /**
      * @brief Sets the block ID at the specified world position
      *
-     * Does not update meshes or buffers. Use breakBlock() for automatic mesh updates.
+     * By default, regenerates the chunk mesh immediately. For batch operations
+     * (like tree placement), pass regenerateMesh=false and manually regenerate
+     * meshes after all blocks are placed to avoid performance issues.
      *
      * @param worldX World X coordinate
      * @param worldY World Y coordinate
      * @param worldZ World Z coordinate
      * @param blockID Block ID to set (0 = air/remove block)
+     * @param regenerateMesh If true, regenerates mesh immediately (default: true)
      */
-    void setBlockAt(float worldX, float worldY, float worldZ, int blockID);
+    void setBlockAt(float worldX, float worldY, float worldZ, int blockID, bool regenerateMesh = true);
 
     /**
      * @brief Gets the block metadata at the specified world position

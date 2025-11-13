@@ -59,7 +59,7 @@ bool TreeGenerator::placeTree(World* world, int blockX, int blockY, int blockZ, 
         }
     }
 
-    // Place all tree blocks
+    // Place all tree blocks (deferred mesh regeneration for performance)
     for (const auto& block : tree.blocks) {
         int bx = blockX + block.offset.x;
         int by = blockY + block.offset.y;
@@ -70,7 +70,8 @@ bool TreeGenerator::placeTree(World* world, int blockX, int blockY, int blockZ, 
         float worldY = by * 0.5f;
         float worldZ = bz * 0.5f;
 
-        world->setBlockAt(worldX, worldY, worldZ, block.blockID);
+        // Don't regenerate mesh for each block - will batch regenerate in decorateWorld()
+        world->setBlockAt(worldX, worldY, worldZ, block.blockID, false);
     }
 
     return true;

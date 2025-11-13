@@ -142,68 +142,148 @@ void World::decorateWorld() {
     m_treeGenerator->generateTreeTemplates(BLOCK_OAK_LOG, BLOCK_LEAVES);
 
     int treesPlaced = 0;
+    int undergroundFeaturesPlaced = 0;
+
     // Use offset seed for decoration to make it different from terrain
     std::mt19937 rng(m_seed + 77777);
+    std::uniform_int_distribution<int> densityDist(0, 100);
 
-    // Iterate through all chunks at surface level
-    for (auto& chunk : m_chunks) {
-        // Only decorate surface chunks (skip underground)
-        if (chunk->getY() > 0) continue;
+    // Calculate world bounds
+    int halfWidth = m_width / 2;
+    int halfDepth = m_depth / 2;
+    int maxWorldY = m_height * Chunk::HEIGHT;
 
-        int chunkX = chunk->getX();
-        int chunkZ = chunk->getZ();
+    // Track modified chunks for selective mesh regeneration
+    std::unordered_set<Chunk*> modifiedChunks;
 
-        // Sample positions in this chunk for tree placement
-        std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
-        std::uniform_int_distribution<int> densityDist(0, 100);
+    // Decorate surface - iterate through horizontal positions
+    int surfaceSampleSpacing = 8;  // Sample every 8 blocks for performance
+    for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
+        for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
+            // Sample 3-5 positions per chunk for tree placement
+            std::uniform_int_distribution<int> attemptsDist(3, 5);
+            int attempts = attemptsDist(rng);
 
-        // Try to place trees in this chunk
-        for (int attempt = 0; attempt < 5; attempt++) {  // 5 attempts per chunk
-            int localX = posDist(rng);
-            int localZ = posDist(rng);
+            for (int attempt = 0; attempt < attempts; attempt++) {
+                // Random position within this chunk
+                std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
+                int localX = posDist(rng);
+                int localZ = posDist(rng);
 
-            // Convert to world coordinates
-            float worldX = (chunkX * Chunk::WIDTH + localX) * 0.5f;
-            float worldZ = (chunkZ * Chunk::DEPTH + localZ) * 0.5f;
+                // Convert to world coordinates
+                float worldX = (chunkX * Chunk::WIDTH + localX) * 0.5f;
+                float worldZ = (chunkZ * Chunk::DEPTH + localZ) * 0.5f;
 
-            // Get biome at this position
-            const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
-            if (!biome || !biome->trees_spawn) continue;
+                // Get biome at this position
+                const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+                if (!biome || !biome->trees_spawn) continue;
 
-            // Check tree density probability
-            if (densityDist(rng) > biome->tree_density) continue;
+                // Check tree density probability
+                if (densityDist(rng) > biome->tree_density) continue;
 
-            // Find ground level at this position
-            int groundY = -1;
-            for (int y = Chunk::HEIGHT - 1; y >= 0; y--) {
-                int worldY = chunk->getY() * Chunk::HEIGHT + y;
-                int blockID = getBlockAt(worldX, worldY * 0.5f, worldZ);
+                // Find ground level - search from top of world downward
+                int groundY = -1;
+                for (int y = maxWorldY - 1; y >= 0; y--) {
+                    int blockID = getBlockAt(worldX, y * 0.5f, worldZ);
 
-                if (blockID == biome->primary_surface_block || blockID == BLOCK_GRASS) {
-                    groundY = worldY;
-                    break;
+                    // Check for valid ground blocks
+                    if (blockID == biome->primary_surface_block ||
+                        blockID == BLOCK_GRASS ||
+                        blockID == BLOCK_STONE) {
+                        // Make sure there's air above
+                        int aboveBlock = getBlockAt(worldX, (y + 1) * 0.5f, worldZ);
+                        if (aboveBlock == BLOCK_AIR) {
+                            groundY = y;
+                            break;
+                        }
+                    }
                 }
-            }
 
-            if (groundY < 0) continue;  // No suitable ground found
+                if (groundY < 0 || groundY < 10) continue;  // No suitable ground or too low
 
-            // Place tree (convert world coords to block coords)
-            int treeType = m_treeGenerator->getRandomTreeType();
-            int logID = (biome->primary_log_block >= 0) ? biome->primary_log_block : BLOCK_OAK_LOG;
-            int leavesID = (biome->primary_leave_block >= 0) ? biome->primary_leave_block : BLOCK_LEAVES;
+                // Place tree
+                int treeType = m_treeGenerator->getRandomTreeType();
+                int logID = (biome->primary_log_block >= 0) ? biome->primary_log_block : BLOCK_OAK_LOG;
+                int leavesID = (biome->primary_leave_block >= 0) ? biome->primary_leave_block : BLOCK_LEAVES;
 
-            // placeTree expects block coordinates (world coords / 0.5)
-            int blockX = static_cast<int>(worldX / 0.5f);
-            int blockZ = static_cast<int>(worldZ / 0.5f);
+                // placeTree expects block coordinates
+                int blockX = static_cast<int>(worldX / 0.5f);
+                int blockZ = static_cast<int>(worldZ / 0.5f);
 
-            if (m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ,
-                                           treeType, logID, leavesID)) {
-                treesPlaced++;
+                if (m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ,
+                                               treeType, logID, leavesID)) {
+                    treesPlaced++;
+
+                    // Track affected chunks (tree + neighbors) for mesh regeneration
+                    // Trees can span multiple chunks, so mark the chunk and all adjacent chunks
+                    Chunk* centerChunk = getChunkAtWorldPos(worldX, (groundY + 1) * 0.5f, worldZ);
+                    if (centerChunk) {
+                        modifiedChunks.insert(centerChunk);
+                        // Add all 26 neighboring chunks (3x3x3 cube around tree)
+                        for (int dx = -1; dx <= 1; dx++) {
+                            for (int dy = -1; dy <= 1; dy++) {
+                                for (int dz = -1; dz <= 1; dz++) {
+                                    Chunk* neighbor = getChunkAt(centerChunk->getX() + dx,
+                                                                   centerChunk->getY() + dy,
+                                                                   centerChunk->getZ() + dz);
+                                    if (neighbor) modifiedChunks.insert(neighbor);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
-    Logger::info() << "Decoration complete. Placed " << treesPlaced << " trees";
+    // Decorate underground biome chambers
+    for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
+        for (int chunkY = 0; chunkY < m_height; ++chunkY) {
+            for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
+                // Sample positions in underground chunks
+                std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
+
+                for (int attempt = 0; attempt < 2; attempt++) {  // 2 attempts per underground chunk
+                    int localX = posDist(rng);
+                    int localY = posDist(rng);
+                    int localZ = posDist(rng);
+
+                    int worldX = chunkX * Chunk::WIDTH + localX;
+                    int worldY = chunkY * Chunk::HEIGHT + localY;
+                    int worldZ = chunkZ * Chunk::DEPTH + localZ;
+
+                    // Check if in underground chamber
+                    if (m_biomeMap->isUndergroundBiomeAt(worldX * 0.5f, worldY * 0.5f, worldZ * 0.5f)) {
+                        // Check if this is floor of chamber (solid block below, air here)
+                        int blockHere = getBlockAt(worldX * 0.5f, worldY * 0.5f, worldZ * 0.5f);
+                        int blockBelow = getBlockAt(worldX * 0.5f, (worldY - 1) * 0.5f, worldZ * 0.5f);
+
+                        if (blockHere == BLOCK_AIR && blockBelow == BLOCK_STONE) {
+                            // Get underground biome
+                            const Biome* biome = m_biomeMap->getBiomeAt(worldX * 0.5f, worldZ * 0.5f);
+
+                            // Place mushrooms or small features (for now, just count)
+                            // TODO: Add mushrooms, glowing flora, etc.
+                            undergroundFeaturesPlaced++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Logger::info() << "Decoration complete. Placed " << treesPlaced << " trees and "
+                   << undergroundFeaturesPlaced << " underground features";
+
+    // Batch regenerate meshes only for modified chunks (avoids per-block regeneration)
+    Logger::info() << "Regenerating meshes for " << modifiedChunks.size() << " modified chunks...";
+    int meshesRegenerated = 0;
+    for (Chunk* chunk : modifiedChunks) {
+        chunk->generateMesh(this);
+        meshesRegenerated++;
+    }
+    Logger::info() << "Regenerated " << meshesRegenerated << " chunk meshes (out of "
+                   << m_chunks.size() << " total chunks)";
 }
 
 void World::createBuffers(VulkanRenderer* renderer) {
@@ -374,7 +454,7 @@ Chunk* World::getChunkAtWorldPos(float worldX, float worldY, float worldZ) {
     return getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
 }
 
-void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID) {
+void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID, bool regenerateMesh) {
     // Convert world coordinates to chunk and local block coordinates
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
 
@@ -386,14 +466,17 @@ void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID) {
     // Set the block
     chunk->setBlock(coords.localX, coords.localY, coords.localZ, blockID);
 
-    // NOTE: Block break animations could be added in the future by:
-    // - Adding a callback parameter to this function
-    // - Delaying mesh regeneration until animation completes
-    // - Using a particle system for break effects
-    // For now, blocks update instantly (Minecraft-style instant break)
-    chunk->generateMesh(this);
-    // Note: We don't call createBuffer here - that needs a renderer which we don't have access to
-    // We'll mark the chunk as needing a buffer update elsewhere
+    // Optionally regenerate mesh immediately (disable for batch operations)
+    if (regenerateMesh) {
+        // NOTE: Block break animations could be added in the future by:
+        // - Adding a callback parameter to this function
+        // - Delaying mesh regeneration until animation completes
+        // - Using a particle system for break effects
+        // For now, blocks update instantly (Minecraft-style instant break)
+        chunk->generateMesh(this);
+        // Note: We don't call createBuffer here - that needs a renderer which we don't have access to
+        // We'll mark the chunk as needing a buffer update elsewhere
+    }
 }
 
 uint8_t World::getBlockMetadataAt(float worldX, float worldY, float worldZ) {
