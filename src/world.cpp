@@ -135,6 +135,8 @@ void World::generateWorld() {
 }
 
 void World::decorateWorld() {
+    using namespace TerrainGeneration;
+
     Logger::info() << "Starting world decoration (trees, vegetation)...";
 
     // Generate tree templates first
