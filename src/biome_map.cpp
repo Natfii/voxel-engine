@@ -180,8 +180,11 @@ float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
 }
 
 bool BiomeMap::isUndergroundBiomeAt(float worldX, float worldY, float worldZ) {
-    // Underground chambers can generate at any depth below the surface
-    // No depth restriction - creates endless underground biome chambers
+    // Underground chambers restricted to mid-depth range to preserve mining gameplay
+    // Only generate between Y=10 and Y=45 (prevents Swiss-cheese deep underground)
+    if (worldY < 10.0f || worldY > 45.0f) {
+        return false;
+    }
 
     // FastNoiseLite is thread-safe for reads - no mutex needed
 

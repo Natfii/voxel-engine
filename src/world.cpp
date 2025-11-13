@@ -228,8 +228,14 @@ void World::decorateWorld() {
                 int leavesID = (biome->primary_leave_block >= 0) ? biome->primary_leave_block : BLOCK_LEAVES;
 
                 // placeTree expects block coordinates
-                int blockX = static_cast<int>(worldX / 0.5f);
-                int blockZ = static_cast<int>(worldZ / 0.5f);
+                // Check for float-to-int overflow before casting
+                float blockXf = worldX / 0.5f;
+                float blockZf = worldZ / 0.5f;
+                if (blockXf < INT_MIN || blockXf > INT_MAX || blockZf < INT_MIN || blockZf > INT_MAX) {
+                    continue;  // Skip this tree - coordinates out of range
+                }
+                int blockX = static_cast<int>(blockXf);
+                int blockZ = static_cast<int>(blockZf);
 
                 if (m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ,
                                                treeType, logID, leavesID)) {
@@ -297,14 +303,39 @@ void World::decorateWorld() {
     Logger::info() << "Decoration complete. Placed " << treesPlaced << " trees and "
                    << undergroundFeaturesPlaced << " underground features";
 
-    // Batch regenerate meshes only for modified chunks (avoids per-block regeneration)
-    Logger::info() << "Regenerating meshes for " << modifiedChunks.size() << " modified chunks...";
-    int meshesRegenerated = 0;
-    for (Chunk* chunk : modifiedChunks) {
-        chunk->generateMesh(this);
-        meshesRegenerated++;
+    // Batch regenerate meshes for modified chunks (parallel for performance)
+    Logger::info() << "Regenerating meshes for " << modifiedChunks.size() << " modified chunks in parallel...";
+
+    // Convert set to vector for parallel iteration
+    std::vector<Chunk*> modifiedChunksVec(modifiedChunks.begin(), modifiedChunks.end());
+
+    // Parallel mesh regeneration (same pattern as generateWorld)
+    unsigned int numThreads = std::thread::hardware_concurrency();
+    if (numThreads == 0) numThreads = 4;  // Fallback
+    std::vector<std::thread> threads;
+    threads.reserve(numThreads);
+
+    size_t chunksPerThread = (modifiedChunksVec.size() + numThreads - 1) / numThreads;
+
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, modifiedChunksVec.size());
+
+        if (startIdx >= modifiedChunksVec.size()) break;
+
+        threads.emplace_back([this, &modifiedChunksVec, startIdx, endIdx]() {
+            for (size_t idx = startIdx; idx < endIdx; ++idx) {
+                modifiedChunksVec[idx]->generateMesh(this);
+            }
+        });
     }
-    Logger::info() << "Regenerated " << meshesRegenerated << " chunk meshes (out of "
+
+    // Wait for all threads to complete
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    Logger::info() << "Regenerated " << modifiedChunksVec.size() << " chunk meshes in parallel (out of "
                    << m_chunks.size() << " total chunks)";
 }
 

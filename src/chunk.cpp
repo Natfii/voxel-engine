@@ -148,8 +148,9 @@ void Chunk::generate(BiomeMap* biomeMap) {
     for (int x = 0; x < WIDTH; x++) {
         for (int z = 0; z < DEPTH; z++) {
             // Convert local coords to world coords (blocks are 0.5 units)
-            float worldX = (m_x * WIDTH + x) * 0.5f;
-            float worldZ = (m_z * DEPTH + z) * 0.5f;
+            // Cast to int64_t before multiplication to prevent overflow with large chunk coords
+            float worldX = (static_cast<int64_t>(m_x) * WIDTH + x) * 0.5f;
+            float worldZ = (static_cast<int64_t>(m_z) * DEPTH + z) * 0.5f;
 
             // Get biome at this position
             const Biome* biome = biomeMap->getBiomeAt(worldX, worldZ);
@@ -157,7 +158,7 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 // Fallback: Fill with stone underground, air above
                 int terrainHeight = biomeMap->getTerrainHeightAt(worldX, worldZ);
                 for (int y = 0; y < HEIGHT; y++) {
-                    int worldY = m_y * HEIGHT + y;
+                    int worldY = static_cast<int64_t>(m_y) * HEIGHT + y;
                     if (worldY < terrainHeight) {
                         m_blocks[x][y][z] = BLOCK_STONE;
                     } else {
@@ -176,7 +177,7 @@ void Chunk::generate(BiomeMap* biomeMap) {
 
             // Fill column
             for (int y = 0; y < HEIGHT; y++) {
-                int worldY = m_y * HEIGHT + y;
+                int worldY = static_cast<int64_t>(m_y) * HEIGHT + y;
                 float worldYf = worldY * 0.5f;
 
                 // Check if this is inside a cave
