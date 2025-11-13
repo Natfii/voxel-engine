@@ -903,9 +903,8 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
 void Chunk::destroyBuffers(VulkanRenderer* renderer) {
     VkDevice device = renderer->getDevice();
 
-    // CRITICAL: Wait for GPU to finish using these buffers before destroying
-    // Without this, we could destroy buffers while GPU is still rendering them -> corruption/crashes
-    vkDeviceWaitIdle(device);
+    // Note: GPU synchronization should be done once at high level (main.cpp does vkDeviceWaitIdle)
+    // before calling cleanup on all chunks. Doing it per-chunk is incredibly slow (hundreds of waits).
 
     // Destroy opaque buffers
     if (m_vertexBuffer != VK_NULL_HANDLE) {

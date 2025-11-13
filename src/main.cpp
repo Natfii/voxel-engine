@@ -453,8 +453,8 @@ int main() {
         renderLoadingScreen();
 
         // Verify player is safely on the ground before hiding loading screen
-        // Update physics once to ensure player settles
-        player.update(0.016f, &world);  // 1 frame at 60fps
+        // Update physics once to ensure player settles (disable input during this)
+        player.update(window, 0.016f, &world, false);  // 1 frame at 60fps, no input
 
         // Final loading screen frame at 100%
         loadingProgress = 1.0f;
