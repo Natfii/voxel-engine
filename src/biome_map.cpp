@@ -2,6 +2,7 @@
 #include "terrain_constants.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 
 BiomeMap::BiomeMap(int seed) {
@@ -141,10 +142,8 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     float ageNormalized = biome->age / 100.0f;  // 0.0 to 1.0
     float heightVariation = 30.0f - (ageNormalized * 25.0f);  // 30 to 5
 
-    // Mountains need special handling - they should be tall
-    if (biome->name == "mountain") {
-        heightVariation = 40.0f;  // Extra tall
-    }
+    // Apply biome's height multiplier for special terrain (mountains, etc.)
+    heightVariation *= biome->height_multiplier;
 
     // Calculate final height
     int height = BASE_HEIGHT + static_cast<int>(noise * heightVariation);
@@ -199,9 +198,12 @@ bool BiomeMap::isUndergroundBiomeAt(float worldX, float worldY, float worldZ) {
 
 uint64_t BiomeMap::coordsToKey(int x, int z) const {
     // Combine x and z into a single 64-bit key
-    uint64_t ux = static_cast<uint64_t>(static_cast<uint32_t>(x));
-    uint64_t uz = static_cast<uint64_t>(static_cast<uint32_t>(z));
-    return (ux << 32) | uz;
+    // Handle negative coordinates correctly by preserving bit patterns
+    uint32_t ux;
+    uint32_t uz;
+    std::memcpy(&ux, &x, sizeof(uint32_t));
+    std::memcpy(&uz, &z, sizeof(uint32_t));
+    return (static_cast<uint64_t>(ux) << 32) | static_cast<uint64_t>(uz);
 }
 
 const Biome* BiomeMap::selectBiome(float temperature, float moisture) {

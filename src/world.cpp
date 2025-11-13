@@ -21,6 +21,7 @@
 #include "debug_state.h"
 #include "logger.h"
 #include "block_system.h"
+#include "biome_system.h"
 #include <glm/glm.hpp>
 #include <thread>
 #include <algorithm>
@@ -56,9 +57,14 @@ World::World(int width, int height, int depth, int seed)
 
     Logger::info() << "Total chunks created: " << m_chunks.size();
 
+    // Validate that biomes are loaded before creating world
+    if (BiomeRegistry::getInstance().getBiomeCount() == 0) {
+        throw std::runtime_error("BiomeRegistry is empty! Call BiomeRegistry::loadBiomes() before creating a World.");
+    }
+
     // Initialize biome map with seed
     m_biomeMap = std::make_unique<BiomeMap>(seed);
-    Logger::info() << "Biome map initialized";
+    Logger::info() << "Biome map initialized with " << BiomeRegistry::getInstance().getBiomeCount() << " biomes";
 
     // Initialize water simulation and particle systems
     m_waterSimulation = std::make_unique<WaterSimulation>();

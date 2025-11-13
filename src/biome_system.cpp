@@ -121,6 +121,9 @@ bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
         if (doc["parent_biome"]) {
             biome->parent_biome = normalizeName(doc["parent_biome"].as<std::string>());
         }
+        if (doc["height_multiplier"]) {
+            biome->height_multiplier = doc["height_multiplier"].as<float>();
+        }
 
         // Vegetation
         if (doc["trees_spawn"]) {
@@ -212,6 +215,7 @@ bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
 // ==================== Query Functions ====================
 
 const Biome* BiomeRegistry::getBiome(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(m_registryMutex);
     std::string normalized = normalizeName(name);
     auto it = m_biomeNameToIndex.find(normalized);
     if (it != m_biomeNameToIndex.end()) {
@@ -221,6 +225,7 @@ const Biome* BiomeRegistry::getBiome(const std::string& name) const {
 }
 
 const Biome* BiomeRegistry::getBiomeByIndex(int index) const {
+    std::lock_guard<std::mutex> lock(m_registryMutex);
     if (index >= 0 && index < static_cast<int>(m_biomes.size())) {
         return m_biomes[index].get();
     }
@@ -229,6 +234,7 @@ const Biome* BiomeRegistry::getBiomeByIndex(int index) const {
 
 std::vector<const Biome*> BiomeRegistry::getBiomesInRange(int temp_min, int temp_max,
                                                             int moisture_min, int moisture_max) const {
+    std::lock_guard<std::mutex> lock(m_registryMutex);
     std::vector<const Biome*> result;
     for (const auto& biome : m_biomes) {
         if (biome->temperature >= temp_min && biome->temperature <= temp_max &&
@@ -240,6 +246,7 @@ std::vector<const Biome*> BiomeRegistry::getBiomesInRange(int temp_min, int temp
 }
 
 void BiomeRegistry::clear() {
+    std::lock_guard<std::mutex> lock(m_registryMutex);
     m_biomes.clear();
     m_biomeNameToIndex.clear();
 }

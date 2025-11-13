@@ -45,7 +45,7 @@ public:
     /**
      * Get cave density at a 3D world position
      * Returns value 0.0-1.0 where higher = more solid (not cave)
-     * Values < 0.5 = air (cave), >= 0.5 = solid
+     * Values < 0.45 = air (cave), >= 0.45 = solid
      */
     float getCaveDensityAt(float worldX, float worldY, float worldZ);
 

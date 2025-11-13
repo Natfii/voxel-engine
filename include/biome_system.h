@@ -4,6 +4,7 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <mutex>
 #include <glm/glm.hpp>
 
 // Forward declarations
@@ -46,6 +47,7 @@ struct Biome {
     bool river_compatible = true;        // Can rivers cut through this biome
     int biome_rarity_weight = 50;        // 1-100: how common the biome is (higher = more common)
     std::string parent_biome;            // Parent biome name (for variants based on age/activity)
+    float height_multiplier = 1.0f;      // Terrain height multiplier (1.0 = normal, 2.0 = double height)
 
     // Vegetation
     bool trees_spawn = true;             // Can trees spawn in this biome
@@ -166,4 +168,5 @@ private:
 private:
     std::vector<std::unique_ptr<Biome>> m_biomes;
     std::unordered_map<std::string, int> m_biomeNameToIndex;  // name -> index lookup
+    mutable std::mutex m_registryMutex;  // Protects access to biome data during multi-threaded chunk generation
 };

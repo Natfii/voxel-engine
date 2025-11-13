@@ -19,6 +19,7 @@ lowest_y: 70           # Higher base elevation
 biome_rarity_weight: 35  # Somewhat uncommon
 river_compatible: true   # Rivers flow down mountains
 underwater_biome: false
+height_multiplier: 1.5   # 50% taller than normal terrain
 
 # Primary blocks
 primary_surface_block: 1   # Stone (exposed rock on peaks)
