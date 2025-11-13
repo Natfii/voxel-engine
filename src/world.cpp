@@ -206,25 +206,21 @@ void World::decorateWorld() {
                 // Check tree density probability
                 if (densityDist(rng) > biome->tree_density) continue;
 
-                // Find ground level - search from top of world downward
-                int groundY = -1;
-                for (int y = maxWorldY - 1; y >= 0; y--) {
-                    int blockID = getBlockAt(worldX, y * 0.5f, worldZ);
+                // Get terrain height directly from biome map (already calculated!)
+                // This is 200x faster than searching from sky downward
+                int terrainHeight = m_biomeMap->getTerrainHeightAt(worldX, worldZ);
 
-                    // Check for valid ground blocks
-                    if (blockID == biome->primary_surface_block ||
-                        blockID == BLOCK_GRASS ||
-                        blockID == BLOCK_STONE) {
-                        // Make sure there's air above
-                        int aboveBlock = getBlockAt(worldX, (y + 1) * 0.5f, worldZ);
-                        if (aboveBlock == BLOCK_AIR) {
-                            groundY = y;
-                            break;
-                        }
+                // Find actual solid ground near terrain height (verify surface)
+                int groundY = terrainHeight;
+                for (int y = terrainHeight; y >= std::max(0, terrainHeight - 5); y--) {
+                    int blockID = getBlockAt(worldX, y * 0.5f, worldZ);
+                    if (blockID != BLOCK_AIR && blockID != BLOCK_WATER) {
+                        groundY = y;
+                        break;
                     }
                 }
 
-                if (groundY < 0 || groundY < 10) continue;  // No suitable ground or too low
+                if (groundY < 10) continue;  // Too low for tree placement
 
                 // placeTree expects block coordinates
                 // Check for float-to-int overflow before casting

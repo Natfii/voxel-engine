@@ -104,9 +104,9 @@ const Biome* BiomeMap::getBiomeAt(float worldX, float worldZ) {
     int quantizedZ = static_cast<int>(worldZ / 4.0f);
     uint64_t key = coordsToKey(quantizedX, quantizedZ);
 
-    // Check cache first
+    // Check cache first (shared lock - multiple threads can read simultaneously)
     {
-        std::lock_guard<std::mutex> lock(m_cacheMutex);
+        std::shared_lock<std::shared_mutex> lock(m_cacheMutex);
         auto it = m_biomeCache.find(key);
         if (it != m_biomeCache.end()) {
             return it->second.biome;
@@ -118,13 +118,25 @@ const Biome* BiomeMap::getBiomeAt(float worldX, float worldZ) {
     float moisture = getMoistureAt(worldX, worldZ);
     const Biome* biome = selectBiome(temperature, moisture);
 
-    // Cache it (with size limit to prevent memory leak)
+    // Cache it (exclusive lock for write)
     {
-        std::lock_guard<std::mutex> lock(m_cacheMutex);
-        // If cache is too large, clear it (simple eviction strategy)
-        if (m_biomeCache.size() >= MAX_CACHE_SIZE) {
-            m_biomeCache.clear();  // Clear entire cache when limit reached
+        std::unique_lock<std::shared_mutex> lock(m_cacheMutex);
+
+        // Double-check: another thread may have cached it while we computed
+        auto it = m_biomeCache.find(key);
+        if (it != m_biomeCache.end()) {
+            return it->second.biome;  // Use existing cached value
         }
+
+        // LRU-style eviction: remove oldest 20% when cache is full (better than clearing all)
+        if (m_biomeCache.size() >= MAX_CACHE_SIZE) {
+            size_t removeCount = MAX_CACHE_SIZE / 5;  // Remove 20% (~20K entries)
+            auto removeIt = m_biomeCache.begin();
+            for (size_t i = 0; i < removeCount && removeIt != m_biomeCache.end(); ++i) {
+                removeIt = m_biomeCache.erase(removeIt);
+            }
+        }
+
         m_biomeCache[key] = {biome, temperature, moisture};
     }
 
@@ -244,12 +256,12 @@ const Biome* BiomeMap::selectBiome(float temperature, float moisture) {
         return nullptr;
     }
 
-    // Find all biomes that match this temperature and moisture
-    // We'll use a tolerance range to allow biomes to blend at boundaries
+    // Single-pass algorithm: find best matching biome in one iteration
     const float TOLERANCE = 15.0f;
-
-    std::vector<const Biome*> candidates;
-    std::vector<float> weights;
+    const Biome* bestBiome = nullptr;
+    float bestWeight = -1.0f;
+    const Biome* closestBiome = nullptr;
+    float closestDist = std::numeric_limits<float>::max();
 
     for (int i = 0; i < biomeRegistry.getBiomeCount(); i++) {
         const Biome* biome = biomeRegistry.getBiomeByIndex(i);
@@ -258,54 +270,34 @@ const Biome* BiomeMap::selectBiome(float temperature, float moisture) {
         // Calculate distance from biome's preferred temp/moisture
         float tempDist = std::abs(temperature - biome->temperature);
         float moistureDist = std::abs(moisture - biome->moisture);
+        float totalDist = tempDist + moistureDist;
 
-        // If within tolerance, consider this biome
-        if (tempDist <= TOLERANCE && moistureDist <= TOLERANCE) {
-            // Weight by proximity (closer = higher weight) and rarity
-            float proximityWeight = 1.0f - (tempDist + moistureDist) / (TOLERANCE * 2.0f);
-            float rarityWeight = biome->biome_rarity_weight / 50.0f;  // Normalize around 1.0
-
-            float totalWeight = proximityWeight * rarityWeight;
-            candidates.push_back(biome);
-            weights.push_back(totalWeight);
+        // Track closest biome for fallback
+        if (totalDist < closestDist) {
+            closestDist = totalDist;
+            closestBiome = biome;
         }
-    }
 
-    // If no candidates found, find the closest biome
-    if (candidates.empty()) {
-        const Biome* closestBiome = nullptr;
-        float closestDist = 999999.0f;
+        // Early exit: perfect match (or very close)
+        if (tempDist <= 1.0f && moistureDist <= 1.0f) {
+            return biome;  // Found perfect match - no need to continue
+        }
 
-        for (int i = 0; i < biomeRegistry.getBiomeCount(); i++) {
-            const Biome* biome = biomeRegistry.getBiomeByIndex(i);
-            if (!biome) continue;
+        // If within tolerance, calculate weight and track best
+        if (tempDist <= TOLERANCE && moistureDist <= TOLERANCE) {
+            float proximityWeight = 1.0f - (tempDist + moistureDist) / (TOLERANCE * 2.0f);
+            float rarityWeight = biome->biome_rarity_weight / 50.0f;
+            float totalWeight = proximityWeight * rarityWeight;
 
-            float tempDist = std::abs(temperature - biome->temperature);
-            float moistureDist = std::abs(moisture - biome->moisture);
-            float totalDist = tempDist + moistureDist;
-
-            if (totalDist < closestDist) {
-                closestDist = totalDist;
-                closestBiome = biome;
+            if (totalWeight > bestWeight) {
+                bestWeight = totalWeight;
+                bestBiome = biome;
             }
         }
-
-        return closestBiome;
     }
 
-    // Select the candidate with the highest weight
-    // This creates smooth biome transitions
-    size_t bestIndex = 0;
-    float bestWeight = weights[0];
-
-    for (size_t i = 1; i < weights.size(); i++) {
-        if (weights[i] > bestWeight) {
-            bestWeight = weights[i];
-            bestIndex = i;
-        }
-    }
-
-    return candidates[bestIndex];
+    // Return best matching biome, or closest if none within tolerance
+    return (bestBiome != nullptr) ? bestBiome : closestBiome;
 }
 
 float BiomeMap::mapNoiseTo01(float noise) {

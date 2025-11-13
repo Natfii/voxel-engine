@@ -22,7 +22,7 @@
 
 // Static member initialization
 std::unique_ptr<FastNoiseLite> Chunk::s_noise = nullptr;
-static std::mutex s_noiseMutex;  // Protect noise access for thread safety
+// Note: s_noiseMutex removed - FastNoiseLite is thread-safe for reads
 
 void Chunk::initNoise(int seed) {
     if (s_noise == nullptr) {
@@ -459,7 +459,10 @@ void Chunk::generateMesh(World* world) {
                         int worldZ = m_z * DEPTH + Z;
 
                         // Simple hash function for pseudo-random offset
-                        unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
+                        // Cast to unsigned before multiplication to avoid signed integer overflow (UB)
+                        unsigned int seed = (static_cast<unsigned int>(worldX) * 73856093U) ^
+                                          (static_cast<unsigned int>(worldY) * 19349663U) ^
+                                          (static_cast<unsigned int>(worldZ) * 83492791U);
                         float randU = ((seed >> 0) & 0xFF) / 255.0f;
                         float randV = ((seed >> 8) & 0xFF) / 255.0f;
 
@@ -789,6 +792,13 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
         }
         throw;  // Re-throw to caller
     }
+
+    // Free CPU-side mesh data after successful GPU upload
+    // Data is now on GPU (DEVICE_LOCAL memory), no need to keep CPU copy
+    m_vertices.clear();
+    m_vertices.shrink_to_fit();
+    m_indices.clear();
+    m_indices.shrink_to_fit();
     }  // End of opaque buffer creation
 
     // ========== CREATE TRANSPARENT BUFFERS ==========
@@ -881,11 +891,21 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
             }
             throw;  // Re-throw to caller
         }
+
+        // Free CPU-side transparent mesh data after successful GPU upload
+        m_transparentVertices.clear();
+        m_transparentVertices.shrink_to_fit();
+        m_transparentIndices.clear();
+        m_transparentIndices.shrink_to_fit();
     }  // End of transparent buffer creation
 }
 
 void Chunk::destroyBuffers(VulkanRenderer* renderer) {
     VkDevice device = renderer->getDevice();
+
+    // CRITICAL: Wait for GPU to finish using these buffers before destroying
+    // Without this, we could destroy buffers while GPU is still rendering them -> corruption/crashes
+    vkDeviceWaitIdle(device);
 
     // Destroy opaque buffers
     if (m_vertexBuffer != VK_NULL_HANDLE) {

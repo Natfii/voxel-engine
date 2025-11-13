@@ -4,6 +4,7 @@
 #include "biome_system.h"
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 #include <glm/glm.hpp>
 
@@ -67,9 +68,6 @@ private:
     std::unique_ptr<FastNoiseLite> m_temperatureVariation;
     std::unique_ptr<FastNoiseLite> m_moistureVariation;
 
-    // Thread safety
-    mutable std::mutex m_noiseMutex;
-
     // Cached biome lookups (for performance)
     struct BiomeCell {
         const Biome* biome;
@@ -78,7 +76,7 @@ private:
     };
     static constexpr size_t MAX_CACHE_SIZE = 100000;  // ~3MB max (prevents memory leak)
     std::unordered_map<uint64_t, BiomeCell> m_biomeCache;
-    mutable std::mutex m_cacheMutex;
+    mutable std::shared_mutex m_cacheMutex;  // Shared mutex: parallel reads, exclusive writes
 
     // Helper functions
     uint64_t coordsToKey(int x, int z) const;
