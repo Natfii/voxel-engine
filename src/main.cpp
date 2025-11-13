@@ -43,6 +43,7 @@
 #include "raycast.h"
 #include "input_manager.h"
 #include "inventory.h"
+#include "terrain_constants.h"
 // BlockIconRenderer is now part of block_system.h
 
 // Global variables
