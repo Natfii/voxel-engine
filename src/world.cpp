@@ -160,7 +160,8 @@ void World::decorateWorld() {
     Logger::info() << "Starting world decoration (trees, vegetation)...";
 
     // Generate per-biome tree templates first (each biome gets 10 unique tree templates)
-    BiomeRegistry::getInstance().generateTreeTemplates(m_treeGenerator);
+    // Use .get() to extract raw pointer from unique_ptr (safe borrowing - function doesn't store pointer)
+    BiomeRegistry::getInstance().generateTreeTemplates(m_treeGenerator.get());
 
     int treesPlaced = 0;
     int undergroundFeaturesPlaced = 0;
