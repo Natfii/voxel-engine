@@ -1,0 +1,13 @@
+id: 9
+name: "Spruce Leaves"
+texture: "spruce leaves.png"
+texture_variation: 1.1
+durability: 1
+liquid: false
+affected_by_gravity: false
+flammability: 1
+transparency: 0.0
+
+# Biome compatibility
+temperature_range: "0-30"  # Cold climates
+moisture_range: "40-90"     # Needs moderate to high moisture
