@@ -205,7 +205,7 @@ int main() {
         int spawnGroundY = -1;
         const int WATER_LEVEL = 62;  // From terrain_constants.h
 
-        auto isSafeSpawn = [&world](float x, float z, int groundY) -> bool {
+        auto isSafeSpawn = [&](float x, float z, int groundY) -> bool {
             // Must be above water
             if (groundY < WATER_LEVEL) return false;
 
