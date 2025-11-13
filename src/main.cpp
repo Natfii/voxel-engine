@@ -158,8 +158,11 @@ int main() {
         // Get world configuration from config file
         int seed = config.getInt("World", "seed", 1124345);
         int worldWidth = config.getInt("World", "world_width", 12);
-        int worldHeight = config.getInt("World", "world_height", 3);
         int worldDepth = config.getInt("World", "world_depth", 12);
+
+        // World height is hardcoded as near-infinite to match Minecraft's horizontal infinite feel
+        // See TerrainGeneration::WORLD_HEIGHT_CHUNKS for the constant
+        const int worldHeight = TerrainGeneration::WORLD_HEIGHT_CHUNKS;
 
         std::cout << "Loading block registry with textures..." << std::endl;
         BlockRegistry::instance().loadBlocks("assets/blocks", &renderer);
@@ -287,9 +290,12 @@ int main() {
             spawnX = 0.0f;
             spawnZ = 0.0f;
 
-            // Find actual ground at origin by searching downward from high up
-            spawnGroundY = 100;  // Start search high
-            for (int y = 100; y >= 0; y--) {
+            // Get terrain height from biome map (works with any world height)
+            int terrainHeight = world.getBiomeMap()->getTerrainHeightAt(0.0f, 0.0f);
+
+            // Find actual ground at origin by searching downward from terrain height
+            spawnGroundY = terrainHeight;
+            for (int y = terrainHeight; y >= std::max(0, terrainHeight - 20); y--) {
                 int blockID = world.getBlockAt(0.0f, y * 0.5f, 0.0f);
                 if (blockID != 0 && blockID != 5) {  // Solid block (not air/water)
                     spawnGroundY = y;
@@ -297,10 +303,10 @@ int main() {
                 }
             }
 
-            // If still no ground found, emergency fallback
+            // If still no ground found, emergency fallback uses terrain height
             if (spawnGroundY < 0 || world.getBlockAt(0.0f, spawnGroundY * 0.5f, 0.0f) == 0) {
-                std::cout << "CRITICAL: No ground found anywhere, emergency spawn at Y=80" << std::endl;
-                spawnGroundY = 80;
+                std::cout << "CRITICAL: No ground found anywhere, emergency spawn at terrain height Y=" << terrainHeight << std::endl;
+                spawnGroundY = terrainHeight;
             }
         }
 

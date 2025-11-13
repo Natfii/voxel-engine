@@ -167,9 +167,14 @@ float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
     // Map from [-1, 1] to [0, 1]
     float density = mapNoiseTo01(caveNoise);
 
-    // Make caves rarer near the surface (top 20 blocks)
-    if (worldY > 50) {
-        float surfaceProximity = std::min(1.0f, (worldY - 50.0f) / 20.0f);
+    // Make caves rarer near the surface (top 20 blocks below terrain height)
+    // This works with any world height by being relative to terrain
+    int terrainHeight = getTerrainHeightAt(worldX, worldZ);
+    float depthBelowSurface = terrainHeight - worldY;
+
+    if (depthBelowSurface < 20.0f && depthBelowSurface > 0.0f) {
+        // Near surface - make caves rarer
+        float surfaceProximity = 1.0f - (depthBelowSurface / 20.0f);  // 1.0 at surface, 0.0 at depth 20
         density = density + surfaceProximity * (1.0f - density);  // Push towards solid
     }
 

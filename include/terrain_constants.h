@@ -8,6 +8,9 @@
 #pragma once
 
 namespace TerrainGeneration {
+    // World dimensions
+    constexpr int WORLD_HEIGHT_CHUNKS = 512;     ///< World height in chunks (16384 blocks, near-infinite vertical)
+
     // Terrain height generation
     constexpr int BASE_HEIGHT = 64;              ///< Base terrain height in blocks (Y coordinate)
     constexpr float HEIGHT_VARIATION = 12.0f;    ///< Max height variation above/below base (blocks)
