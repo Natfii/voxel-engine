@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include <chrono>
 #include <vector>
+#include <string>
+#include <cstdlib>
 
 // ============================================================
 // Test Assertion Macros
@@ -197,22 +199,34 @@ extern MockVulkanRenderer g_testRenderer;
 // Mock Biome System
 // ============================================================
 
+// Forward declare Biome struct to match BiomeMap interface
+struct Biome;
+
 class MockBiomeMap {
 public:
-    int getTerrainHeightAt(float x, float z) const {
+    // Match the exact interface of BiomeMap class
+    const Biome* getBiomeAt(float worldX, float worldZ) const {
+        return nullptr;  // Chunk::generate() handles null case with fallback
+    }
+
+    int getTerrainHeightAt(float worldX, float worldZ) const {
         return 30;  // Constant height for testing
     }
 
-    int getBiomeAt(float x, float z) const {
-        return 0;  // Default biome
-    }
-
-    float getTemperatureAt(float x, float z) const {
+    float getTemperatureAt(float worldX, float worldZ) const {
         return 0.5f;
     }
 
-    float getHumidityAt(float x, float z) const {
+    float getMoistureAt(float worldX, float worldZ) const {
         return 0.5f;
+    }
+
+    float getCaveDensityAt(float worldX, float worldY, float worldZ) const {
+        return 1.0f;  // Solid (no caves) for testing
+    }
+
+    bool isUndergroundBiomeAt(float worldX, float worldY, float worldZ) const {
+        return false;  // No underground biomes for testing
     }
 };
 

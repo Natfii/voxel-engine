@@ -24,7 +24,7 @@ TEST(ChunkGenerationDeterministic) {
     // Generate first chunk
     Chunk c1(0, 0, 0);
     MockBiomeMap biomeMap;
-    c1.generate(&biomeMap);
+    c1.generate(reinterpret_cast<class BiomeMap*>(&biomeMap));
 
     // Store block data
     int blocksCopy[32][32][32];
@@ -41,7 +41,7 @@ TEST(ChunkGenerationDeterministic) {
 
     // Generate second chunk with same seed
     Chunk c2(0, 0, 0);
-    c2.generate(&biomeMap);
+    c2.generate(reinterpret_cast<class BiomeMap*>(&biomeMap));
 
     // Verify identical blocks
     int differences = 0;
@@ -90,7 +90,7 @@ TEST(ChunkStateTransitions) {
     {
         Chunk c(5, 5, 5);
         MockBiomeMap biomeMap;
-        c.generate(&biomeMap);
+        c.generate(reinterpret_cast<class BiomeMap*>(&biomeMap));
 
         bool hasBlocks = false;
         for (int x = 0; x < 32; x++) {
@@ -112,7 +112,7 @@ TEST(ChunkStateTransitions) {
     {
         Chunk c(5, 5, 5);
         MockBiomeMap biomeMap;
-        c.generate(&biomeMap);
+        c.generate(reinterpret_cast<class BiomeMap*>(&biomeMap));
 
         World world(3, 3, 3);
         world.generateWorld();
@@ -129,7 +129,7 @@ TEST(ChunkStateTransitions) {
     {
         Chunk c(5, 5, 5);
         MockBiomeMap biomeMap;
-        c.generate(&biomeMap);
+        c.generate(reinterpret_cast<class BiomeMap*>(&biomeMap));
 
         // Non-empty chunk should have some vertices
         if (c.getVertexCount() > 0) {
