@@ -113,3 +113,6 @@ add_custom_command(TARGET voxel-engine POST_BUILD
         $<TARGET_FILE_DIR:voxel-engine>/docs
     COMMENT "Copying documentation to build directory"
 )
+
+# Add tests subdirectory
+add_subdirectory(tests)
