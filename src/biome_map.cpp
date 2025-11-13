@@ -151,10 +151,9 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     // Calculate final height
     int height = BASE_HEIGHT + static_cast<int>(noise * heightVariation);
 
-    // Apply biome's lowest_y constraint
-    if (height < biome->lowest_y) {
-        height = biome->lowest_y;
-    }
+    // NOTE: Do NOT clamp to lowest_y here - that creates floating terrain with void underneath!
+    // The lowest_y property is for biome spawn elevation, not terrain height limits.
+    // We must always generate terrain from Y=0 upward to avoid gaps.
 
     return height;
 }

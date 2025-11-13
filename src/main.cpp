@@ -209,6 +209,14 @@ int main() {
             // Must be above water
             if (groundY < WATER_LEVEL) return false;
 
+            // CRITICAL: Verify ground is actually solid (not floating terrain)
+            // Check at least 3 blocks below ground are solid
+            for (int dy = -1; dy >= -3; dy--) {
+                if (groundY + dy < 0) break;  // Hit bedrock equivalent
+                int blockBelow = world.getBlockAt(x, (groundY + dy) * 0.5f, z);
+                if (blockBelow == 0) return false;  // Gap below - floating terrain!
+            }
+
             // Check for 3 blocks of clear space above ground
             for (int dy = 1; dy <= 3; dy++) {
                 int blockAbove = world.getBlockAt(x, (groundY + dy) * 0.5f, z);
@@ -273,16 +281,32 @@ int main() {
             }
         }
 
-        // Fallback if no safe spawn found (should be rare)
+        // Fallback if no safe spawn found (should be rare with proper terrain)
         if (!foundSafeSpawn) {
-            std::cout << "WARNING: Could not find safe spawn, using fallback position" << std::endl;
+            std::cout << "WARNING: Could not find safe spawn in radius, searching at origin..." << std::endl;
             spawnX = 0.0f;
             spawnZ = 0.0f;
-            spawnGroundY = std::max(WATER_LEVEL + 5, 70);  // High enough to be safe
+
+            // Find actual ground at origin by searching downward from high up
+            spawnGroundY = 100;  // Start search high
+            for (int y = 100; y >= 0; y--) {
+                int blockID = world.getBlockAt(0.0f, y * 0.5f, 0.0f);
+                if (blockID != 0 && blockID != 5) {  // Solid block (not air/water)
+                    spawnGroundY = y;
+                    break;
+                }
+            }
+
+            // If still no ground found, emergency fallback
+            if (spawnGroundY < 0 || world.getBlockAt(0.0f, spawnGroundY * 0.5f, 0.0f) == 0) {
+                std::cout << "CRITICAL: No ground found anywhere, emergency spawn at Y=80" << std::endl;
+                spawnGroundY = 80;
+            }
         }
 
-        // Convert to world coordinates with eye height
-        float spawnY = (spawnGroundY + 2) * 0.5f + 0.8f;  // ground + 2 blocks + eye height
+        // Convert to world coordinates with eye height (feet position, not eye position)
+        // Player constructor expects feet position, so don't add eye height
+        float spawnY = (spawnGroundY + 1) * 0.5f;  // 1 block above ground (feet position)
 
         std::cout << "Safe spawn found at (" << spawnX << ", " << spawnY << ", " << spawnZ
                   << ") - ground: Y=" << spawnGroundY << " (searched radius: "
