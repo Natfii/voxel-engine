@@ -16,6 +16,7 @@
 #include "world.h"
 #include "world_utils.h"
 #include "world_constants.h"
+#include "terrain_constants.h"
 #include "vulkan_renderer.h"
 #include "frustum.h"
 #include "debug_state.h"
@@ -134,8 +135,6 @@ void World::generateWorld() {
 }
 
 void World::decorateWorld() {
-    using namespace TerrainGeneration;
-
     Logger::info() << "Starting world decoration (trees, vegetation)...";
 
     // Generate tree templates first
@@ -223,9 +222,9 @@ void World::decorateWorld() {
                         for (int dx = -1; dx <= 1; dx++) {
                             for (int dy = -1; dy <= 1; dy++) {
                                 for (int dz = -1; dz <= 1; dz++) {
-                                    Chunk* neighbor = getChunkAt(centerChunk->getX() + dx,
-                                                                   centerChunk->getY() + dy,
-                                                                   centerChunk->getZ() + dz);
+                                    Chunk* neighbor = getChunkAt(centerChunk->getChunkX() + dx,
+                                                                   centerChunk->getChunkY() + dy,
+                                                                   centerChunk->getChunkZ() + dz);
                                     if (neighbor) modifiedChunks.insert(neighbor);
                                 }
                             }
