@@ -156,6 +156,74 @@ int main() {
         ImGui_ImplVulkan_CreateFontsTexture();
         // Note: ImGui will handle font upload in the next frame
 
+        // ========== LOADING SCREEN SYSTEM ==========
+        // Helper to render loading screen with progress and animated dots
+        float loadingProgress = 0.0f;
+        std::string loadingMessage = "Initializing";
+        bool loadingComplete = false;
+        int dotAnimationFrame = 0;
+
+        auto renderLoadingScreen = [&]() {
+            if (loadingComplete) return;
+
+            if (!renderer.beginFrame()) return;
+
+            // Animate dots pattern: .  ..  ...  .  ..  ... (cycles every 6 frames)
+            const char* dotPatterns[] = {".", "..", "...", ".", "..", "..."};
+            std::string animatedMessage = loadingMessage + dotPatterns[dotAnimationFrame % 6];
+            dotAnimationFrame++;
+
+            // Start ImGui frame
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+
+            // Full-screen black overlay
+            ImGuiIO& io = ImGui::GetIO();
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(io.DisplaySize);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            ImGui::Begin("LoadingOverlay", nullptr,
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs);
+
+            // Center the loading UI
+            float centerX = io.DisplaySize.x * 0.5f;
+            float centerY = io.DisplaySize.y * 0.5f;
+
+            // Loading text with animated dots
+            ImGui::SetCursorPos(ImVec2(centerX - 150, centerY - 50));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::Text("%s", animatedMessage.c_str());
+            ImGui::PopStyleColor();
+
+            // Progress bar
+            ImGui::SetCursorPos(ImVec2(centerX - 150, centerY));
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+            ImGui::ProgressBar(loadingProgress, ImVec2(300, 30), "");
+            ImGui::PopStyleColor();
+
+            // Percentage text
+            ImGui::SetCursorPos(ImVec2(centerX - 30, centerY + 40));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+            ImGui::Text("%.0f%%", loadingProgress * 100.0f);
+            ImGui::PopStyleColor();
+
+            ImGui::End();
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
+
+            // Render ImGui
+            ImGui::Render();
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), renderer.getCurrentCommandBuffer());
+
+            renderer.endFrame();
+            glfwPollEvents();  // Keep window responsive
+        };
+
         // Get world configuration from config file
         int seed = config.getInt("World", "seed", 1124345);
         int worldWidth = config.getInt("World", "world_width", 12);
@@ -165,16 +233,31 @@ int main() {
         // See TerrainGeneration::WORLD_HEIGHT_CHUNKS for the constant
         const int worldHeight = TerrainGeneration::WORLD_HEIGHT_CHUNKS;
 
+        // Loading stage 1: Block registry (10%)
+        loadingProgress = 0.05f;
+        loadingMessage = "Loading blocks and textures";
+        renderLoadingScreen();
         std::cout << "Loading block registry with textures..." << std::endl;
         BlockRegistry::instance().loadBlocks("assets/blocks", &renderer);
 
+        // Loading stage 2: Structure registry (15%)
+        loadingProgress = 0.15f;
+        loadingMessage = "Loading structures";
+        renderLoadingScreen();
         std::cout << "Loading structure registry..." << std::endl;
         StructureRegistry::instance().loadStructures("assets/structures");
 
+        // Loading stage 3: Biome registry (20%)
+        loadingProgress = 0.20f;
+        loadingMessage = "Loading biomes";
+        renderLoadingScreen();
         std::cout << "Loading biome registry..." << std::endl;
         BiomeRegistry::getInstance().loadBiomes("assets/biomes");
 
-        // Bind texture atlas to renderer descriptor sets
+        // Loading stage 4: Bind textures (25%)
+        loadingProgress = 0.25f;
+        loadingMessage = "Setting up renderer";
+        renderLoadingScreen();
         std::cout << "Binding texture atlas..." << std::endl;
         renderer.bindAtlasTexture(
             BlockRegistry::instance().getAtlasImageView(),
@@ -190,18 +273,39 @@ int main() {
         );
         BlockIconRenderer::init(atlasImGuiDescriptor);
 
+        // Loading stage 5: Initialize world (30%)
+        loadingProgress = 0.30f;
+        loadingMessage = "Initializing world generator";
+        renderLoadingScreen();
         std::cout << "Initializing world generation..." << std::endl;
         Chunk::initNoise(seed);
         World world(worldWidth, worldHeight, worldDepth, seed);
 
+        // Loading stage 6: Generate terrain (60%)
+        loadingProgress = 0.35f;
+        loadingMessage = "Generating world";
+        renderLoadingScreen();
         std::cout << "Generating world..." << std::endl;
         world.generateWorld();
 
+        // Loading stage 7: Decorate world (75%)
+        loadingProgress = 0.65f;
+        loadingMessage = "Growing trees and vegetation";
+        renderLoadingScreen();
         std::cout << "Decorating world (trees, vegetation)..." << std::endl;
         world.decorateWorld();
 
+        // Loading stage 8: Create GPU buffers (85%)
+        loadingProgress = 0.80f;
+        loadingMessage = "Creating GPU buffers";
+        renderLoadingScreen();
         std::cout << "Creating GPU buffers..." << std::endl;
         world.createBuffers(&renderer);
+
+        // Loading stage 9: Finding spawn location (90%)
+        loadingProgress = 0.88f;
+        loadingMessage = "Finding safe spawn location";
+        renderLoadingScreen();
 
         // Find a safe spawn location - search in expanding spiral if needed
         float spawnX = 0.0f;
@@ -318,8 +422,17 @@ int main() {
         std::cout << "Safe spawn found at (" << spawnX << ", " << spawnY << ", " << spawnZ
                   << ") - ground: Y=" << spawnGroundY << " (searched radius: "
                   << (foundSafeSpawn ? "found" : "fallback") << ")" << std::endl;
+
+        // Loading stage 10: Spawning player (95%)
+        loadingProgress = 0.95f;
+        loadingMessage = "Spawning player";
+        renderLoadingScreen();
         Player player(glm::vec3(spawnX, spawnY, spawnZ), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
 
+        // Loading stage 11: Initializing game systems (98%)
+        loadingProgress = 0.98f;
+        loadingMessage = "Initializing game systems";
+        renderLoadingScreen();
         PauseMenu pauseMenu(window);
 
         // Create targeting system (replaces crosshair + block_outline)
@@ -333,6 +446,23 @@ int main() {
         // Create inventory system
         Inventory inventory;
         g_inventory = &inventory;
+
+        // Loading stage 12: Final check - wait for player to be on ground (100%)
+        loadingProgress = 0.99f;
+        loadingMessage = "Ready";
+        renderLoadingScreen();
+
+        // Verify player is safely on the ground before hiding loading screen
+        // Update physics once to ensure player settles
+        player.update(0.016f, &world);  // 1 frame at 60fps
+
+        // Final loading screen frame at 100%
+        loadingProgress = 1.0f;
+        loadingMessage = "Ready";
+        renderLoadingScreen();
+
+        // Hide loading screen - game is ready!
+        loadingComplete = true;
 
         bool isPaused = false;
         bool escPressed = false;
