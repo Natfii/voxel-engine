@@ -36,27 +36,25 @@ public:
     TreeGenerator(int seed);
 
     /**
-     * Generate a tree at the specified world position
+     * Generate a tree at the specified world position using biome's tree templates
      * @param world World to place tree in
      * @param x World X coordinate (base of tree)
      * @param y World Y coordinate (ground level)
      * @param z World Z coordinate (base of tree)
-     * @param treeType Tree template index (0-9)
-     * @param logBlockID Block ID for trunk/branches
-     * @param leavesBlockID Block ID for leaves
+     * @param biome Biome to use tree templates from
      * @return true if tree was placed successfully
      */
-    bool placeTree(World* world, int x, int y, int z, int treeType,
-                   int logBlockID, int leavesBlockID);
+    bool placeTree(World* world, int x, int y, int z, const struct Biome* biome);
 
     /**
-     * Generate all tree templates (10 types of varying sizes)
-     * Called once during world initialization
+     * Generate tree templates for a specific biome
+     * Creates 10 unique tree templates with the biome's log and leaf blocks
+     * @param biome Biome to generate templates for (modifies biome.tree_templates)
      */
-    void generateTreeTemplates(int logBlockID, int leavesBlockID);
+    void generateTreeTemplatesForBiome(struct Biome* biome);
 
     /**
-     * Get a random tree type index based on rng
+     * Get a random tree type index (0-9) based on rng
      */
     int getRandomTreeType();
 
@@ -78,5 +76,4 @@ private:
 
 private:
     std::mt19937 m_rng;
-    std::vector<TreeTemplate> m_templates;  // 10 tree templates
 };

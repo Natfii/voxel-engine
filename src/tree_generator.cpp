@@ -1,5 +1,6 @@
 #include "tree_generator.h"
 #include "world.h"
+#include "biome_system.h"
 #include "terrain_constants.h"
 #include <cmath>
 
@@ -7,14 +8,20 @@ TreeGenerator::TreeGenerator(int seed) : m_rng(seed + 9999) {
     // Seed offset to make trees different from terrain
 }
 
-void TreeGenerator::generateTreeTemplates(int logBlockID, int leavesBlockID) {
-    m_templates.clear();
-    m_templates.reserve(10);
+void TreeGenerator::generateTreeTemplatesForBiome(Biome* biome) {
+    if (!biome) return;
 
-    // Generate 10 different tree types
+    // Get block IDs for this biome (use defaults if not specified)
+    int logBlockID = (biome->primary_log_block >= 0) ? biome->primary_log_block : TerrainGeneration::BLOCK_OAK_LOG;
+    int leavesBlockID = (biome->primary_leave_block >= 0) ? biome->primary_leave_block : TerrainGeneration::BLOCK_LEAVES;
+
+    biome->tree_templates.clear();
+    biome->tree_templates.reserve(10);
+
+    // Generate 10 different tree types for this biome
     for (int i = 0; i < 10; i++) {
         TreeTemplate tree;
-        tree.type_name = "tree_" + std::to_string(i);
+        tree.type_name = biome->name + "_tree_" + std::to_string(i);
 
         if (i < 3) {
             // Small trees (height 4-6)
@@ -27,17 +34,22 @@ void TreeGenerator::generateTreeTemplates(int logBlockID, int leavesBlockID) {
             generateLargeTree(tree, logBlockID, leavesBlockID);
         }
 
-        m_templates.push_back(std::move(tree));
+        biome->tree_templates.push_back(std::move(tree));
     }
 }
 
-bool TreeGenerator::placeTree(World* world, int blockX, int blockY, int blockZ, int treeType,
-                                int logBlockID, int leavesBlockID) {
-    if (treeType < 0 || treeType >= static_cast<int>(m_templates.size())) {
+bool TreeGenerator::placeTree(World* world, int blockX, int blockY, int blockZ, const Biome* biome) {
+    if (!biome || biome->tree_templates.empty()) {
         return false;
     }
 
-    const TreeTemplate& tree = m_templates[treeType];
+    // Pick a random tree template from this biome
+    int treeType = getRandomTreeType();
+    if (treeType >= static_cast<int>(biome->tree_templates.size())) {
+        treeType = 0;  // Fallback to first template
+    }
+
+    const TreeTemplate& tree = biome->tree_templates[treeType];
 
     // Check if there's enough space (don't replace existing blocks except air/grass)
     for (const auto& block : tree.blocks) {
@@ -78,10 +90,8 @@ bool TreeGenerator::placeTree(World* world, int blockX, int blockY, int blockZ, 
 }
 
 int TreeGenerator::getRandomTreeType() {
-    if (m_templates.empty()) {
-        return 0;
-    }
-    std::uniform_int_distribution<int> dist(0, static_cast<int>(m_templates.size()) - 1);
+    // Return random index 0-9 (10 tree templates per biome)
+    std::uniform_int_distribution<int> dist(0, 9);
     return dist(m_rng);
 }
 

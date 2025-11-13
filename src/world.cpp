@@ -88,6 +88,10 @@ World::World(int width, int height, int depth, int seed)
     m_treeGenerator = std::make_unique<TreeGenerator>(seed);
     Logger::info() << "Tree generator initialized";
 
+    // Generate tree templates for all biomes (each biome gets unique trees)
+    BiomeRegistry::getInstance().generateTreeTemplates(m_treeGenerator.get());
+    Logger::info() << "Generated unique tree templates for each biome";
+
     // Initialize water simulation and particle systems
     m_waterSimulation = std::make_unique<WaterSimulation>();
     m_particleSystem = std::make_unique<ParticleSystem>();
@@ -222,11 +226,6 @@ void World::decorateWorld() {
 
                 if (groundY < 0 || groundY < 10) continue;  // No suitable ground or too low
 
-                // Place tree
-                int treeType = m_treeGenerator->getRandomTreeType();
-                int logID = (biome->primary_log_block >= 0) ? biome->primary_log_block : BLOCK_OAK_LOG;
-                int leavesID = (biome->primary_leave_block >= 0) ? biome->primary_leave_block : BLOCK_LEAVES;
-
                 // placeTree expects block coordinates
                 // Check for float-to-int overflow before casting
                 float blockXf = worldX / 0.5f;
@@ -237,8 +236,8 @@ void World::decorateWorld() {
                 int blockX = static_cast<int>(blockXf);
                 int blockZ = static_cast<int>(blockZf);
 
-                if (m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ,
-                                               treeType, logID, leavesID)) {
+                // Place tree using biome's tree templates (each biome has unique trees)
+                if (m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ, biome)) {
                     treesPlaced++;
 
                     // Track affected chunks (tree + neighbors) for mesh regeneration

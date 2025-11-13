@@ -9,6 +9,7 @@
 
 // Forward declarations
 class VulkanRenderer;
+struct TreeTemplate;
 
 /**
  * Represents the location where a biome can spawn
@@ -81,6 +82,9 @@ struct Biome {
     // Ore Distribution
     std::vector<OreSpawnRate> ore_spawn_rates;  // Ore spawn multipliers
 
+    // Tree Generation (per-biome tree templates for unique tree styles)
+    std::vector<TreeTemplate> tree_templates;  // 10 unique tree templates for this biome
+
     // Constructor
     Biome() = default;
 };
@@ -104,6 +108,13 @@ public:
      * @return true if loading was successful, false otherwise
      */
     bool loadBiomes(const std::string& directory);
+
+    /**
+     * Generate tree templates for all loaded biomes
+     * Must be called after loadBiomes() but before world generation
+     * @param treeGenerator Tree generator to use for template generation
+     */
+    void generateTreeTemplates(class TreeGenerator* treeGenerator);
 
     /**
      * Get a biome by name (case-insensitive)

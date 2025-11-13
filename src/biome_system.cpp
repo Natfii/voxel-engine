@@ -1,4 +1,5 @@
 #include "biome_system.h"
+#include "tree_generator.h"
 #include <yaml-cpp/yaml.h>
 #include <filesystem>
 #include <iostream>
@@ -41,6 +42,24 @@ bool BiomeRegistry::loadBiomes(const std::string& directory) {
 
     std::cout << "Successfully loaded " << loadedCount << " biome(s)" << std::endl;
     return loadedCount > 0;
+}
+
+void BiomeRegistry::generateTreeTemplates(TreeGenerator* treeGenerator) {
+    if (!treeGenerator) {
+        std::cerr << "Cannot generate tree templates: TreeGenerator is null" << std::endl;
+        return;
+    }
+
+    std::cout << "Generating tree templates for " << m_biomes.size() << " biome(s)..." << std::endl;
+
+    for (auto& biome : m_biomes) {
+        if (biome->trees_spawn) {
+            treeGenerator->generateTreeTemplatesForBiome(biome.get());
+            std::cout << "  Generated 10 tree templates for biome: " << biome->name << std::endl;
+        }
+    }
+
+    std::cout << "Tree template generation complete" << std::endl;
 }
 
 bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
