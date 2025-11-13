@@ -6,30 +6,30 @@
 #include <iostream>
 
 BiomeMap::BiomeMap(int seed) {
-    // Temperature noise - VERY large scale, creates Minecraft-style massive climate zones
-    // Lower frequency = wider biomes (0.002 = ~500 block features)
+    // Temperature noise - VERY large scale, creates modern Minecraft-style massive climate zones
+    // Lower frequency = wider biomes (0.001 = ~1000 block features, modern Minecraft 1.18+ scale)
     m_temperatureNoise = std::make_unique<FastNoiseLite>(seed);
     m_temperatureNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_temperatureNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
     m_temperatureNoise->SetFractalOctaves(4);
-    m_temperatureNoise->SetFrequency(0.002f);  // Massive biomes (Minecraft-scale)
+    m_temperatureNoise->SetFrequency(0.001f);  // Modern Minecraft scale (1.18+ biomes: 800-1500 blocks)
 
     // Temperature variation - adds local temperature changes within biomes
     m_temperatureVariation = std::make_unique<FastNoiseLite>(seed + 1000);
     m_temperatureVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    m_temperatureVariation->SetFrequency(0.015f);  // Medium features for variation
+    m_temperatureVariation->SetFrequency(0.012f);  // Medium features for variation
 
-    // Moisture noise - VERY large scale, creates Minecraft-style massive wet/dry zones
+    // Moisture noise - VERY large scale, creates modern Minecraft-style massive wet/dry zones
     m_moistureNoise = std::make_unique<FastNoiseLite>(seed + 100);
     m_moistureNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_moistureNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
     m_moistureNoise->SetFractalOctaves(4);
-    m_moistureNoise->SetFrequency(0.0025f);  // Massive biomes (Minecraft-scale)
+    m_moistureNoise->SetFrequency(0.0012f);  // Modern Minecraft scale (1.18+ biomes: 800-1500 blocks)
 
     // Moisture variation - adds local moisture changes within biomes
     m_moistureVariation = std::make_unique<FastNoiseLite>(seed + 1100);
     m_moistureVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    m_moistureVariation->SetFrequency(0.018f);  // Medium features for variation
+    m_moistureVariation->SetFrequency(0.015f);  // Medium features for variation
 
     // Terrain height noise - controlled by biome age
     m_terrainNoise = std::make_unique<FastNoiseLite>(seed + 200);
