@@ -57,7 +57,8 @@ BiomeMap::BiomeMap(int seed) {
 }
 
 float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
-    std::lock_guard<std::mutex> lock(m_noiseMutex);
+    // FastNoiseLite is thread-safe for reads - no mutex needed
+    // This was causing catastrophic mutex contention during parallel chunk generation
 
     // Base temperature from large-scale noise
     float baseTemp = m_temperatureNoise->GetNoise(worldX, worldZ);
@@ -73,7 +74,7 @@ float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
 }
 
 float BiomeMap::getMoistureAt(float worldX, float worldZ) {
-    std::lock_guard<std::mutex> lock(m_noiseMutex);
+    // FastNoiseLite is thread-safe for reads - no mutex needed
 
     // Base moisture from large-scale noise
     float baseMoisture = m_moistureNoise->GetNoise(worldX, worldZ);
@@ -109,9 +110,13 @@ const Biome* BiomeMap::getBiomeAt(float worldX, float worldZ) {
     float moisture = getMoistureAt(worldX, worldZ);
     const Biome* biome = selectBiome(temperature, moisture);
 
-    // Cache it
+    // Cache it (with size limit to prevent memory leak)
     {
         std::lock_guard<std::mutex> lock(m_cacheMutex);
+        // If cache is too large, clear it (simple eviction strategy)
+        if (m_biomeCache.size() >= MAX_CACHE_SIZE) {
+            m_biomeCache.clear();  // Clear entire cache when limit reached
+        }
         m_biomeCache[key] = {biome, temperature, moisture};
     }
 
@@ -127,12 +132,8 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
         return BASE_HEIGHT;
     }
 
-    // Thread-safe noise sampling
-    float noise;
-    {
-        std::lock_guard<std::mutex> lock(m_noiseMutex);
-        noise = m_terrainNoise->GetNoise(worldX, worldZ);
-    }
+    // FastNoiseLite is thread-safe for reads - no mutex needed
+    float noise = m_terrainNoise->GetNoise(worldX, worldZ);
 
     // Use biome's age to control terrain roughness
     // Age 0 (young) = very rough, mountainous (high variation)
@@ -159,7 +160,7 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
 }
 
 float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
-    std::lock_guard<std::mutex> lock(m_noiseMutex);
+    // FastNoiseLite is thread-safe for reads - no mutex needed
 
     // Get 3D cave noise
     float caveNoise = m_caveNoise->GetNoise(worldX, worldY * 0.5f, worldZ);
@@ -182,7 +183,7 @@ bool BiomeMap::isUndergroundBiomeAt(float worldX, float worldY, float worldZ) {
     // Underground chambers can generate at any depth below the surface
     // No depth restriction - creates endless underground biome chambers
 
-    std::lock_guard<std::mutex> lock(m_noiseMutex);
+    // FastNoiseLite is thread-safe for reads - no mutex needed
 
     // Sample chamber noise
     float chamberNoise = m_undergroundChamberNoise->GetNoise(worldX, worldY * 0.3f, worldZ);

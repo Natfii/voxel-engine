@@ -75,6 +75,7 @@ private:
         float temperature;
         float moisture;
     };
+    static constexpr size_t MAX_CACHE_SIZE = 100000;  // ~3MB max (prevents memory leak)
     std::unordered_map<uint64_t, BiomeCell> m_biomeCache;
     mutable std::mutex m_cacheMutex;
 

@@ -411,10 +411,12 @@ int main() {
 
             if (underwater) {
                 // Get the block at camera position
+                // Convert player position to block coordinates, then back to world coordinates
                 int camX = static_cast<int>(std::floor(player.Position.x / 0.5f));
                 int camY = static_cast<int>(std::floor(player.Position.y / 0.5f));
                 int camZ = static_cast<int>(std::floor(player.Position.z / 0.5f));
-                int liquidBlockID = world.getBlockAt(camX, camY, camZ);
+                // getBlockAt expects world coordinates (floats), not block coordinates (ints)
+                int liquidBlockID = world.getBlockAt(camX * 0.5f, camY * 0.5f, camZ * 0.5f);
 
                 // If it's a liquid block, use its properties from YAML
                 auto& registry = BlockRegistry::instance();

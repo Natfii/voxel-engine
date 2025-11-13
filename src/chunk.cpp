@@ -112,12 +112,9 @@ int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
         return BASE_HEIGHT; // Fallback to flat terrain if noise not initialized
     }
 
-    // Thread-safe noise sampling (FastNoiseLite may not be thread-safe)
-    float noise;
-    {
-        std::lock_guard<std::mutex> lock(s_noiseMutex);
-        noise = s_noise->GetNoise(worldX, worldZ);
-    }
+    // FastNoiseLite is thread-safe for reads - no mutex needed
+    // This was causing serialization during parallel chunk generation
+    float noise = s_noise->GetNoise(worldX, worldZ);
 
     // Map noise to height range [BASE_HEIGHT - HEIGHT_VARIATION, BASE_HEIGHT + HEIGHT_VARIATION]
     int height = BASE_HEIGHT + (int)(noise * HEIGHT_VARIATION);
@@ -405,6 +402,8 @@ void Chunk::generateMesh(World* world) {
             blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         }
         if (blockID == 0) return false;
+        // Bounds check before registry access to prevent crash
+        if (blockID < 0 || blockID >= registry.count()) return false;
         return !registry.get(blockID).isLiquid;  // Solid = not air and not liquid
     };
 
@@ -419,6 +418,8 @@ void Chunk::generateMesh(World* world) {
             blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         }
         if (blockID == 0) return false;
+        // Bounds check before registry access to prevent crash
+        if (blockID < 0 || blockID >= registry.count()) return false;
         return registry.get(blockID).isLiquid;
     };
 

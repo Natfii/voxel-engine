@@ -173,23 +173,27 @@ void World::decorateWorld() {
     // Track modified chunks for selective mesh regeneration
     std::unordered_set<Chunk*> modifiedChunks;
 
-    // Decorate surface - iterate through horizontal positions
-    int surfaceSampleSpacing = 8;  // Sample every 8 blocks for performance
+    // Decorate surface - grid-based tree sampling for proper density
+    // Sample every 4 blocks on a grid (8x8 = 64 sample points per chunk)
+    // This gives proper Minecraft-accurate tree density in forests
+    const int TREE_SAMPLE_SPACING = 4;  // Sample every 4 blocks
+
     for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
         for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
-            // Sample 3-5 positions per chunk for tree placement
-            std::uniform_int_distribution<int> attemptsDist(3, 5);
-            int attempts = attemptsDist(rng);
+            // Grid-based sampling within chunk
+            for (int localX = 0; localX < Chunk::WIDTH; localX += TREE_SAMPLE_SPACING) {
+                for (int localZ = 0; localZ < Chunk::DEPTH; localZ += TREE_SAMPLE_SPACING) {
+                    // Add small random offset (0-3 blocks) to avoid perfectly aligned trees
+                    std::uniform_int_distribution<int> offsetDist(0, TREE_SAMPLE_SPACING - 1);
+                    int offsetX = offsetDist(rng);
+                    int offsetZ = offsetDist(rng);
 
-            for (int attempt = 0; attempt < attempts; attempt++) {
-                // Random position within this chunk
-                std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
-                int localX = posDist(rng);
-                int localZ = posDist(rng);
+                    int sampleX = std::min(localX + offsetX, Chunk::WIDTH - 1);
+                    int sampleZ = std::min(localZ + offsetZ, Chunk::DEPTH - 1);
 
-                // Convert to world coordinates
-                float worldX = (chunkX * Chunk::WIDTH + localX) * 0.5f;
-                float worldZ = (chunkZ * Chunk::DEPTH + localZ) * 0.5f;
+                    // Convert to world coordinates
+                    float worldX = (chunkX * Chunk::WIDTH + sampleX) * 0.5f;
+                    float worldZ = (chunkZ * Chunk::DEPTH + sampleZ) * 0.5f;
 
                 // Get biome at this position
                 const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
@@ -249,9 +253,10 @@ void World::decorateWorld() {
                         }
                     }
                 }
-            }
-        }
-    }
+                }  // End localZ loop
+            }  // End localX loop
+        }  // End chunkZ loop
+    }  // End chunkX loop
 
     // Decorate underground biome chambers
     for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
