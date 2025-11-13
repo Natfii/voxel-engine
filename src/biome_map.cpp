@@ -177,10 +177,8 @@ float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
 }
 
 bool BiomeMap::isUndergroundBiomeAt(float worldX, float worldY, float worldZ) {
-    // Only check underground (below Y=40)
-    if (worldY > 40) {
-        return false;
-    }
+    // Underground chambers can generate at any depth below the surface
+    // No depth restriction - creates endless underground biome chambers
 
     std::lock_guard<std::mutex> lock(m_noiseMutex);
 

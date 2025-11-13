@@ -157,7 +157,16 @@ void Chunk::generate(BiomeMap* biomeMap) {
             // Get biome at this position
             const Biome* biome = biomeMap->getBiomeAt(worldX, worldZ);
             if (!biome) {
-                // Fallback if no biome available
+                // Fallback: Fill with stone underground, air above
+                int terrainHeight = biomeMap->getTerrainHeightAt(worldX, worldZ);
+                for (int y = 0; y < HEIGHT; y++) {
+                    int worldY = m_y * HEIGHT + y;
+                    if (worldY < terrainHeight) {
+                        m_blocks[x][y][z] = BLOCK_STONE;
+                    } else {
+                        m_blocks[x][y][z] = BLOCK_AIR;
+                    }
+                }
                 continue;
             }
 
@@ -180,14 +189,15 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 if (worldY < terrainHeight) {
                     // Below surface
 
-                    // If in cave, create air pocket (unless very shallow)
+                    // If in cave, create air pocket (caves generate endlessly downward)
+                    // Only prevent caves in the top 5 blocks below surface to avoid surface holes
                     if (isCave && worldY < terrainHeight - 5) {
                         m_blocks[x][y][z] = BLOCK_AIR;
                         continue;
                     }
 
-                    // If in underground chamber, create large open space
-                    if (isUndergroundChamber && worldY < 40) {
+                    // If in underground chamber, create large open space (endless chambers)
+                    if (isUndergroundChamber) {
                         m_blocks[x][y][z] = BLOCK_AIR;
                         continue;
                     }
