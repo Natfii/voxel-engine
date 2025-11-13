@@ -159,8 +159,8 @@ void World::decorateWorld() {
 
     Logger::info() << "Starting world decoration (trees, vegetation)...";
 
-    // Generate tree templates first
-    m_treeGenerator->generateTreeTemplates(BLOCK_OAK_LOG, BLOCK_LEAVES);
+    // Generate per-biome tree templates first (each biome gets 10 unique tree templates)
+    BiomeRegistry::getInstance().generateTreeTemplates(m_treeGenerator);
 
     int treesPlaced = 0;
     int undergroundFeaturesPlaced = 0;
