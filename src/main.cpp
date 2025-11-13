@@ -193,6 +193,9 @@ int main() {
         std::cout << "Generating world..." << std::endl;
         world.generateWorld();
 
+        std::cout << "Decorating world (trees, vegetation)..." << std::endl;
+        world.decorateWorld();
+
         std::cout << "Creating GPU buffers..." << std::endl;
         world.createBuffers(&renderer);
 

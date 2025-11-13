@@ -311,8 +311,15 @@ public:
      */
     BiomeMap* getBiomeMap() { return m_biomeMap.get(); }
 
+    /**
+     * @brief Runs decoration pass (trees, grass, flowers, structures)
+     * Should be called after generateWorld() but before createBuffers()
+     */
+    void decorateWorld();
+
 private:
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
+    int m_seed;                          ///< World generation seed
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_chunkMap;  ///< Fast O(1) chunk lookup by coordinates
     std::vector<Chunk*> m_chunks;  ///< All chunks for iteration (does not own memory)
 
@@ -320,6 +327,7 @@ private:
     std::unique_ptr<WaterSimulation> m_waterSimulation;  ///< Water flow simulation
     std::unique_ptr<ParticleSystem> m_particleSystem;    ///< Particle effects for splashes
 
-    // Biome system
+    // Biome and generation systems
     std::unique_ptr<BiomeMap> m_biomeMap;  ///< Biome map for world generation
+    std::unique_ptr<class TreeGenerator> m_treeGenerator;  ///< Procedural tree generation
 };

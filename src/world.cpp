@@ -22,6 +22,7 @@
 #include "logger.h"
 #include "block_system.h"
 #include "biome_system.h"
+#include "tree_generator.h"
 #include <glm/glm.hpp>
 #include <thread>
 #include <algorithm>
@@ -29,7 +30,7 @@
 #include <unordered_set>
 
 World::World(int width, int height, int depth, int seed)
-    : m_width(width), m_height(height), m_depth(depth) {
+    : m_width(width), m_height(height), m_depth(depth), m_seed(seed) {
     // Center world generation around origin (0, 0, 0)
     int halfWidth = width / 2;
     int halfDepth = depth / 2;
@@ -65,6 +66,10 @@ World::World(int width, int height, int depth, int seed)
     // Initialize biome map with seed
     m_biomeMap = std::make_unique<BiomeMap>(seed);
     Logger::info() << "Biome map initialized with " << BiomeRegistry::getInstance().getBiomeCount() << " biomes";
+
+    // Initialize tree generator
+    m_treeGenerator = std::make_unique<TreeGenerator>(seed);
+    Logger::info() << "Tree generator initialized";
 
     // Initialize water simulation and particle systems
     m_waterSimulation = std::make_unique<WaterSimulation>();
@@ -126,6 +131,79 @@ void World::generateWorld() {
     for (auto& thread : threads) {
         thread.join();
     }
+}
+
+void World::decorateWorld() {
+    using namespace TerrainGeneration;
+
+    Logger::info() << "Starting world decoration (trees, vegetation)...";
+
+    // Generate tree templates first
+    m_treeGenerator->generateTreeTemplates(BLOCK_OAK_LOG, BLOCK_LEAVES);
+
+    int treesPlaced = 0;
+    // Use offset seed for decoration to make it different from terrain
+    std::mt19937 rng(m_seed + 77777);
+
+    // Iterate through all chunks at surface level
+    for (auto& chunk : m_chunks) {
+        // Only decorate surface chunks (skip underground)
+        if (chunk->getY() > 0) continue;
+
+        int chunkX = chunk->getX();
+        int chunkZ = chunk->getZ();
+
+        // Sample positions in this chunk for tree placement
+        std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
+        std::uniform_int_distribution<int> densityDist(0, 100);
+
+        // Try to place trees in this chunk
+        for (int attempt = 0; attempt < 5; attempt++) {  // 5 attempts per chunk
+            int localX = posDist(rng);
+            int localZ = posDist(rng);
+
+            // Convert to world coordinates
+            float worldX = (chunkX * Chunk::WIDTH + localX) * 0.5f;
+            float worldZ = (chunkZ * Chunk::DEPTH + localZ) * 0.5f;
+
+            // Get biome at this position
+            const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+            if (!biome || !biome->trees_spawn) continue;
+
+            // Check tree density probability
+            if (densityDist(rng) > biome->tree_density) continue;
+
+            // Find ground level at this position
+            int groundY = -1;
+            for (int y = Chunk::HEIGHT - 1; y >= 0; y--) {
+                int worldY = chunk->getY() * Chunk::HEIGHT + y;
+                int blockID = getBlockAt(worldX, worldY * 0.5f, worldZ);
+
+                if (blockID == biome->primary_surface_block || blockID == BLOCK_GRASS) {
+                    groundY = worldY;
+                    break;
+                }
+            }
+
+            if (groundY < 0) continue;  // No suitable ground found
+
+            // Place tree (convert world coords to block coords)
+            int treeType = m_treeGenerator->getRandomTreeType();
+            int logID = (biome->primary_log_block >= 0) ? biome->primary_log_block : BLOCK_OAK_LOG;
+            int leavesID = (biome->primary_leave_block >= 0) ? biome->primary_leave_block : BLOCK_LEAVES;
+
+            // placeTree expects block coordinates (world coords / 0.5)
+            int blockX = static_cast<int>(worldX / 0.5f);
+            int blockZ = static_cast<int>(worldZ / 0.5f);
+
+            if (m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ,
+                                           treeType, logID, leavesID)) {
+                treesPlaced++;
+            }
+        }
+    }
+
+    Logger::info() << "Decoration complete. Placed " << treesPlaced << " trees";
 }
 
 void World::createBuffers(VulkanRenderer* renderer) {
