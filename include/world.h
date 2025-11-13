@@ -15,9 +15,11 @@
 #include "chunk.h"
 #include "water_simulation.h"
 #include "particle_system.h"
+#include "biome_map.h"
 
-// Forward declaration
+// Forward declarations
 class VulkanRenderer;
+class BiomeMap;
 
 /**
  * @brief Chunk coordinate key for spatial hash map
@@ -82,8 +84,9 @@ public:
      * @param width Number of chunks along the X axis
      * @param height Number of chunks along the Y axis (vertical)
      * @param depth Number of chunks along the Z axis
+     * @param seed Random seed for world generation (default: 12345)
      */
-    World(int width, int height, int depth);
+    World(int width, int height, int depth, int seed = 12345);
 
     /**
      * @brief Destroys the world and cleans up all chunks
@@ -302,6 +305,12 @@ public:
      */
     ParticleSystem* getParticleSystem() { return m_particleSystem.get(); }
 
+    /**
+     * @brief Gets the biome map
+     * @return Pointer to biome map
+     */
+    BiomeMap* getBiomeMap() { return m_biomeMap.get(); }
+
 private:
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_chunkMap;  ///< Fast O(1) chunk lookup by coordinates
@@ -310,4 +319,7 @@ private:
     // Water simulation and particles
     std::unique_ptr<WaterSimulation> m_waterSimulation;  ///< Water flow simulation
     std::unique_ptr<ParticleSystem> m_particleSystem;    ///< Particle effects for splashes
+
+    // Biome system
+    std::unique_ptr<BiomeMap> m_biomeMap;  ///< Biome map for world generation
 };

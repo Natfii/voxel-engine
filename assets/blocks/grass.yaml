@@ -9,3 +9,7 @@ liquid: false
 affected_by_gravity: false
 flammability: 0
 transparency: 0.0
+
+# Biome compatibility
+temperature_range: "30-80"  # Temperate climates (not too hot/cold)
+moisture_range: "20-100"    # Needs some moisture to stay green

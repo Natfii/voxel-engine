@@ -27,13 +27,13 @@
 #include <cmath>
 #include <unordered_set>
 
-World::World(int width, int height, int depth)
+World::World(int width, int height, int depth, int seed)
     : m_width(width), m_height(height), m_depth(depth) {
     // Center world generation around origin (0, 0, 0)
     int halfWidth = width / 2;
     int halfDepth = depth / 2;
 
-    Logger::info() << "Creating world with " << width << "x" << height << "x" << depth << " chunks";
+    Logger::info() << "Creating world with " << width << "x" << height << "x" << depth << " chunks (seed: " << seed << ")";
     Logger::info() << "Chunk coordinates range: X[" << -halfWidth << " to " << (width - halfWidth - 1)
                    << "], Y[0 to " << (height - 1) << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]";
 
@@ -56,6 +56,10 @@ World::World(int width, int height, int depth)
 
     Logger::info() << "Total chunks created: " << m_chunks.size();
 
+    // Initialize biome map with seed
+    m_biomeMap = std::make_unique<BiomeMap>(seed);
+    Logger::info() << "Biome map initialized";
+
     // Initialize water simulation and particle systems
     m_waterSimulation = std::make_unique<WaterSimulation>();
     m_particleSystem = std::make_unique<ParticleSystem>();
@@ -77,15 +81,16 @@ void World::generateWorld() {
     threads.reserve(numThreads);
 
     // Step 1: Generate terrain blocks in parallel
+    BiomeMap* biomeMapPtr = m_biomeMap.get();
     for (unsigned int i = 0; i < numThreads; ++i) {
         size_t startIdx = i * chunksPerThread;
         size_t endIdx = std::min(startIdx + chunksPerThread, m_chunks.size());
 
         if (startIdx >= m_chunks.size()) break;
 
-        threads.emplace_back([this, startIdx, endIdx]() {
+        threads.emplace_back([this, biomeMapPtr, startIdx, endIdx]() {
             for (size_t j = startIdx; j < endIdx; ++j) {
-                m_chunks[j]->generate();
+                m_chunks[j]->generate(biomeMapPtr);
             }
         });
     }

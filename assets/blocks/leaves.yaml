@@ -1,9 +1,13 @@
 id: 7
 name: "Leaves"
 texture: "leaves.png"
-texture_variation: 1.1    
+texture_variation: 1.1
 durability: 1
 liquid: false
 affected_by_gravity: false
 flammability: 1
 transparency: 0.0
+
+# Biome compatibility
+temperature_range: "30-75"  # Temperate climates (oak trees)
+moisture_range: "40-90"     # Needs moderate to high moisture

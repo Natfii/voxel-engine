@@ -6,3 +6,7 @@ liquid: false
 affected_by_gravity: false
 flammability: 0
 transparency: 0.0
+
+# Biome compatibility
+temperature_range: "0-100"  # Universal - spawns in all temperatures
+moisture_range: "0-100"     # Universal - spawns in all moisture levels

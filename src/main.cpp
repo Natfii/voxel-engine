@@ -31,6 +31,7 @@
 #include "chunk.h"
 #include "world.h"
 #include "block_system.h"
+#include "biome_system.h"
 #include "structure_system.h"
 #include "player.h"
 #include "pause_menu.h"
@@ -166,6 +167,9 @@ int main() {
         std::cout << "Loading structure registry..." << std::endl;
         StructureRegistry::instance().loadStructures("assets/structures");
 
+        std::cout << "Loading biome registry..." << std::endl;
+        BiomeRegistry::getInstance().loadBiomes("assets/biomes");
+
         // Bind texture atlas to renderer descriptor sets
         std::cout << "Binding texture atlas..." << std::endl;
         renderer.bindAtlasTexture(
@@ -184,7 +188,7 @@ int main() {
 
         std::cout << "Initializing world generation..." << std::endl;
         Chunk::initNoise(seed);
-        World world(worldWidth, worldHeight, worldDepth);
+        World world(worldWidth, worldHeight, worldDepth, seed);
 
         std::cout << "Generating world..." << std::endl;
         world.generateWorld();

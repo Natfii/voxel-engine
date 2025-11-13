@@ -1,0 +1,48 @@
+# Desert Biome
+# Hot, dry, sandy terrain with no trees and minimal vegetation
+
+# Required properties
+name: "Desert"
+temperature: 90        # Very hot
+moisture: 5            # Very dry
+age: 75                # Relatively flat with dunes
+activity: 25           # Low structure spawning
+
+# Vegetation
+trees_spawn: false     # No trees in desert
+tree_density: 0
+vegetation_density: 3  # Minimal vegetation (dead bushes, cacti later)
+
+# Spawning
+spawn_location: "AboveGround"
+lowest_y: 60
+biome_rarity_weight: 45  # Moderately common
+river_compatible: true   # Rivers can create oases
+underwater_biome: false
+
+# Primary blocks
+primary_surface_block: 4   # Sand
+primary_stone_block: 1     # Stone (sandstone could be added later)
+primary_log_block: -1      # No logs (no trees)
+primary_leave_block: -1    # No leaves (no trees)
+
+# Block requirements
+required_blocks: "4"       # Must have sand
+blacklisted_blocks: ""
+
+# Structures
+required_structures: ""
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: true
+
+# Weather
+primary_weather: "clear"
+blacklisted_weather: "rain,snow"  # Never rains or snows in desert
+
+# Atmosphere
+fog_color: "255,220,180"  # Warm, sandy haze
+
+# Ore distribution (slightly reduced due to sand)
+ore_spawn_rates: "coal:0.7,iron:0.8,gold:1.2"

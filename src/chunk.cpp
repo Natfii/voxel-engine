@@ -140,39 +140,79 @@ int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
  *
  * Performance: ~32,000 blocks processed per chunk (32³)
  */
-void Chunk::generate() {
+void Chunk::generate(BiomeMap* biomeMap) {
     using namespace TerrainGeneration;
+
+    if (!biomeMap) {
+        std::cerr << "ERROR: BiomeMap is null in Chunk::generate()" << std::endl;
+        return;
+    }
 
     for (int x = 0; x < WIDTH; x++) {
         for (int z = 0; z < DEPTH; z++) {
-            // Convert local coords to world coords
+            // Convert local coords to world coords (blocks are 0.5 units)
             float worldX = (m_x * WIDTH + x) * 0.5f;
             float worldZ = (m_z * DEPTH + z) * 0.5f;
 
-            // Get terrain height for this column
-            int terrainHeight = getTerrainHeightAt(worldX, worldZ);
+            // Get biome at this position
+            const Biome* biome = biomeMap->getBiomeAt(worldX, worldZ);
+            if (!biome) {
+                // Fallback if no biome available
+                continue;
+            }
 
-            // Fill column from bottom to terrain height
+            // Get terrain height from biome map
+            int terrainHeight = biomeMap->getTerrainHeightAt(worldX, worldZ);
+
+            // Fill column
             for (int y = 0; y < HEIGHT; y++) {
                 int worldY = m_y * HEIGHT + y;
+                float worldYf = worldY * 0.5f;
 
+                // Check if this is inside a cave
+                float caveDensity = biomeMap->getCaveDensityAt(worldX, worldYf, worldZ);
+                bool isCave = caveDensity < 0.45f;  // Threshold for cave air
+
+                // Check if inside underground biome chamber
+                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ);
+
+                // Determine block placement
                 if (worldY < terrainHeight) {
-                    // Determine block type based on depth from surface
+                    // Below surface
+
+                    // If in cave, create air pocket (unless very shallow)
+                    if (isCave && worldY < terrainHeight - 5) {
+                        m_blocks[x][y][z] = BLOCK_AIR;
+                        continue;
+                    }
+
+                    // If in underground chamber, create large open space
+                    if (isUndergroundChamber && worldY < 40) {
+                        m_blocks[x][y][z] = BLOCK_AIR;
+                        continue;
+                    }
+
+                    // Solid terrain - determine block type
                     int depthFromSurface = terrainHeight - worldY;
 
                     if (depthFromSurface == 1) {
-                        m_blocks[x][y][z] = BLOCK_GRASS;  // Grass on top
+                        // Top layer - use biome's surface block
+                        m_blocks[x][y][z] = biome->primary_surface_block;
                     } else if (depthFromSurface <= TOPSOIL_DEPTH) {
-                        m_blocks[x][y][z] = BLOCK_DIRT;  // Dirt below grass
+                        // Topsoil layer - dirt
+                        m_blocks[x][y][z] = BLOCK_DIRT;
                     } else {
-                        m_blocks[x][y][z] = BLOCK_STONE;  // Stone at bottom
+                        // Deep underground - use biome's stone block
+                        m_blocks[x][y][z] = biome->primary_stone_block;
                     }
+
                 } else if (worldY < WATER_LEVEL) {
-                    // Fill with water up to water level
+                    // Above terrain but below water level
                     m_blocks[x][y][z] = BLOCK_WATER;
-                    m_blockMetadata[x][y][z] = 0;  // 0 = source block (infinite water)
+                    m_blockMetadata[x][y][z] = 0;  // Source block
                 } else {
-                    m_blocks[x][y][z] = BLOCK_AIR;  // Air above water level
+                    // Above water level
+                    m_blocks[x][y][z] = BLOCK_AIR;
                 }
             }
         }

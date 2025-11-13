@@ -147,12 +147,14 @@ public:
     // ========== Terrain Generation ==========
 
     /**
-     * @brief Generates terrain blocks using procedural noise
+     * @brief Generates terrain blocks using procedural noise and biome system
      *
-     * Fills the chunk with blocks based on FastNoiseLite noise.
+     * Fills the chunk with blocks based on biome-specific terrain generation.
      * Does not create mesh - call generateMesh() after all chunks exist.
+     *
+     * @param biomeMap Biome map for determining terrain type and blocks
      */
-    void generate();
+    void generate(class BiomeMap* biomeMap);
 
     /**
      * @brief Generates optimized mesh with face culling
