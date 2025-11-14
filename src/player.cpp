@@ -15,6 +15,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 
 Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     : Position(position), WorldUp(up), Yaw(yaw), Pitch(pitch),
@@ -794,4 +796,145 @@ void Player::updateVectors() {
 
 void Player::resetMouse() {
     m_firstMouse = true;
+}
+
+// ========== Player Persistence ==========
+
+bool Player::savePlayerState(const std::string& worldPath) const {
+    namespace fs = std::filesystem;
+
+    try {
+        // Create world directory if it doesn't exist
+        fs::create_directories(worldPath);
+
+        // Create player.dat file
+        fs::path playerPath = fs::path(worldPath) / "player.dat";
+        std::ofstream file(playerPath, std::ios::binary);
+        if (!file.is_open()) {
+            Logger::error() << "Failed to create player.dat file";
+            return false;
+        }
+
+        // Write file version
+        constexpr uint32_t PLAYER_FILE_VERSION = 1;
+        file.write(reinterpret_cast<const char*>(&PLAYER_FILE_VERSION), sizeof(uint32_t));
+
+        // Write position (3 floats)
+        file.write(reinterpret_cast<const char*>(&Position.x), sizeof(float));
+        file.write(reinterpret_cast<const char*>(&Position.y), sizeof(float));
+        file.write(reinterpret_cast<const char*>(&Position.z), sizeof(float));
+
+        // Write rotation (2 floats)
+        file.write(reinterpret_cast<const char*>(&Yaw), sizeof(float));
+        file.write(reinterpret_cast<const char*>(&Pitch), sizeof(float));
+
+        // Write velocity (3 floats)
+        file.write(reinterpret_cast<const char*>(&m_velocity.x), sizeof(float));
+        file.write(reinterpret_cast<const char*>(&m_velocity.y), sizeof(float));
+        file.write(reinterpret_cast<const char*>(&m_velocity.z), sizeof(float));
+
+        // Write physics state (booleans as uint8_t)
+        uint8_t onGround = m_onGround ? 1 : 0;
+        uint8_t inLiquid = m_inLiquid ? 1 : 0;
+        uint8_t cameraUnderwater = m_cameraUnderwater ? 1 : 0;
+        uint8_t noclipMode = NoclipMode ? 1 : 0;
+        uint8_t isSprinting = m_isSprinting ? 1 : 0;
+
+        file.write(reinterpret_cast<const char*>(&onGround), sizeof(uint8_t));
+        file.write(reinterpret_cast<const char*>(&inLiquid), sizeof(uint8_t));
+        file.write(reinterpret_cast<const char*>(&cameraUnderwater), sizeof(uint8_t));
+        file.write(reinterpret_cast<const char*>(&noclipMode), sizeof(uint8_t));
+        file.write(reinterpret_cast<const char*>(&isSprinting), sizeof(uint8_t));
+
+        // Write submergence
+        file.write(reinterpret_cast<const char*>(&m_submergence), sizeof(float));
+
+        // Write movement speed and mouse sensitivity
+        file.write(reinterpret_cast<const char*>(&MovementSpeed), sizeof(float));
+        file.write(reinterpret_cast<const char*>(&MouseSensitivity), sizeof(float));
+
+        file.close();
+        Logger::info() << "Player state saved successfully";
+        return true;
+
+    } catch (const std::exception& e) {
+        Logger::error() << "Failed to save player state: " << e.what();
+        return false;
+    }
+}
+
+bool Player::loadPlayerState(const std::string& worldPath) {
+    namespace fs = std::filesystem;
+
+    try {
+        // Check if player.dat exists
+        fs::path playerPath = fs::path(worldPath) / "player.dat";
+        if (!fs::exists(playerPath)) {
+            Logger::info() << "player.dat not found - using default spawn";
+            return false;
+        }
+
+        // Open file
+        std::ifstream file(playerPath, std::ios::binary);
+        if (!file.is_open()) {
+            Logger::error() << "Failed to open player.dat file";
+            return false;
+        }
+
+        // Read and verify version
+        uint32_t version;
+        file.read(reinterpret_cast<char*>(&version), sizeof(uint32_t));
+        if (version != 1) {
+            Logger::error() << "Unsupported player file version: " << version;
+            return false;
+        }
+
+        // Read position
+        file.read(reinterpret_cast<char*>(&Position.x), sizeof(float));
+        file.read(reinterpret_cast<char*>(&Position.y), sizeof(float));
+        file.read(reinterpret_cast<char*>(&Position.z), sizeof(float));
+
+        // Read rotation
+        file.read(reinterpret_cast<char*>(&Yaw), sizeof(float));
+        file.read(reinterpret_cast<char*>(&Pitch), sizeof(float));
+
+        // Read velocity
+        file.read(reinterpret_cast<char*>(&m_velocity.x), sizeof(float));
+        file.read(reinterpret_cast<char*>(&m_velocity.y), sizeof(float));
+        file.read(reinterpret_cast<char*>(&m_velocity.z), sizeof(float));
+
+        // Read physics state
+        uint8_t onGround, inLiquid, cameraUnderwater, noclipMode, isSprinting;
+        file.read(reinterpret_cast<char*>(&onGround), sizeof(uint8_t));
+        file.read(reinterpret_cast<char*>(&inLiquid), sizeof(uint8_t));
+        file.read(reinterpret_cast<char*>(&cameraUnderwater), sizeof(uint8_t));
+        file.read(reinterpret_cast<char*>(&noclipMode), sizeof(uint8_t));
+        file.read(reinterpret_cast<char*>(&isSprinting), sizeof(uint8_t));
+
+        m_onGround = (onGround != 0);
+        m_inLiquid = (inLiquid != 0);
+        m_cameraUnderwater = (cameraUnderwater != 0);
+        NoclipMode = (noclipMode != 0);
+        m_isSprinting = (isSprinting != 0);
+
+        // Read submergence
+        file.read(reinterpret_cast<char*>(&m_submergence), sizeof(float));
+
+        // Read movement speed and mouse sensitivity
+        file.read(reinterpret_cast<char*>(&MovementSpeed), sizeof(float));
+        file.read(reinterpret_cast<char*>(&MouseSensitivity), sizeof(float));
+
+        file.close();
+
+        // Update camera vectors after loading rotation
+        updateVectors();
+
+        Logger::info() << "Player state loaded successfully (pos: " << Position.x << ", "
+                      << Position.y << ", " << Position.z << ")";
+        return true;
+
+    } catch (const std::exception& e) {
+        Logger::error() << "Failed to load player state: " << e.what();
+        return false;
+    }
 }

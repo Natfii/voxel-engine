@@ -3,8 +3,11 @@
 #include "structure_system.h"
 #include "vulkan_renderer.h"
 #include "input_manager.h"
+#include "logger.h"
 #include <algorithm>
 #include <imgui.h>
+#include <filesystem>
+#include <fstream>
 
 Inventory::Inventory()
     : m_isOpen(false)
@@ -467,4 +470,139 @@ void Inventory::renderSelectedBlockPreview(VulkanRenderer* renderer) {
 
     ImGui::End();
     ImGui::PopStyleColor();
+}
+
+// ========== Inventory Persistence ==========
+
+bool Inventory::save(const std::string& worldPath) const {
+    namespace fs = std::filesystem;
+
+    try {
+        // Create world directory if it doesn't exist
+        fs::create_directories(worldPath);
+
+        // Create inventory.dat file
+        fs::path inventoryPath = fs::path(worldPath) / "inventory.dat";
+        std::ofstream file(inventoryPath, std::ios::binary);
+        if (!file.is_open()) {
+            Logger::error() << "Failed to create inventory.dat file";
+            return false;
+        }
+
+        // Write file version
+        constexpr uint32_t INVENTORY_FILE_VERSION = 1;
+        file.write(reinterpret_cast<const char*>(&INVENTORY_FILE_VERSION), sizeof(uint32_t));
+
+        // Write selected hotbar slot
+        file.write(reinterpret_cast<const char*>(&m_selectedHotbarSlot), sizeof(int));
+
+        // Write number of hotbar slots
+        uint32_t hotbarSize = static_cast<uint32_t>(m_hotbar.size());
+        file.write(reinterpret_cast<const char*>(&hotbarSize), sizeof(uint32_t));
+
+        // Write each hotbar item
+        for (const auto& item : m_hotbar) {
+            // Write item type
+            uint8_t itemType = (item.type == InventoryItemType::BLOCK) ? 0 : 1;
+            file.write(reinterpret_cast<const char*>(&itemType), sizeof(uint8_t));
+
+            // Write block ID
+            file.write(reinterpret_cast<const char*>(&item.blockID), sizeof(int));
+
+            // Write structure name length and name
+            uint32_t structNameLen = static_cast<uint32_t>(item.structureName.length());
+            file.write(reinterpret_cast<const char*>(&structNameLen), sizeof(uint32_t));
+            if (structNameLen > 0) {
+                file.write(item.structureName.c_str(), structNameLen);
+            }
+
+            // Write display name length and name
+            uint32_t displayNameLen = static_cast<uint32_t>(item.displayName.length());
+            file.write(reinterpret_cast<const char*>(&displayNameLen), sizeof(uint32_t));
+            if (displayNameLen > 0) {
+                file.write(item.displayName.c_str(), displayNameLen);
+            }
+        }
+
+        file.close();
+        Logger::info() << "Inventory saved successfully";
+        return true;
+
+    } catch (const std::exception& e) {
+        Logger::error() << "Failed to save inventory: " << e.what();
+        return false;
+    }
+}
+
+bool Inventory::load(const std::string& worldPath) {
+    namespace fs = std::filesystem;
+
+    try {
+        // Check if inventory.dat exists
+        fs::path inventoryPath = fs::path(worldPath) / "inventory.dat";
+        if (!fs::exists(inventoryPath)) {
+            Logger::info() << "inventory.dat not found - using default inventory";
+            return false;
+        }
+
+        // Open file
+        std::ifstream file(inventoryPath, std::ios::binary);
+        if (!file.is_open()) {
+            Logger::error() << "Failed to open inventory.dat file";
+            return false;
+        }
+
+        // Read and verify version
+        uint32_t version;
+        file.read(reinterpret_cast<char*>(&version), sizeof(uint32_t));
+        if (version != 1) {
+            Logger::error() << "Unsupported inventory file version: " << version;
+            return false;
+        }
+
+        // Read selected hotbar slot
+        file.read(reinterpret_cast<char*>(&m_selectedHotbarSlot), sizeof(int));
+
+        // Read number of hotbar slots
+        uint32_t hotbarSize;
+        file.read(reinterpret_cast<char*>(&hotbarSize), sizeof(uint32_t));
+
+        // Read each hotbar item
+        m_hotbar.clear();
+        m_hotbar.resize(hotbarSize);
+
+        for (uint32_t i = 0; i < hotbarSize; i++) {
+            // Read item type
+            uint8_t itemType;
+            file.read(reinterpret_cast<char*>(&itemType), sizeof(uint8_t));
+            m_hotbar[i].type = (itemType == 0) ? InventoryItemType::BLOCK : InventoryItemType::STRUCTURE;
+
+            // Read block ID
+            file.read(reinterpret_cast<char*>(&m_hotbar[i].blockID), sizeof(int));
+
+            // Read structure name
+            uint32_t structNameLen;
+            file.read(reinterpret_cast<char*>(&structNameLen), sizeof(uint32_t));
+            if (structNameLen > 0) {
+                m_hotbar[i].structureName.resize(structNameLen);
+                file.read(&m_hotbar[i].structureName[0], structNameLen);
+            }
+
+            // Read display name
+            uint32_t displayNameLen;
+            file.read(reinterpret_cast<char*>(&displayNameLen), sizeof(uint32_t));
+            if (displayNameLen > 0) {
+                m_hotbar[i].displayName.resize(displayNameLen);
+                file.read(&m_hotbar[i].displayName[0], displayNameLen);
+            }
+        }
+
+        file.close();
+        Logger::info() << "Inventory loaded successfully (" << hotbarSize << " items)";
+        return true;
+
+    } catch (const std::exception& e) {
+        Logger::error() << "Failed to load inventory: " << e.what();
+        return false;
+    }
 }

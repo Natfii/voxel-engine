@@ -241,7 +241,7 @@ std::tuple<size_t, size_t, int> WorldStreaming::getStats() const {
 }
 
 void WorldStreaming::workerThreadFunction() {
-    m_activeWorkers++;
+    m_activeWorkers.fetch_add(1);
 
     Logger::debug() << "Worker thread started (ID: " << std::this_thread::get_id() << ")";
 
@@ -302,7 +302,7 @@ void WorldStreaming::workerThreadFunction() {
         }
     }
 
-    m_activeWorkers--;
+    m_activeWorkers.fetch_sub(1);
     Logger::debug() << "Worker thread exiting (ID: " << std::this_thread::get_id() << ")";
 }
 
