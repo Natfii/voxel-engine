@@ -47,7 +47,9 @@
       "Bash(./build/tests/Release/test_mesh_pooling.exe:*)",
       "Bash(ping:*)",
       "Bash(src/chunk.cpp)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []
