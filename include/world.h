@@ -177,6 +177,17 @@ public:
     MeshBufferPool& getMeshBufferPool() { return m_meshBufferPool; }
 
     /**
+     * @brief Adds an externally-generated chunk to the world
+     *
+     * Used by WorldStreaming to integrate asynchronously-generated chunks.
+     * Performs duplicate checking and thread-safe insertion.
+     *
+     * @param chunk Chunk to add (ownership transferred)
+     * @return True if chunk was added, false if duplicate/out of bounds
+     */
+    bool addStreamedChunk(std::unique_ptr<Chunk> chunk);
+
+    /**
      * @brief Gets the block ID at the specified world position
      *
      * @param worldX World X coordinate
@@ -354,6 +365,42 @@ private:
      * @return Pointer to chunk, or nullptr if not found
      */
     Chunk* getChunkAtWorldPosUnsafe(float worldX, float worldY, float worldZ);
+
+    /**
+     * @brief Internal block getter without locking (caller must hold lock)
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @return Block ID, or 0 if out of bounds
+     */
+    int getBlockAtUnsafe(float worldX, float worldY, float worldZ);
+
+    /**
+     * @brief Internal block setter without locking (caller must hold lock)
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @param blockID Block ID to set
+     */
+    void setBlockAtUnsafe(float worldX, float worldY, float worldZ, int blockID);
+
+    /**
+     * @brief Internal metadata getter without locking (caller must hold lock)
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @return Metadata value
+     */
+    uint8_t getBlockMetadataAtUnsafe(float worldX, float worldY, float worldZ);
+
+    /**
+     * @brief Internal metadata setter without locking (caller must hold lock)
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @param metadata Metadata value to set
+     */
+    void setBlockMetadataAtUnsafe(float worldX, float worldY, float worldZ, uint8_t metadata);
 
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
     int m_seed;                          ///< World generation seed

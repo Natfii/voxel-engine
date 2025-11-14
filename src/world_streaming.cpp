@@ -126,16 +126,24 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
         }
     }
 
-    // Add new requests to load queue
+    // Add new requests to load queue (with deduplication)
     if (!newRequests.empty()) {
         std::lock_guard<std::mutex> lock(m_loadQueueMutex);
 
         for (const auto& request : newRequests) {
-            m_loadQueue.push(request);
+            ChunkCoord coord{request.chunkX, request.chunkY, request.chunkZ};
+
+            // Check if chunk is already in flight (prevents duplicates)
+            if (m_chunksInFlight.find(coord) == m_chunksInFlight.end()) {
+                m_chunksInFlight.insert(coord);
+                m_loadQueue.push(request);
+            }
         }
 
-        // Wake up workers
-        m_loadQueueCV.notify_all();
+        // Wake up workers if we added any chunks
+        if (!m_loadQueue.empty()) {
+            m_loadQueueCV.notify_all();
+        }
     }
 
     // TODO: Implement chunk unloading for chunks beyond unloadDistance
@@ -166,15 +174,29 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
                 // Create Vulkan buffers for the chunk
                 chunk->createVertexBuffer(m_renderer);
 
-                // TODO: Add chunk to world's chunk map
-                // This requires modifying World to accept externally-created chunks
-                // For now, this is a framework demonstration
+                // Add chunk to world's chunk map
+                int chunkX = chunk->getChunkX();
+                int chunkY = chunk->getChunkY();
+                int chunkZ = chunk->getChunkZ();
+                uint32_t vertexCount = chunk->getVertexCount();
 
-                Logger::debug() << "Uploaded chunk (" << chunk->getChunkX() << ", "
-                               << chunk->getChunkY() << ", " << chunk->getChunkZ()
-                               << ") - Vertices: " << chunk->getVertexCount();
+                bool added = m_world->addStreamedChunk(std::move(chunk));
 
-                m_totalChunksLoaded++;
+                // Remove from in-flight tracking
+                {
+                    std::lock_guard<std::mutex> lock(m_loadQueueMutex);
+                    m_chunksInFlight.erase(ChunkCoord{chunkX, chunkY, chunkZ});
+                }
+
+                if (added) {
+                    Logger::debug() << "Successfully integrated chunk (" << chunkX << ", "
+                                   << chunkY << ", " << chunkZ
+                                   << ") - Vertices: " << vertexCount;
+                    m_totalChunksLoaded++;
+                } else {
+                    Logger::warn() << "Failed to integrate chunk (" << chunkX << ", "
+                                  << chunkY << ", " << chunkZ << ") - duplicate or out of bounds";
+                }
             } catch (const std::exception& e) {
                 Logger::error() << "Failed to upload chunk: " << e.what();
             }

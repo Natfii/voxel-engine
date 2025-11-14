@@ -529,6 +529,88 @@ Chunk* World::getChunkAtWorldPos(float worldX, float worldY, float worldZ) {
     return getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
 }
 
+bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
+    if (!chunk) {
+        return false;  // Null chunk
+    }
+
+    int chunkX = chunk->getChunkX();
+    int chunkY = chunk->getChunkY();
+    int chunkZ = chunk->getChunkZ();
+
+    // Bounds checking
+    int halfWidth = m_width / 2;
+    int halfHeight = m_height / 2;
+    int halfDepth = m_depth / 2;
+
+    if (chunkX < -halfWidth || chunkX >= halfWidth ||
+        chunkY < 0 || chunkY >= m_height ||
+        chunkZ < -halfDepth || chunkZ >= halfDepth) {
+        Logger::warn() << "Attempted to add out-of-bounds chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
+        return false;
+    }
+
+    // Thread-safe insertion
+    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    ChunkCoord coord{chunkX, chunkY, chunkZ};
+
+    // Check for duplicates
+    if (m_chunkMap.find(coord) != m_chunkMap.end()) {
+        Logger::warn() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") already exists, discarding streamed chunk";
+        return false;
+    }
+
+    // Add to map
+    Chunk* chunkPtr = chunk.get();
+    m_chunkMap[coord] = std::move(chunk);
+    m_chunks.push_back(chunkPtr);
+
+    Logger::debug() << "Added streamed chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") to world";
+
+    return true;
+}
+
+int World::getBlockAtUnsafe(float worldX, float worldY, float worldZ) {
+    // UNSAFE: No locking - caller must hold m_chunkMapMutex
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+    Chunk* chunk = getChunkAtUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
+    if (chunk == nullptr) {
+        return 0; // Air (outside world bounds)
+    }
+    return chunk->getBlock(coords.localX, coords.localY, coords.localZ);
+}
+
+void World::setBlockAtUnsafe(float worldX, float worldY, float worldZ, int blockID) {
+    // UNSAFE: No locking - caller must hold m_chunkMapMutex
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+    Chunk* chunk = getChunkAtUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
+    if (chunk == nullptr) {
+        return; // Outside world bounds, do nothing
+    }
+    chunk->setBlock(coords.localX, coords.localY, coords.localZ, blockID);
+}
+
+uint8_t World::getBlockMetadataAtUnsafe(float worldX, float worldY, float worldZ) {
+    // UNSAFE: No locking - caller must hold m_chunkMapMutex
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+    Chunk* chunk = getChunkAtUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
+    if (chunk == nullptr) {
+        return 0; // Out of bounds
+    }
+    return chunk->getBlockMetadata(coords.localX, coords.localY, coords.localZ);
+}
+
+void World::setBlockMetadataAtUnsafe(float worldX, float worldY, float worldZ, uint8_t metadata) {
+    // UNSAFE: No locking - caller must hold m_chunkMapMutex
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+    Chunk* chunk = getChunkAtUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
+    if (chunk == nullptr) {
+        return; // Outside world bounds, do nothing
+    }
+    chunk->setBlockMetadata(coords.localX, coords.localY, coords.localZ, metadata);
+}
+
 void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID, bool regenerateMesh) {
     // Convert world coordinates to chunk and local block coordinates
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
@@ -584,21 +666,21 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
     // This prevents race conditions when multiple threads break blocks simultaneously
     std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
-    // Check if block is water
-    int blockID = getBlockAt(worldX, worldY, worldZ);
+    // Check if block is water (use UNSAFE version - we already hold lock)
+    int blockID = getBlockAtUnsafe(worldX, worldY, worldZ);
     auto& registry = BlockRegistry::instance();
 
     if (blockID != 0 && registry.get(blockID).isLiquid) {
         // Only allow breaking source blocks (level 0)
-        uint8_t waterLevel = getBlockMetadataAt(worldX, worldY, worldZ);
+        uint8_t waterLevel = getBlockMetadataAtUnsafe(worldX, worldY, worldZ);
         if (waterLevel > 0) {
             // This is flowing water, can't break it directly
             return;
         }
 
         // It's a source block - break it and remove all connected flowing water
-        setBlockAt(worldX, worldY, worldZ, 0);
-        setBlockMetadataAt(worldX, worldY, worldZ, 0);
+        setBlockAtUnsafe(worldX, worldY, worldZ, 0);
+        setBlockMetadataAtUnsafe(worldX, worldY, worldZ, 0);
 
         // Flood fill to remove all connected flowing water (level > 0)
         std::vector<glm::vec3> toCheck;
@@ -625,12 +707,12 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
             };
 
             for (const auto& neighborPos : neighbors) {
-                int neighborBlock = getBlockAt(neighborPos.x, neighborPos.y, neighborPos.z);
+                int neighborBlock = getBlockAtUnsafe(neighborPos.x, neighborPos.y, neighborPos.z);
                 if (neighborBlock != 0 && registry.get(neighborBlock).isLiquid) {
-                    uint8_t neighborLevel = getBlockMetadataAt(neighborPos.x, neighborPos.y, neighborPos.z);
+                    uint8_t neighborLevel = getBlockMetadataAtUnsafe(neighborPos.x, neighborPos.y, neighborPos.z);
                     if (neighborLevel > 0) {  // It's flowing water
-                        setBlockAt(neighborPos.x, neighborPos.y, neighborPos.z, 0);
-                        setBlockMetadataAt(neighborPos.x, neighborPos.y, neighborPos.z, 0);
+                        setBlockAtUnsafe(neighborPos.x, neighborPos.y, neighborPos.z, 0);
+                        setBlockMetadataAtUnsafe(neighborPos.x, neighborPos.y, neighborPos.z, 0);
                         toCheck.push_back(neighborPos);
                     }
                 }
@@ -638,7 +720,7 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
         }
     } else {
         // Normal block - just break it
-        setBlockAt(worldX, worldY, worldZ, 0);
+        setBlockAtUnsafe(worldX, worldY, worldZ, 0);
     }
 
     // Update the affected chunk and all adjacent chunks
@@ -712,16 +794,17 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
     if (blockID <= 0) return;
 
     // Check if there's already a block here (don't place over existing blocks)
-    int existingBlock = getBlockAt(worldX, worldY, worldZ);
+    // Use UNSAFE version - we already hold lock
+    int existingBlock = getBlockAtUnsafe(worldX, worldY, worldZ);
     if (existingBlock != 0) return;
 
     // Place the block
-    setBlockAt(worldX, worldY, worldZ, blockID);
+    setBlockAtUnsafe(worldX, worldY, worldZ, blockID);
 
     // If placing water, set metadata to 0 (source block)
     auto& registry = BlockRegistry::instance();
     if (registry.get(blockID).isLiquid) {
-        setBlockMetadataAt(worldX, worldY, worldZ, 0);  // Level 0 = source block
+        setBlockMetadataAtUnsafe(worldX, worldY, worldZ, 0);  // Level 0 = source block
     }
 
     // Update the affected chunk and all adjacent chunks

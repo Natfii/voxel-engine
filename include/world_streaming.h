@@ -32,6 +32,7 @@
 #include <atomic>
 #include <memory>
 #include <functional>
+#include <unordered_set>
 #include <glm/glm.hpp>
 
 // Forward declarations
@@ -39,6 +40,23 @@ class World;
 class Chunk;
 class VulkanRenderer;
 class BiomeMap;
+struct ChunkCoord;  // From world.h
+
+/**
+ * @brief Hash function for ChunkCoord to enable use in unordered_set
+ */
+namespace std {
+    template<>
+    struct hash<ChunkCoord> {
+        size_t operator()(const ChunkCoord& coord) const {
+            // Cantor pairing function variation for 3D coordinates
+            size_t h1 = hash<int>()(coord.x);
+            size_t h2 = hash<int>()(coord.y);
+            size_t h3 = hash<int>()(coord.z);
+            return h1 ^ (h2 << 1) ^ (h3 << 2);
+        }
+    };
+}
 
 /**
  * @brief Chunk loading request with priority
@@ -241,6 +259,9 @@ private:
     std::priority_queue<ChunkLoadRequest> m_loadQueue;  ///< Priority queue of chunks to load
     mutable std::mutex m_loadQueueMutex;                ///< Protects m_loadQueue
     std::condition_variable m_loadQueueCV;              ///< Signals workers when work available
+
+    // === Deduplication Tracking ===
+    std::unordered_set<ChunkCoord> m_chunksInFlight;   ///< Tracks chunks being generated (prevents duplicates)
 
     // === Completed Chunks (accessed by workers + main thread) ===
     std::vector<std::unique_ptr<Chunk>> m_completedChunks;  ///< Chunks ready for buffer upload
