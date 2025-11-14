@@ -308,30 +308,77 @@ int main() {
         loadingMessage = "Finding safe spawn location";
         renderLoadingScreen();
 
-        // Simple spawn logic: Start at (0, 0, 0) and search upward for the surface
+        // Improved spawn logic: Search for safe flat area with solid ground (no caves below)
         float spawnX = 0.0f;
         float spawnZ = 0.0f;
         int spawnGroundY = -1;
 
-        std::cout << "Finding spawn at (0, 0, 0)..." << std::endl;
+        std::cout << "Finding safe spawn location..." << std::endl;
 
-        // Search upward from Y=0 to find the SURFACE (last solid block before air)
         const int MAX_WORLD_HEIGHT = worldHeight * 32;  // Convert chunks to blocks
-        for (int y = 0; y < MAX_WORLD_HEIGHT - 1; y++) {
-            int currentBlock = world.getBlockAt(0.0f, static_cast<float>(y), 0.0f);
-            int aboveBlock = world.getBlockAt(0.0f, static_cast<float>(y + 1), 0.0f);
+        const int SEARCH_RADIUS = 32;  // Search in 32 block radius
+        const int MIN_SOLID_DEPTH = 5;  // Require at least 5 blocks of solid ground below
 
-            // Found surface: current is solid (not air/water) AND above is air
-            if ((currentBlock != 0 && currentBlock != 5) && aboveBlock == 0) {
-                spawnGroundY = y;
-                std::cout << "Found surface at Y=" << y << " (block ID: " << currentBlock << ")" << std::endl;
-                break;
+        // Helper to check if a location is safe to spawn
+        auto isSafeSpawn = [&world, MIN_SOLID_DEPTH](float x, float z, int groundY) -> bool {
+            // Check if there's solid ground below (no caves)
+            for (int dy = 0; dy < MIN_SOLID_DEPTH; dy++) {
+                int blockID = world.getBlockAt(x, static_cast<float>(groundY - dy), z);
+                // Must be solid (not air=0, not water=5)
+                if (blockID == 0 || blockID == 5) {
+                    return false;  // Cave or water underneath
+                }
+            }
+            // Check if there's clear space above (2 blocks tall for player)
+            for (int dy = 1; dy <= 3; dy++) {
+                int blockID = world.getBlockAt(x, static_cast<float>(groundY + dy), z);
+                if (blockID != 0) {
+                    return false;  // Not enough headroom
+                }
+            }
+            return true;
+        };
+
+        // Spiral search pattern outward from (0, 0)
+        bool foundSafeSpawn = false;
+        for (int radius = 0; radius <= SEARCH_RADIUS && !foundSafeSpawn; radius++) {
+            // Search at this radius
+            for (int dx = -radius; dx <= radius && !foundSafeSpawn; dx++) {
+                for (int dz = -radius; dz <= radius && !foundSafeSpawn; dz++) {
+                    // Only check perimeter of this radius (optimization)
+                    if (abs(dx) != radius && abs(dz) != radius) continue;
+
+                    float testX = static_cast<float>(dx);
+                    float testZ = static_cast<float>(dz);
+
+                    // Search upward from bottom to find surface
+                    for (int y = MAX_WORLD_HEIGHT - 2; y >= 10; y--) {  // Search from top down
+                        int currentBlock = world.getBlockAt(testX, static_cast<float>(y), testZ);
+                        int aboveBlock = world.getBlockAt(testX, static_cast<float>(y + 1), testZ);
+
+                        // Found potential surface: current is solid AND above is air
+                        if ((currentBlock != 0 && currentBlock != 5) && aboveBlock == 0) {
+                            // Check if this is a safe spawn (solid ground below, clear above)
+                            if (isSafeSpawn(testX, testZ, y)) {
+                                spawnX = testX;
+                                spawnZ = testZ;
+                                spawnGroundY = y;
+                                foundSafeSpawn = true;
+                                std::cout << "Found safe spawn at (" << testX << ", " << y << ", " << testZ
+                                          << ") with solid ground below (block ID: " << currentBlock << ")" << std::endl;
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        // Emergency fallback if no surface found (shouldn't happen with proper terrain)
+        // Emergency fallback if no safe spawn found
         if (spawnGroundY < 0) {
-            std::cout << "WARNING: No surface found, using Y=64 as fallback" << std::endl;
+            std::cout << "WARNING: No safe spawn found, using fallback Y=64 at (0, 0)" << std::endl;
+            spawnX = 0.0f;
+            spawnZ = 0.0f;
             spawnGroundY = 64;
         }
 
