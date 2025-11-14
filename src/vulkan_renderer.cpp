@@ -105,7 +105,11 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : m_window(window) {
 
 // Destructor
 VulkanRenderer::~VulkanRenderer() {
+    std::cout << "  Destroying VulkanRenderer..." << std::endl;
+    std::cout.flush();
     cleanup();
+    std::cout << "  VulkanRenderer destroyed" << std::endl;
+    std::cout.flush();
 }
 
 // Create Vulkan instance
@@ -2415,14 +2419,17 @@ void VulkanRenderer::renderSkybox() {
 }
 
 void VulkanRenderer::cleanup() {
+    std::cout << "    Cleaning up swapchain..." << std::endl;
     cleanupSwapChain();
 
+    std::cout << "    Cleaning up textures..." << std::endl;
     // Cleanup default texture
     vkDestroySampler(m_device, m_defaultTextureSampler, nullptr);
     vkDestroyImageView(m_device, m_defaultTextureView, nullptr);
     vkDestroyImage(m_device, m_defaultTextureImage, nullptr);
     vkFreeMemory(m_device, m_defaultTextureMemory, nullptr);
 
+    std::cout << "    Cleaning up skybox..." << std::endl;
     // Cleanup skybox
     vkDestroyBuffer(m_device, m_skyboxVertexBuffer, nullptr);
     vkFreeMemory(m_device, m_skyboxVertexBufferMemory, nullptr);
@@ -2436,32 +2443,44 @@ void VulkanRenderer::cleanup() {
     vkDestroyImage(m_device, m_nightSkyboxImage, nullptr);
     vkFreeMemory(m_device, m_nightSkyboxMemory, nullptr);
 
+    std::cout << "    Cleaning up uniform buffers..." << std::endl;
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroyBuffer(m_device, m_uniformBuffers[i], nullptr);
         vkFreeMemory(m_device, m_uniformBuffersMemory[i], nullptr);
     }
 
+    std::cout << "    Cleaning up descriptor pool..." << std::endl;
     vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
 
+    std::cout << "    Cleaning up pipeline layout..." << std::endl;
     // Pipelines are already destroyed in cleanupSwapChain()
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyRenderPass(m_device, m_renderPass, nullptr);
 
+    std::cout << "    Cleaning up sync objects..." << std::endl;
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
         vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
         vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
     }
 
+    std::cout << "    Cleaning up command pool..." << std::endl;
     vkDestroyCommandPool(m_device, m_commandPool, nullptr);
 
+    std::cout << "    Destroying device..." << std::endl;
     vkDestroyDevice(m_device, nullptr);
 
+    std::cout << "    Cleaning up debug messenger..." << std::endl;
     if (m_enableValidationLayers) {
         DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
     }
 
+    std::cout << "    Destroying surface..." << std::endl;
     vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+
+    std::cout << "    Destroying instance..." << std::endl;
     vkDestroyInstance(m_instance, nullptr);
+
+    std::cout << "    Vulkan cleanup complete" << std::endl;
 }

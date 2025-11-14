@@ -28,12 +28,12 @@ struct BlockCoordinates {
  * @brief Converts world coordinates to chunk and local block coordinates
  *
  * Coordinate System:
- * - Blocks are 0.5 world units in size
+ * - Blocks are 1.0 world units in size
  * - Each chunk contains 32x32x32 blocks
  * - Chunk coordinates can be negative (world is centered at origin)
  *
  * Algorithm:
- * 1. Convert world coords to block coords (divide by 0.5)
+ * 1. Convert world coords to block coords (floor to integer)
  * 2. Compute chunk coords (divide block coords by 32)
  * 3. Compute local coords (modulo 32, handling negatives correctly)
  *
@@ -66,10 +66,10 @@ inline BlockCoordinates worldToBlockCoords(float worldX, float worldY, float wor
     constexpr int CHUNK_DEPTH = 32;
 
     // Convert world coordinates to block coordinates
-    // Blocks are 0.5 units in size
-    int blockX = static_cast<int>(std::floor(worldX / 0.5f));
-    int blockY = static_cast<int>(std::floor(worldY / 0.5f));
-    int blockZ = static_cast<int>(std::floor(worldZ / 0.5f));
+    // Blocks are 1.0 units in size
+    int blockX = static_cast<int>(std::floor(worldX));
+    int blockY = static_cast<int>(std::floor(worldY));
+    int blockZ = static_cast<int>(std::floor(worldZ));
 
     // Compute chunk coordinates
     int chunkX = blockX / CHUNK_WIDTH;

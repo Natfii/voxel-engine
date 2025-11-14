@@ -4,9 +4,13 @@ cube_map:
   top: "oak log top.png"      # Tree ring pattern on top
   bottom: "oak log top.png"   # Tree ring pattern on bottom
   sides: "oak log.png"   # Bark texture on all 4 sides
-texture_variation: 1    
+texture_variation: 1
 durability: 8
 liquid: false
 affected_by_gravity: false
 flammability: 1
 transparency: 0.0
+
+# Biome compatibility
+temperature_range: "30-75"  # Temperate climates (oak trees)
+moisture_range: "40-90"     # Needs moderate to high moisture

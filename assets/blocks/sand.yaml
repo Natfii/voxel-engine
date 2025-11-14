@@ -6,3 +6,7 @@ liquid: false
 affected_by_gravity: true
 flammability: 0
 transparency: 0.0
+
+# Biome compatibility
+temperature_range: "60-100" # Hot climates (deserts, beaches)
+moisture_range: "0-40"      # Dry to moderate (can be near water)

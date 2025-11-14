@@ -17,3 +17,7 @@ liquid_properties:
   fog_end: 8.0                    # Distance where fog is fully opaque (in blocks)
   tint_color: [0.4, 0.7, 1.0]     # Blue tint applied when submerged (RGB 0-1)
   darken_factor: 0.4              # How much darker it gets underwater (0-1)
+
+# Biome compatibility
+temperature_range: "0-100"  # Universal - water exists at all temperatures
+moisture_range: "30-100"    # Requires decent moisture (not in very dry areas)

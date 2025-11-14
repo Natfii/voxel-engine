@@ -15,9 +15,11 @@
 #include "chunk.h"
 #include "water_simulation.h"
 #include "particle_system.h"
+#include "biome_map.h"
 
-// Forward declaration
+// Forward declarations
 class VulkanRenderer;
+class BiomeMap;
 
 /**
  * @brief Chunk coordinate key for spatial hash map
@@ -82,8 +84,9 @@ public:
      * @param width Number of chunks along the X axis
      * @param height Number of chunks along the Y axis (vertical)
      * @param depth Number of chunks along the Z axis
+     * @param seed Random seed for world generation (default: 12345)
      */
-    World(int width, int height, int depth);
+    World(int width, int height, int depth, int seed = 12345);
 
     /**
      * @brief Destroys the world and cleans up all chunks
@@ -174,14 +177,17 @@ public:
     /**
      * @brief Sets the block ID at the specified world position
      *
-     * Does not update meshes or buffers. Use breakBlock() for automatic mesh updates.
+     * By default, regenerates the chunk mesh immediately. For batch operations
+     * (like tree placement), pass regenerateMesh=false and manually regenerate
+     * meshes after all blocks are placed to avoid performance issues.
      *
      * @param worldX World X coordinate
      * @param worldY World Y coordinate
      * @param worldZ World Z coordinate
      * @param blockID Block ID to set (0 = air/remove block)
+     * @param regenerateMesh If true, regenerates mesh immediately (default: true)
      */
-    void setBlockAt(float worldX, float worldY, float worldZ, int blockID);
+    void setBlockAt(float worldX, float worldY, float worldZ, int blockID, bool regenerateMesh = true);
 
     /**
      * @brief Gets the block metadata at the specified world position
@@ -302,12 +308,29 @@ public:
      */
     ParticleSystem* getParticleSystem() { return m_particleSystem.get(); }
 
+    /**
+     * @brief Gets the biome map
+     * @return Pointer to biome map
+     */
+    BiomeMap* getBiomeMap() { return m_biomeMap.get(); }
+
+    /**
+     * @brief Runs decoration pass (trees, grass, flowers, structures)
+     * Should be called after generateWorld() but before createBuffers()
+     */
+    void decorateWorld();
+
 private:
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
+    int m_seed;                          ///< World generation seed
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_chunkMap;  ///< Fast O(1) chunk lookup by coordinates
     std::vector<Chunk*> m_chunks;  ///< All chunks for iteration (does not own memory)
 
     // Water simulation and particles
     std::unique_ptr<WaterSimulation> m_waterSimulation;  ///< Water flow simulation
     std::unique_ptr<ParticleSystem> m_particleSystem;    ///< Particle effects for splashes
+
+    // Biome and generation systems
+    std::unique_ptr<BiomeMap> m_biomeMap;  ///< Biome map for world generation
+    std::unique_ptr<class TreeGenerator> m_treeGenerator;  ///< Procedural tree generation
 };

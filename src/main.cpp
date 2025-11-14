@@ -31,6 +31,7 @@
 #include "chunk.h"
 #include "world.h"
 #include "block_system.h"
+#include "biome_system.h"
 #include "structure_system.h"
 #include "player.h"
 #include "pause_menu.h"
@@ -42,6 +43,7 @@
 #include "raycast.h"
 #include "input_manager.h"
 #include "inventory.h"
+#include "terrain_constants.h"
 // BlockIconRenderer is now part of block_system.h
 
 // Global variables
@@ -154,19 +156,108 @@ int main() {
         ImGui_ImplVulkan_CreateFontsTexture();
         // Note: ImGui will handle font upload in the next frame
 
+        // ========== LOADING SCREEN SYSTEM ==========
+        // Helper to render loading screen with progress and animated dots
+        float loadingProgress = 0.0f;
+        std::string loadingMessage = "Initializing";
+        bool loadingComplete = false;
+        int dotAnimationFrame = 0;
+
+        auto renderLoadingScreen = [&]() {
+            if (loadingComplete) return;
+
+            if (!renderer.beginFrame()) return;
+
+            // Animate dots pattern: .  ..  ...  .  ..  ... (cycles every 6 frames)
+            const char* dotPatterns[] = {".", "..", "...", ".", "..", "..."};
+            std::string animatedMessage = loadingMessage + dotPatterns[dotAnimationFrame % 6];
+            dotAnimationFrame++;
+
+            // Start ImGui frame
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+
+            // Full-screen black overlay
+            ImGuiIO& io = ImGui::GetIO();
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(io.DisplaySize);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            ImGui::Begin("LoadingOverlay", nullptr,
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs);
+
+            // Center the loading UI
+            float centerX = io.DisplaySize.x * 0.5f;
+            float centerY = io.DisplaySize.y * 0.5f;
+
+            // Loading text with animated dots
+            ImGui::SetCursorPos(ImVec2(centerX - 150, centerY - 50));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::Text("%s", animatedMessage.c_str());
+            ImGui::PopStyleColor();
+
+            // Progress bar
+            ImGui::SetCursorPos(ImVec2(centerX - 150, centerY));
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+            ImGui::ProgressBar(loadingProgress, ImVec2(300, 30), "");
+            ImGui::PopStyleColor();
+
+            // Percentage text
+            ImGui::SetCursorPos(ImVec2(centerX - 30, centerY + 40));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+            ImGui::Text("%.0f%%", loadingProgress * 100.0f);
+            ImGui::PopStyleColor();
+
+            ImGui::End();
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
+
+            // Render ImGui
+            ImGui::Render();
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), renderer.getCurrentCommandBuffer());
+
+            renderer.endFrame();
+            glfwPollEvents();  // Keep window responsive
+        };
+
         // Get world configuration from config file
         int seed = config.getInt("World", "seed", 1124345);
         int worldWidth = config.getInt("World", "world_width", 12);
-        int worldHeight = config.getInt("World", "world_height", 3);
         int worldDepth = config.getInt("World", "world_depth", 12);
 
+        // World height is hardcoded as near-infinite to match Minecraft's horizontal infinite feel
+        // See TerrainGeneration::WORLD_HEIGHT_CHUNKS for the constant
+        const int worldHeight = TerrainGeneration::WORLD_HEIGHT_CHUNKS;
+
+        // Loading stage 1: Block registry (10%)
+        loadingProgress = 0.05f;
+        loadingMessage = "Loading blocks and textures";
+        renderLoadingScreen();
         std::cout << "Loading block registry with textures..." << std::endl;
         BlockRegistry::instance().loadBlocks("assets/blocks", &renderer);
 
+        // Loading stage 2: Structure registry (15%)
+        loadingProgress = 0.15f;
+        loadingMessage = "Loading structures";
+        renderLoadingScreen();
         std::cout << "Loading structure registry..." << std::endl;
         StructureRegistry::instance().loadStructures("assets/structures");
 
-        // Bind texture atlas to renderer descriptor sets
+        // Loading stage 3: Biome registry (20%)
+        loadingProgress = 0.20f;
+        loadingMessage = "Loading biomes";
+        renderLoadingScreen();
+        std::cout << "Loading biome registry..." << std::endl;
+        BiomeRegistry::getInstance().loadBiomes("assets/biomes");
+
+        // Loading stage 4: Bind textures (25%)
+        loadingProgress = 0.25f;
+        loadingMessage = "Setting up renderer";
+        renderLoadingScreen();
         std::cout << "Binding texture atlas..." << std::endl;
         renderer.bindAtlasTexture(
             BlockRegistry::instance().getAtlasImageView(),
@@ -182,34 +273,176 @@ int main() {
         );
         BlockIconRenderer::init(atlasImGuiDescriptor);
 
+        // Loading stage 5: Initialize world (30%)
+        loadingProgress = 0.30f;
+        loadingMessage = "Initializing world generator";
+        renderLoadingScreen();
         std::cout << "Initializing world generation..." << std::endl;
         Chunk::initNoise(seed);
-        World world(worldWidth, worldHeight, worldDepth);
+        World world(worldWidth, worldHeight, worldDepth, seed);
 
+        // Loading stage 6: Generate terrain (60%)
+        loadingProgress = 0.35f;
+        loadingMessage = "Generating world";
+        renderLoadingScreen();
         std::cout << "Generating world..." << std::endl;
         world.generateWorld();
 
+        // Loading stage 7: Decorate world (75%)
+        loadingProgress = 0.65f;
+        loadingMessage = "Growing trees and vegetation";
+        renderLoadingScreen();
+        std::cout << "Decorating world (trees, vegetation)..." << std::endl;
+        world.decorateWorld();
+
+        // Loading stage 8: Create GPU buffers (85%)
+        loadingProgress = 0.80f;
+        loadingMessage = "Creating GPU buffers";
+        renderLoadingScreen();
         std::cout << "Creating GPU buffers..." << std::endl;
         world.createBuffers(&renderer);
 
-        // Spawn player at world center with appropriate height based on terrain
-        // World is centered around (0, 0), so spawn at center
+        // Loading stage 9: Finding spawn location (90%)
+        loadingProgress = 0.88f;
+        loadingMessage = "Finding safe spawn location";
+        renderLoadingScreen();
+
+        // Find a safe spawn location - search in expanding spiral if needed
         float spawnX = 0.0f;
         float spawnZ = 0.0f;
-        int terrainHeight = Chunk::getTerrainHeightAt(spawnX, spawnZ);
-        // Convert terrain height (in blocks) to world units, add 10 blocks clearance (for water/structures), then add eye height
-        // Player position is at eye level, not feet level
-        float spawnY = (terrainHeight + 10) * 0.5f + 0.8f;  // terrain + 10 blocks clearance + eye height
+        int spawnGroundY = -1;
+        const int WATER_LEVEL = 62;  // From terrain_constants.h
 
-        // Ensure player never spawns below safe height (minimum y = 40.0 - well above terrain and water)
-        if (spawnY < 40.0f) {
-            std::cout << "Warning: Calculated spawn Y (" << spawnY << ") from terrain height " << terrainHeight << " is too low, setting to 40.0" << std::endl;
-            spawnY = 40.0f;
+        auto isSafeSpawn = [&](float x, float z, int groundY) -> bool {
+            // Must be above water
+            if (groundY < WATER_LEVEL) return false;
+
+            // CRITICAL: Verify ground is actually solid (not floating terrain)
+            // Check at least 3 blocks below ground are solid
+            for (int dy = -1; dy >= -3; dy--) {
+                if (groundY + dy < 0) break;  // Hit bedrock equivalent
+                int blockBelow = world.getBlockAt(x, static_cast<float>(groundY + dy), z);
+                if (blockBelow == 0) return false;  // Gap below - floating terrain!
+            }
+
+            // Check for 3 blocks of clear space above ground
+            for (int dy = 1; dy <= 3; dy++) {
+                int blockAbove = world.getBlockAt(x, static_cast<float>(groundY + dy), z);
+                if (blockAbove != 0) return false;  // Not air - suffocation risk
+            }
+
+            // Check surrounding area is relatively flat (within 3 blocks)
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    if (dx == 0 && dz == 0) continue;
+                    float checkX = x + dx;
+                    float checkZ = z + dz;
+
+                    // Find ground height at this position
+                    int terrainHeight = world.getBiomeMap()->getTerrainHeightAt(checkX, checkZ);
+                    int neighborGroundY = terrainHeight;
+                    for (int y = terrainHeight; y >= groundY - 5 && y >= 0; y--) {
+                        int blockID = world.getBlockAt(checkX, static_cast<float>(y), checkZ);
+                        if (blockID != 0 && blockID != 5) {  // Not air, not water
+                            neighborGroundY = y;
+                            break;
+                        }
+                    }
+
+                    // Too steep if difference > 3 blocks
+                    if (std::abs(neighborGroundY - groundY) > 3) return false;
+                }
+            }
+
+            return true;
+        };
+
+        // Search for safe spawn in expanding spiral
+        bool foundSafeSpawn = false;
+        const int MAX_SEARCH_RADIUS = 50;  // Search up to 50 blocks away
+
+        for (int radius = 0; radius <= MAX_SEARCH_RADIUS && !foundSafeSpawn; radius++) {
+            for (int angle = 0; angle < 360 && !foundSafeSpawn; angle += 45) {
+                float testX = radius * cos(angle * 3.14159f / 180.0f);
+                float testZ = radius * sin(angle * 3.14159f / 180.0f);
+
+                // Get terrain height at this position
+                int terrainHeight = world.getBiomeMap()->getTerrainHeightAt(testX, testZ);
+
+                // Find solid ground
+                int testGroundY = terrainHeight;
+                for (int y = terrainHeight; y >= std::max(0, terrainHeight - 10); y--) {
+                    int blockID = world.getBlockAt(testX, static_cast<float>(y), testZ);
+                    if (blockID != 0 && blockID != 5) {  // Solid block (not air, not water)
+                        testGroundY = y;
+
+                        // Test if this is a safe spawn
+                        if (isSafeSpawn(testX, testZ, testGroundY)) {
+                            spawnX = testX;
+                            spawnZ = testZ;
+                            spawnGroundY = testGroundY;
+                            foundSafeSpawn = true;
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
-        std::cout << "Spawning player at (" << spawnX << ", " << spawnY << ", " << spawnZ << ") - terrain height: " << terrainHeight << " blocks" << std::endl;
+        // Fallback if no safe spawn found (should be rare with proper terrain)
+        if (!foundSafeSpawn) {
+            std::cout << "WARNING: Could not find safe spawn in radius, searching at origin..." << std::endl;
+            spawnX = 0.0f;
+            spawnZ = 0.0f;
+
+            // Get terrain height from biome map (works with any world height)
+            int terrainHeight = world.getBiomeMap()->getTerrainHeightAt(0.0f, 0.0f);
+
+            // Find actual ground at origin by searching downward from terrain height
+            spawnGroundY = terrainHeight;
+            for (int y = terrainHeight; y >= std::max(0, terrainHeight - 20); y--) {
+                int blockID = world.getBlockAt(0.0f, static_cast<float>(y), 0.0f);
+                if (blockID != 0 && blockID != 5) {  // Solid block (not air/water)
+                    spawnGroundY = y;
+                    break;
+                }
+            }
+
+            // If still no ground found, emergency fallback uses terrain height
+            if (spawnGroundY < 0 || world.getBlockAt(0.0f, static_cast<float>(spawnGroundY), 0.0f) == 0) {
+                std::cout << "CRITICAL: No ground found anywhere, emergency spawn at terrain height Y=" << terrainHeight << std::endl;
+                spawnGroundY = terrainHeight;
+            }
+        }
+
+        // Convert to world coordinates with eye height (feet position, not eye position)
+        // Player constructor expects feet position, so don't add eye height
+        float spawnY = static_cast<float>(spawnGroundY + 1);  // 1 block above ground (feet position)
+
+        // Debug: Check blocks around spawn
+        std::cout << "Blocks at spawn location:" << std::endl;
+        for (int dy = -2; dy <= 3; dy++) {
+            int blockY = spawnGroundY + dy;
+            int blockID = world.getBlockAt(spawnX, static_cast<float>(blockY), spawnZ);
+            std::cout << "  Block Y=" << blockY << " (world Y=" << static_cast<float>(blockY)
+                      << "): " << blockID << (dy == 0 ? " <- GROUND" : "")
+                      << (dy == 1 ? " <- FEET" : "") << std::endl;
+        }
+
+        std::cout << "Safe spawn found at (" << spawnX << ", " << spawnY << ", " << spawnZ
+                  << ") - ground: Y=" << spawnGroundY << " (searched radius: "
+                  << (foundSafeSpawn ? "found" : "fallback") << ")" << std::endl;
+
+        // Loading stage 10: Spawning player (95%)
+        loadingProgress = 0.95f;
+        loadingMessage = "Spawning player";
+        renderLoadingScreen();
         Player player(glm::vec3(spawnX, spawnY, spawnZ), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
 
+        // Loading stage 11: Initializing game systems (98%)
+        loadingProgress = 0.98f;
+        loadingMessage = "Initializing game systems";
+        renderLoadingScreen();
         PauseMenu pauseMenu(window);
 
         // Create targeting system (replaces crosshair + block_outline)
@@ -223,6 +456,23 @@ int main() {
         // Create inventory system
         Inventory inventory;
         g_inventory = &inventory;
+
+        // Loading stage 12: Final check - wait for player to be on ground (100%)
+        loadingProgress = 0.99f;
+        loadingMessage = "Ready";
+        renderLoadingScreen();
+
+        // Verify player is safely on the ground before hiding loading screen
+        // Update physics once to ensure player settles (disable input during this)
+        player.update(window, 0.016f, &world, false);  // 1 frame at 60fps, no input
+
+        // Final loading screen frame at 100%
+        loadingProgress = 1.0f;
+        loadingMessage = "Ready";
+        renderLoadingScreen();
+
+        // Hide loading screen - game is ready!
+        loadingComplete = true;
 
         bool isPaused = false;
         bool escPressed = false;
@@ -391,10 +641,12 @@ int main() {
 
             if (underwater) {
                 // Get the block at camera position
-                int camX = static_cast<int>(std::floor(player.Position.x / 0.5f));
-                int camY = static_cast<int>(std::floor(player.Position.y / 0.5f));
-                int camZ = static_cast<int>(std::floor(player.Position.z / 0.5f));
-                int liquidBlockID = world.getBlockAt(camX, camY, camZ);
+                // Convert player position to block coordinates, then back to world coordinates
+                int camX = static_cast<int>(std::floor(player.Position.x));
+                int camY = static_cast<int>(std::floor(player.Position.y));
+                int camZ = static_cast<int>(std::floor(player.Position.z));
+                // getBlockAt expects world coordinates (floats), not block coordinates (ints)
+                int liquidBlockID = world.getBlockAt(static_cast<float>(camX), static_cast<float>(camY), static_cast<float>(camZ));
 
                 // If it's a liquid block, use its properties from YAML
                 auto& registry = BlockRegistry::instance();
@@ -448,16 +700,16 @@ int main() {
                     if (selectedItem.type == InventoryItemType::BLOCK) {
                         // Place block adjacent to the targeted block (using hit normal)
                         if (selectedItem.blockID > 0) {
-                            glm::vec3 placePosition = target.blockPosition + target.hitNormal * 0.5f;
+                            glm::vec3 placePosition = target.blockPosition + target.hitNormal;
                             world.placeBlock(placePosition, selectedItem.blockID, &renderer);
                         }
                     } else if (selectedItem.type == InventoryItemType::STRUCTURE) {
                         // Place structure at ground level below targeted position
                         // Convert target block position to block coordinates
                         glm::ivec3 targetBlockCoords(
-                            (int)(target.blockPosition.x / 0.5f),
-                            (int)(target.blockPosition.y / 0.5f),
-                            (int)(target.blockPosition.z / 0.5f)
+                            (int)(target.blockPosition.x),
+                            (int)(target.blockPosition.y),
+                            (int)(target.blockPosition.z)
                         );
 
                         // Find ground level by casting ray downward
@@ -621,34 +873,52 @@ int main() {
             renderer.endFrame();
         }
 
+        std::cout << "Shutting down..." << std::endl;
+
         // Wait for device to finish before cleanup
+        std::cout << "  Waiting for GPU to finish..." << std::endl;
         vkDeviceWaitIdle(renderer.getDevice());
+        std::cout << "  GPU idle" << std::endl;
 
         // Cleanup world chunk buffers
+        std::cout << "  Cleaning up world..." << std::endl;
         world.cleanup(&renderer);
+        std::cout << "  World cleanup complete" << std::endl;
 
         // Cleanup ImGui
+        std::cout << "  Cleaning up ImGui..." << std::endl;
         ImGui_ImplVulkan_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
         vkDestroyDescriptorPool(renderer.getDevice(), imguiPool, nullptr);
+        std::cout << "  ImGui cleanup complete" << std::endl;
 
         // Save current window size to config
+        std::cout << "  Saving config..." << std::endl;
         int currentWidth, currentHeight;
         glfwGetWindowSize(window, &currentWidth, &currentHeight);
         config.setInt("Window", "width", currentWidth);
         config.setInt("Window", "height", currentHeight);
         config.saveToFile("config.ini");
+        std::cout << "  Config saved" << std::endl;
 
+        std::cout << "  Destroying window..." << std::endl;
         glfwDestroyWindow(window);
+        std::cout << "  Terminating GLFW..." << std::endl;
         glfwTerminate();
+        std::cout << "  Cleaning up noise..." << std::endl;
         Chunk::cleanupNoise();
 
         std::cout << "Shutdown complete." << std::endl;
+        std::cout << "Exiting main()..." << std::endl;
+        std::cout.flush();  // Force flush before destructors run
         return 0;
 
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << std::endl;
         return -1;
     }
+
+    std::cout << "After exception handling" << std::endl;
+    std::cout.flush();
 }

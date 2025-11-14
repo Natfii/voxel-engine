@@ -1,0 +1,16 @@
+id: 8
+name: "Spruce Log"
+cube_map:
+  top: "spruce log top.png"      # Tree ring pattern on top
+  bottom: "spruce log top.png"   # Tree ring pattern on bottom
+  sides: "spruce log.png"   # Bark texture on all 4 sides
+texture_variation: 1
+durability: 8
+liquid: false
+affected_by_gravity: false
+flammability: 1
+transparency: 0.0
+
+# Biome compatibility
+temperature_range: "0-35"  # Colder climates
+moisture_range: "40-90"     # Needs moderate to high moisture

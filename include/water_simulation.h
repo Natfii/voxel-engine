@@ -105,6 +105,9 @@ private:
     // Chunks with active water (for optimization)
     std::set<glm::ivec3, Ivec3Compare> m_activeChunks;
 
+    // Dirty tracking - only update cells that have changed
+    std::set<glm::ivec3, Ivec3Compare> m_dirtyCells;
+
     // Configuration
     bool m_enableEvaporation;
     float m_flowSpeed;
@@ -123,6 +126,7 @@ private:
     void updateWaterSources(float deltaTime);
     void updateWaterBodies();
     void updateActiveChunks();
+    void markDirty(const glm::ivec3& pos);  // Mark a cell as dirty (needs update)
 
     // Helper methods
     bool isBlockSolid(int x, int y, int z, World* world) const;

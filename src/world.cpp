@@ -16,24 +16,43 @@
 #include "world.h"
 #include "world_utils.h"
 #include "world_constants.h"
+#include "terrain_constants.h"
 #include "vulkan_renderer.h"
 #include "frustum.h"
 #include "debug_state.h"
 #include "logger.h"
 #include "block_system.h"
+#include "biome_system.h"
+#include "tree_generator.h"
 #include <glm/glm.hpp>
 #include <thread>
 #include <algorithm>
 #include <cmath>
 #include <unordered_set>
 
-World::World(int width, int height, int depth)
-    : m_width(width), m_height(height), m_depth(depth) {
+// ========== WORLD GENERATION CONFIGURATION ==========
+
+/**
+ * @brief Enable natural ocean generation
+ *
+ * When enabled, areas where terrain is significantly below water level become oceans.
+ * Oceans are hardcoded (not YAML-based) and consist of water blocks with sand/stone floors.
+ * This creates natural breaks in biome generation, making the world feel more realistic.
+ *
+ * Ocean threshold: Terrain height < (WATER_LEVEL - OCEAN_DEPTH_THRESHOLD) = ocean
+ */
+constexpr bool ENABLE_NATURAL_OCEANS = true;
+constexpr int OCEAN_DEPTH_THRESHOLD = 8;  // Blocks below water level to trigger ocean
+
+// ====================================================
+
+World::World(int width, int height, int depth, int seed)
+    : m_width(width), m_height(height), m_depth(depth), m_seed(seed) {
     // Center world generation around origin (0, 0, 0)
     int halfWidth = width / 2;
     int halfDepth = depth / 2;
 
-    Logger::info() << "Creating world with " << width << "x" << height << "x" << depth << " chunks";
+    Logger::info() << "Creating world with " << width << "x" << height << "x" << depth << " chunks (seed: " << seed << ")";
     Logger::info() << "Chunk coordinates range: X[" << -halfWidth << " to " << (width - halfWidth - 1)
                    << "], Y[0 to " << (height - 1) << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]";
 
@@ -56,6 +75,23 @@ World::World(int width, int height, int depth)
 
     Logger::info() << "Total chunks created: " << m_chunks.size();
 
+    // Validate that biomes are loaded before creating world
+    if (BiomeRegistry::getInstance().getBiomeCount() == 0) {
+        throw std::runtime_error("BiomeRegistry is empty! Call BiomeRegistry::loadBiomes() before creating a World.");
+    }
+
+    // Initialize biome map with seed
+    m_biomeMap = std::make_unique<BiomeMap>(seed);
+    Logger::info() << "Biome map initialized with " << BiomeRegistry::getInstance().getBiomeCount() << " biomes";
+
+    // Initialize tree generator
+    m_treeGenerator = std::make_unique<TreeGenerator>(seed);
+    Logger::info() << "Tree generator initialized";
+
+    // Generate tree templates for all biomes (each biome gets unique trees)
+    BiomeRegistry::getInstance().generateTreeTemplates(m_treeGenerator.get());
+    Logger::info() << "Generated unique tree templates for each biome";
+
     // Initialize water simulation and particle systems
     m_waterSimulation = std::make_unique<WaterSimulation>();
     m_particleSystem = std::make_unique<ParticleSystem>();
@@ -64,8 +100,15 @@ World::World(int width, int height, int depth)
 }
 
 World::~World() {
+    std::cout << "  Destroying World..." << std::endl;
+    std::cout.flush();
+
     // unique_ptr in m_chunkMap automatically cleans up - no manual delete needed
     // m_chunks vector only contains non-owning pointers, so no cleanup needed
+    // This could take time with many chunks (e.g., 128x3x128 = 49,152 chunks)
+
+    std::cout << "  World destroyed (" << m_chunks.size() << " chunks)" << std::endl;
+    std::cout.flush();
 }
 
 void World::generateWorld() {
@@ -77,15 +120,16 @@ void World::generateWorld() {
     threads.reserve(numThreads);
 
     // Step 1: Generate terrain blocks in parallel
+    BiomeMap* biomeMapPtr = m_biomeMap.get();
     for (unsigned int i = 0; i < numThreads; ++i) {
         size_t startIdx = i * chunksPerThread;
         size_t endIdx = std::min(startIdx + chunksPerThread, m_chunks.size());
 
         if (startIdx >= m_chunks.size()) break;
 
-        threads.emplace_back([this, startIdx, endIdx]() {
+        threads.emplace_back([this, biomeMapPtr, startIdx, endIdx]() {
             for (size_t j = startIdx; j < endIdx; ++j) {
-                m_chunks[j]->generate();
+                m_chunks[j]->generate(biomeMapPtr);
             }
         });
     }
@@ -115,6 +159,187 @@ void World::generateWorld() {
     for (auto& thread : threads) {
         thread.join();
     }
+}
+
+void World::decorateWorld() {
+    using namespace TerrainGeneration;
+
+    Logger::info() << "Starting world decoration (trees, vegetation)...";
+
+    // Generate per-biome tree templates first (each biome gets 10 unique tree templates)
+    // Use .get() to extract raw pointer from unique_ptr (safe borrowing - function doesn't store pointer)
+    BiomeRegistry::getInstance().generateTreeTemplates(m_treeGenerator.get());
+
+    int treesPlaced = 0;
+    int undergroundFeaturesPlaced = 0;
+
+    // Use offset seed for decoration to make it different from terrain
+    std::mt19937 rng(m_seed + 77777);
+    std::uniform_int_distribution<int> densityDist(0, 100);
+
+    // Calculate world bounds
+    int halfWidth = m_width / 2;
+    int halfDepth = m_depth / 2;
+    int maxWorldY = m_height * Chunk::HEIGHT;
+
+    // Track modified chunks for selective mesh regeneration
+    std::unordered_set<Chunk*> modifiedChunks;
+
+    // Decorate surface - grid-based tree sampling for proper density
+    // Sample every 4 blocks on a grid (8x8 = 64 sample points per chunk)
+    // This gives proper Minecraft-accurate tree density in forests
+    const int TREE_SAMPLE_SPACING = 4;  // Sample every 4 blocks
+
+    for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
+        for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
+            // Grid-based sampling within chunk
+            for (int localX = 0; localX < Chunk::WIDTH; localX += TREE_SAMPLE_SPACING) {
+                for (int localZ = 0; localZ < Chunk::DEPTH; localZ += TREE_SAMPLE_SPACING) {
+                    // Add small random offset (0-3 blocks) to avoid perfectly aligned trees
+                    std::uniform_int_distribution<int> offsetDist(0, TREE_SAMPLE_SPACING - 1);
+                    int offsetX = offsetDist(rng);
+                    int offsetZ = offsetDist(rng);
+
+                    int sampleX = std::min(localX + offsetX, Chunk::WIDTH - 1);
+                    int sampleZ = std::min(localZ + offsetZ, Chunk::DEPTH - 1);
+
+                    // Convert to world coordinates
+                    float worldX = static_cast<float>(chunkX * Chunk::WIDTH + sampleX);
+                    float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + sampleZ);
+
+                // Get biome at this position
+                const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+                if (!biome || !biome->trees_spawn) continue;
+
+                // Check tree density probability
+                if (densityDist(rng) > biome->tree_density) continue;
+
+                // Get terrain height directly from biome map (already calculated!)
+                // This is 200x faster than searching from sky downward
+                int terrainHeight = m_biomeMap->getTerrainHeightAt(worldX, worldZ);
+
+                // Find actual solid ground near terrain height (verify surface)
+                int groundY = terrainHeight;
+                for (int y = terrainHeight; y >= std::max(0, terrainHeight - 5); y--) {
+                    int blockID = getBlockAt(worldX, static_cast<float>(y), worldZ);
+                    if (blockID != BLOCK_AIR && blockID != BLOCK_WATER) {
+                        groundY = y;
+                        break;
+                    }
+                }
+
+                if (groundY < 10) continue;  // Too low for tree placement
+
+                // placeTree expects block coordinates
+                // Check for float-to-int overflow before casting
+                float blockXf = worldX;
+                float blockZf = worldZ;
+                if (blockXf < INT_MIN || blockXf > INT_MAX || blockZf < INT_MIN || blockZf > INT_MAX) {
+                    continue;  // Skip this tree - coordinates out of range
+                }
+                int blockX = static_cast<int>(blockXf);
+                int blockZ = static_cast<int>(blockZf);
+
+                // Place tree using biome's tree templates (each biome has unique trees)
+                if (m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ, biome)) {
+                    treesPlaced++;
+
+                    // Track affected chunks (tree + neighbors) for mesh regeneration
+                    // Trees can span multiple chunks, so mark the chunk and all adjacent chunks
+                    Chunk* centerChunk = getChunkAtWorldPos(worldX, static_cast<float>(groundY + 1), worldZ);
+                    if (centerChunk) {
+                        modifiedChunks.insert(centerChunk);
+                        // Add all 26 neighboring chunks (3x3x3 cube around tree)
+                        for (int dx = -1; dx <= 1; dx++) {
+                            for (int dy = -1; dy <= 1; dy++) {
+                                for (int dz = -1; dz <= 1; dz++) {
+                                    Chunk* neighbor = getChunkAt(centerChunk->getChunkX() + dx,
+                                                                   centerChunk->getChunkY() + dy,
+                                                                   centerChunk->getChunkZ() + dz);
+                                    if (neighbor) modifiedChunks.insert(neighbor);
+                                }
+                            }
+                        }
+                    }
+                }
+                }  // End localZ loop
+            }  // End localX loop
+        }  // End chunkZ loop
+    }  // End chunkX loop
+
+    // Decorate underground biome chambers
+    for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
+        for (int chunkY = 0; chunkY < m_height; ++chunkY) {
+            for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
+                // Sample positions in underground chunks
+                std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
+
+                for (int attempt = 0; attempt < 2; attempt++) {  // 2 attempts per underground chunk
+                    int localX = posDist(rng);
+                    int localY = posDist(rng);
+                    int localZ = posDist(rng);
+
+                    int worldX = chunkX * Chunk::WIDTH + localX;
+                    int worldY = chunkY * Chunk::HEIGHT + localY;
+                    int worldZ = chunkZ * Chunk::DEPTH + localZ;
+
+                    // Check if in underground chamber
+                    if (m_biomeMap->isUndergroundBiomeAt(worldX, worldY, worldZ)) {
+                        // Check if this is floor of chamber (solid block below, air here)
+                        int blockHere = getBlockAt(worldX, worldY, worldZ);
+                        int blockBelow = getBlockAt(worldX, static_cast<float>(worldY - 1), worldZ);
+
+                        if (blockHere == BLOCK_AIR && blockBelow == BLOCK_STONE) {
+                            // Get underground biome
+                            const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+
+                            // Place mushrooms or small features (for now, just count)
+                            // TODO: Add mushrooms, glowing flora, etc.
+                            undergroundFeaturesPlaced++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Logger::info() << "Decoration complete. Placed " << treesPlaced << " trees and "
+                   << undergroundFeaturesPlaced << " underground features";
+
+    // Batch regenerate meshes for modified chunks (parallel for performance)
+    Logger::info() << "Regenerating meshes for " << modifiedChunks.size() << " modified chunks in parallel...";
+
+    // Convert set to vector for parallel iteration
+    std::vector<Chunk*> modifiedChunksVec(modifiedChunks.begin(), modifiedChunks.end());
+
+    // Parallel mesh regeneration (same pattern as generateWorld)
+    unsigned int numThreads = std::thread::hardware_concurrency();
+    if (numThreads == 0) numThreads = 4;  // Fallback
+    std::vector<std::thread> threads;
+    threads.reserve(numThreads);
+
+    size_t chunksPerThread = (modifiedChunksVec.size() + numThreads - 1) / numThreads;
+
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, modifiedChunksVec.size());
+
+        if (startIdx >= modifiedChunksVec.size()) break;
+
+        threads.emplace_back([this, &modifiedChunksVec, startIdx, endIdx]() {
+            for (size_t idx = startIdx; idx < endIdx; ++idx) {
+                modifiedChunksVec[idx]->generateMesh(this);
+            }
+        });
+    }
+
+    // Wait for all threads to complete
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    Logger::info() << "Regenerated " << modifiedChunksVec.size() << " chunk meshes in parallel (out of "
+                   << m_chunks.size() << " total chunks)";
 }
 
 void World::createBuffers(VulkanRenderer* renderer) {
@@ -285,7 +510,7 @@ Chunk* World::getChunkAtWorldPos(float worldX, float worldY, float worldZ) {
     return getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
 }
 
-void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID) {
+void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID, bool regenerateMesh) {
     // Convert world coordinates to chunk and local block coordinates
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
 
@@ -297,14 +522,17 @@ void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID) {
     // Set the block
     chunk->setBlock(coords.localX, coords.localY, coords.localZ, blockID);
 
-    // NOTE: Block break animations could be added in the future by:
-    // - Adding a callback parameter to this function
-    // - Delaying mesh regeneration until animation completes
-    // - Using a particle system for break effects
-    // For now, blocks update instantly (Minecraft-style instant break)
-    chunk->generateMesh(this);
-    // Note: We don't call createBuffer here - that needs a renderer which we don't have access to
-    // We'll mark the chunk as needing a buffer update elsewhere
+    // Optionally regenerate mesh immediately (disable for batch operations)
+    if (regenerateMesh) {
+        // NOTE: Block break animations could be added in the future by:
+        // - Adding a callback parameter to this function
+        // - Delaying mesh regeneration until animation completes
+        // - Using a particle system for break effects
+        // For now, blocks update instantly (Minecraft-style instant break)
+        chunk->generateMesh(this);
+        // Note: We don't call createBuffer here - that needs a renderer which we don't have access to
+        // We'll mark the chunk as needing a buffer update elsewhere
+    }
 }
 
 uint8_t World::getBlockMetadataAt(float worldX, float worldY, float worldZ) {
@@ -359,18 +587,18 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
             glm::vec3 pos = toCheck.back();
             toCheck.pop_back();
 
-            glm::ivec3 ipos(int(pos.x / 0.5f), int(pos.y / 0.5f), int(pos.z / 0.5f));
+            glm::ivec3 ipos(int(pos.x), int(pos.y), int(pos.z));
             if (visited.find(ipos) != visited.end()) continue;
             visited.insert(ipos);
 
             // Check 6 neighbors
             glm::vec3 neighbors[6] = {
-                pos + glm::vec3(0.5f, 0.0f, 0.0f),
-                pos + glm::vec3(-0.5f, 0.0f, 0.0f),
-                pos + glm::vec3(0.0f, 0.5f, 0.0f),
-                pos + glm::vec3(0.0f, -0.5f, 0.0f),
-                pos + glm::vec3(0.0f, 0.0f, 0.5f),
-                pos + glm::vec3(0.0f, 0.0f, -0.5f)
+                pos + glm::vec3(1.0f, 0.0f, 0.0f),
+                pos + glm::vec3(-1.0f, 0.0f, 0.0f),
+                pos + glm::vec3(0.0f, 1.0f, 0.0f),
+                pos + glm::vec3(0.0f, -1.0f, 0.0f),
+                pos + glm::vec3(0.0f, 0.0f, 1.0f),
+                pos + glm::vec3(0.0f, 0.0f, -1.0f)
             };
 
             for (const auto& neighborPos : neighbors) {
@@ -407,12 +635,12 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
     // Always update all 6 adjacent chunks (not just on boundaries)
     // This handles cases like breaking grass revealing stone below
     Chunk* neighbors[6] = {
-        getChunkAtWorldPos(worldX - 0.5f, worldY, worldZ),  // -X
-        getChunkAtWorldPos(worldX + 0.5f, worldY, worldZ),  // +X
-        getChunkAtWorldPos(worldX, worldY - 0.5f, worldZ),  // -Y (below)
-        getChunkAtWorldPos(worldX, worldY + 0.5f, worldZ),  // +Y (above)
-        getChunkAtWorldPos(worldX, worldY, worldZ - 0.5f),  // -Z
-        getChunkAtWorldPos(worldX, worldY, worldZ + 0.5f)   // +Z
+        getChunkAtWorldPos(worldX - 1.0f, worldY, worldZ),  // -X
+        getChunkAtWorldPos(worldX + 1.0f, worldY, worldZ),  // +X
+        getChunkAtWorldPos(worldX, worldY - 1.0f, worldZ),  // -Y (below)
+        getChunkAtWorldPos(worldX, worldY + 1.0f, worldZ),  // +Y (above)
+        getChunkAtWorldPos(worldX, worldY, worldZ - 1.0f),  // -Z
+        getChunkAtWorldPos(worldX, worldY, worldZ + 1.0f)   // +Z
     };
 
     // Regenerate mesh and buffer for each unique neighbor chunk
@@ -445,9 +673,9 @@ void World::breakBlock(const glm::vec3& position, VulkanRenderer* renderer) {
 
 void World::breakBlock(const glm::ivec3& coords, VulkanRenderer* renderer) {
     // Convert block coordinates to world coordinates
-    float worldX = coords.x * 0.5f;
-    float worldY = coords.y * 0.5f;
-    float worldZ = coords.z * 0.5f;
+    float worldX = static_cast<float>(coords.x);
+    float worldY = static_cast<float>(coords.y);
+    float worldZ = static_cast<float>(coords.z);
     breakBlock(worldX, worldY, worldZ, renderer);
 }
 
@@ -484,12 +712,12 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
 
     // Always update all 6 adjacent chunks (not just on boundaries)
     Chunk* neighbors[6] = {
-        getChunkAtWorldPos(worldX - 0.5f, worldY, worldZ),  // -X
-        getChunkAtWorldPos(worldX + 0.5f, worldY, worldZ),  // +X
-        getChunkAtWorldPos(worldX, worldY - 0.5f, worldZ),  // -Y (below)
-        getChunkAtWorldPos(worldX, worldY + 0.5f, worldZ),  // +Y (above)
-        getChunkAtWorldPos(worldX, worldY, worldZ - 0.5f),  // -Z
-        getChunkAtWorldPos(worldX, worldY, worldZ + 0.5f)   // +Z
+        getChunkAtWorldPos(worldX - 1.0f, worldY, worldZ),  // -X
+        getChunkAtWorldPos(worldX + 1.0f, worldY, worldZ),  // +X
+        getChunkAtWorldPos(worldX, worldY - 1.0f, worldZ),  // -Y (below)
+        getChunkAtWorldPos(worldX, worldY + 1.0f, worldZ),  // +Y (above)
+        getChunkAtWorldPos(worldX, worldY, worldZ - 1.0f),  // -Z
+        getChunkAtWorldPos(worldX, worldY, worldZ + 1.0f)   // +Z
     };
 
     // Regenerate mesh and buffer for each unique neighbor chunk
@@ -567,15 +795,15 @@ void World::updateLiquids(VulkanRenderer* renderer) {
                             if (!def.isLiquid) continue;
 
                             // Calculate world position
-                            float worldX = (chunkX * Chunk::WIDTH + localX) * 0.5f;
-                            float worldY = (y * Chunk::HEIGHT + localY) * 0.5f;
-                            float worldZ = (chunkZ * Chunk::DEPTH + localZ) * 0.5f;
+                            float worldX = static_cast<float>(chunkX * Chunk::WIDTH + localX);
+                            float worldY = static_cast<float>(y * Chunk::HEIGHT + localY);
+                            float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + localZ);
 
                             // Get water level
                             uint8_t waterLevel = getBlockMetadataAt(worldX, worldY, worldZ);
 
                             // VERTICAL FLOW: Water always flows down first
-                            float belowY = worldY - 0.5f;
+                            float belowY = worldY - 1.0f;
                             int blockBelow = getBlockAt(worldX, belowY, worldZ);
 
                             if (blockBelow == 0) {

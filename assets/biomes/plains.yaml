@@ -1,0 +1,37 @@
+# Plains Biome
+# Flat, grassy terrain with scattered trees and moderate weather
+
+# Required properties
+name: "Plains"
+temperature: 60        # Temperate
+moisture: 50           # Moderate
+age: 80                # Flat, old terrain
+activity: 45           # Moderate structure spawning
+
+# Vegetation
+trees_spawn: true
+tree_density: 15       # Sparse trees (not a forest, just scattered)
+vegetation_density: 70 # Good grass coverage
+
+# Spawning
+spawn_location: "AboveGround"
+lowest_y: 55
+biome_rarity_weight: 70  # Common biome
+river_compatible: true
+underwater_biome: false
+
+# Primary blocks
+primary_surface_block: 3   # Grass
+primary_stone_block: 1     # Stone
+primary_log_block: 6       # Oak log
+primary_leave_block: 7     # Oak leaves
+
+# Creatures
+hostile_spawn: true
+
+# Weather
+primary_weather: "clear"
+blacklisted_weather: ""
+
+# Ore distribution (normal rates)
+ore_spawn_rates: "coal:1.0,iron:1.0,gold:1.0"

@@ -1,0 +1,387 @@
+CHUNK STREAMING TESTING ARCHITECTURE
+====================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         VOXEL ENGINE TEST PYRAMID                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│                              Manual Testing                                 │
+│                          (30 min gameplay test)                             │
+│                                                                             │
+│                           ╱        ╲                                        │
+│                          ╱ Observe ╲                                       │
+│                         ╱   Player  ╲                                      │
+│                        ╱ Experience  ╲                                     │
+│                       ╱════════════════╲                                   │
+│                                                                             │
+│                        Stress & Edge Case Tests                             │
+│                     (8 tests, 5-10 sec, OPTIONAL)                          │
+│              • Rapid teleport • Boundary conditions                         │
+│              • 10K block mods • Extreme world size                          │
+│                       ╱════════════════╲                                   │
+│                      ╱                  ╲                                  │
+│                                                                             │
+│                      Performance Gate Tests                                 │
+│                    (7 tests, 5-10 sec, REQUIRED)                           │
+│           • Gen time < 5ms  • Mesh time < 3ms                              │
+│           • Access time < 10µs  • Load < 20ms/chunk                        │
+│                       ╱════════════════╲                                   │
+│                      ╱                  ╲                                  │
+│                                                                             │
+│                    Memory Leak Detection Tests                              │
+│                  (6 tests, 30-60 sec, REQUIRED)                            │
+│            • 100 load/unload • World cleanup                               │
+│            • Vulkan buffers • 10K block mods                               │
+│                       ╱════════════════╲                                   │
+│                      ╱                  ╲                                  │
+│                                                                             │
+│                    Chunk Correctness Tests                                  │
+│                  (6 tests, 1-2 sec, REQUIRED)                              │
+│            • Deterministic generation • State transitions                   │
+│            • Block bounds • Metadata persistence                            │
+│                       ╱════════════════╲                                   │
+│                      ╱                  ╲                                  │
+│                     ╱                    ╲                                 │
+│                    ╱   CORE UNIT TESTS    ╲                               │
+│                   ╱   (Fast & Isolated)    ╲                              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+TEST EXECUTION FLOW
+===================
+
+BEFORE EVERY COMMIT (30 seconds)
+│
+├─ ctest -L fast -V
+│
+├─ Test Suite: Correctness
+│  └─ PASS ✓ → SAFE TO COMMIT
+│  └─ FAIL ✗ → BLOCK COMMIT (critical bug)
+│
+└─ Performance gates (sample)
+   └─ PASS ✓ → Likely OK
+   └─ FAIL ✗ → Investigate
+
+
+BEFORE RELEASE BUILD (5 minutes)
+│
+├─ ctest -V (all tests)
+│  ├─ Correctness (1-2 sec) → Must pass ✓
+│  ├─ Memory (30-60 sec) → Must pass ✓
+│  ├─ Performance (5-10 sec) → Must pass ✓
+│  └─ Stress (5-10 sec) → Should pass ✓
+│
+├─ valgrind ./test_memory_leaks
+│  └─ "definitely lost: 0 bytes" → Must be zero ✓
+│
+└─ perf record ./test_performance
+   └─ No unexpected slow functions → Good sign ✓
+
+
+TEST CATEGORIES IN DETAIL
+=========================
+
+1. CORRECTNESS TESTS (chunk_correctness_test.cpp)
+   ─────────────────────────────────────────────
+   Location: tests/chunk_correctness_test.cpp
+   Duration: 1-2 seconds
+   Criticality: CRITICAL - catches silent bugs
+
+   Tests:
+   ✓ ChunkGenerationDeterministic   - same seed = same terrain
+   ✓ ChunkStateTransitions          - constructor → generate → mesh
+   ✓ BlockAccessBounds              - -1 for out of bounds
+   ✓ BlockMetadataPersistence       - metadata survives modifications
+   ✓ ChunkPositionTracking          - chunk coords accurate
+   ✓ WorldChunkLookup               - O(1) lookup works
+
+   If fails: BLOCK ALL COMMITS - silent world generation bug
+
+
+2. MEMORY LEAK TESTS (memory_leak_test.cpp)
+   ──────────────────────────────────────────
+   Location: tests/memory_leak_test.cpp
+   Duration: 30-60 seconds (varies by load)
+   Criticality: CRITICAL - prevents crash-after-30-min
+
+   Tests:
+   ✓ ChunkLoadUnloadCycles          - 100 chunks created/destroyed
+   ✓ WorldLoadUnloadCycles          - 50 full worlds
+   ✓ ChunkBufferLifecycle           - GPU buffers freed properly
+   ✓ LargeWorldCleanup              - 192 chunks cleaned up
+   ✓ RepeatedWorldRegeneration      - 20 regeneration cycles
+   ✓ BlockModificationMemorySafety  - 1000 block modifications
+
+   Tools:
+   • Linux: valgrind --leak-check=full ./test_memory_leaks
+   • All: Built-in Address Sanitizer (automatic)
+
+   If fails: DO NOT SHIP - will crash after 10-30 minutes
+
+
+3. PERFORMANCE TESTS (performance_test.cpp)
+   ────────────────────────────────────────
+   Location: tests/performance_test.cpp
+   Duration: 5-10 seconds
+   Criticality: HIGH - prevents stuttering
+
+   Tests with Gates:
+   ✓ ChunkGenerationPerformance     - < 5ms per chunk
+   ✓ MeshGenerationPerformance      - < 3ms per chunk
+   ✓ WorldInitializationPerformance - < 20ms per chunk average
+   ✓ BlockAccessPerformance         - < 10 µs per access
+   ✓ BlockModificationPerformance   - < 100 µs per modification
+   ✓ MetadataPerformance            - < 50 µs per operation
+   ✓ WorldBlockAccessPerformance    - < 500 µs per world lookup
+
+   Gates Rationale:
+   • 5ms gen = 6 chunks/frame at 30 FPS
+   • 3ms mesh = tight but doable
+   • 10µs access = feels instant to player
+   • 20ms/chunk = 10 sec load time for 500 chunks
+
+   If fails: Performance issue - will cause user complaints
+
+
+4. STRESS TESTS (stress_test.cpp)
+   ─────────────────────────────
+   Location: tests/stress_test.cpp
+   Duration: 5-10 seconds
+   Criticality: MEDIUM - edge cases
+
+   Tests:
+   ✓ RapidTeleportationStress       - 100 teleports
+   ✓ WorldBoundaryConditions        - edge chunk access
+   ✓ MassiveBlockModification       - 10,000 blocks
+   ✓ ExtremeWorldSize               - 10×4×10 = 400 chunks
+   ✓ RapidChunkStateChanges         - rapid state transitions
+   ✓ MetadataStress                 - 10,000 metadata ops
+   ✓ OverlappingBlockModifications  - same block repeatedly
+   ✓ ChunkAccessPatternStress       - various access patterns
+
+   If fails: Can ship with known edge case (v1.1 fix)
+
+
+TEST INFRASTRUCTURE
+===================
+
+Mock Objects (test_utils.h):
+  ├─ ASSERT_* macros           - No external framework needed
+  ├─ TestRunner class          - Tracks pass/fail
+  ├─ MockVulkanRenderer        - Fake GPU (no hardware needed)
+  ├─ MockBiomeMap              - Fake biome system
+  └─ ScopedTimer               - Performance measurement
+
+Build System (tests/CMakeLists.txt):
+  ├─ test_chunk_correctness    - Executable 1
+  ├─ test_memory_leaks         - Executable 2
+  ├─ test_performance          - Executable 3
+  ├─ test_stress               - Executable 4
+  └─ Custom targets
+     ├─ test_fast              - Correctness + performance
+     ├─ test_all               - All tests
+     └─ test_valgrind          - Memory check (Linux)
+
+
+PERFORMANCE GATES EXPLAINED
+===========================
+
+Why 5ms for chunk generation?
+
+    Frame budget at 30 FPS:
+    ┌─────────────────────────────────────────┐
+    │ One Frame = 33.3 milliseconds           │
+    ├─────────────────────────────────────────┤
+    │ Physics/Update     ███░░░░░░ ~5ms       │
+    │ Chunk Generation   █████░░░░░ ~5ms      │
+    │ Rendering          ████████░░ ~15ms     │
+    │ UI/Debug           ██░░░░░░░░ ~3ms      │
+    │ Headroom           █░░░░░░░░░ ~5ms      │
+    └─────────────────────────────────────────┘
+    Total: 33.3ms (lock to 30 FPS)
+
+At 5ms gen time:
+  • Can load 6 chunks per frame (33ms / 5ms)
+  • With smart streaming: 1-2 chunks visible per frame
+  • Feels smooth to player
+
+If generation took 10ms:
+  • Only load 3 chunks per frame
+  • Slower streaming, chunks pop in
+  • Players notice stuttering
+
+
+DECISION TREE FOR TEST RESULTS
+==============================
+
+                    ┌──────────────────┐
+                    │  Run all tests?  │
+                    │   ctest -V       │
+                    └────────┬─────────┘
+                             │
+                    ┌────────┴────────┐
+                    │                 │
+            ALL TESTS PASS ✓   ANY TEST FAILS ✗
+            (60% probability)   (20% probability)
+                    │                 │
+                    │          ┌──────┴───────┐
+                    │          │              │
+                    │    CORRECTNESS      MEMORY
+                    │       FAILED         FAILED
+                    │          │              │
+                    │   INVESTIGATE:    DO NOT SHIP
+                    │   Silent bug      Will crash
+                    │          │        after 30 min
+                    │          ▼              │
+                    │    Check chunk.cpp  ┌──┴────────┐
+                    │    determinism      │           │
+                    │                 Valgrind   Check for:
+                    │              memory trace  • Missing delete
+                    │                           • Bad unique_ptr
+                    ▼                           • Double free
+                CONTINUE                            │
+              DEVELOPMENT                      FIX BUG
+                                                 │
+                ┌──────────────────┐            ▼
+                │  PASS AGAIN?     │        RETEST
+                │  ctest -V        │
+                └────────┬─────────┘
+                         │
+            ┌────────────┴────────────┐
+            │                         │
+         YES ✓                    NO ✗ (escalate)
+            │                         │
+      PROCEED                    INVESTIGATE
+      DEVELOPMENT                DEEPER
+
+
+CONTINUOUS INTEGRATION SETUP
+=============================
+
+GitHub Actions (.github/workflows/tests.yml):
+
+    On: [push, pull_request]
+
+    Jobs:
+    1. Run on Linux
+       - Install Vulkan, GLFW
+       - cmake && make
+       - ctest -V
+       - valgrind --leak-check=full
+
+    2. Run on macOS (optional)
+       - Same as Linux
+
+    3. Run on Windows (optional)
+       - MSVC compiler
+       - Dr. Memory for leaks
+
+    Status:
+    ✓ Green = Safe to merge
+    ✗ Red = Do not merge
+
+
+DAILY WORKFLOW CHECKLIST
+=========================
+
+Start of day:
+  ☐ Pull latest code
+  ☐ cmake && make (full rebuild)
+
+During development:
+  ☐ Implement feature
+  ☐ Edit chunk.cpp, world.cpp, etc.
+  ☐ Build: make
+
+Before committing:
+  ☐ ctest -L fast -V  (30 seconds)
+  ☐ All tests green ✓
+  ☐ git add .
+  ☐ git commit -m "..."
+  ☐ git push
+
+Before release:
+  ☐ ctest -V (all tests)
+  ☐ valgrind ./test_memory_leaks
+  ☐ perf record ./test_performance
+  ☐ Manual 30-min gameplay test
+  ☐ Ship!
+
+
+TROUBLESHOOTING MATRIX
+======================
+
+Issue                          Check First              Solution
+─────────────────────────────  ─────────────────────    ──────────────
+Tests won't compile            include/ paths           Add missing -I
+Linking errors                 Missing .cpp files       Add to CMakeLists.txt
+Segfault on startup            Mock initialization      Check test_utils.cpp
+Assertion fails                Read error message       Debug specific test
+Valgrind says "leaked"          Search for malloc        Find missing delete
+Performance gate violated      Run perf record          Profile slow function
+Test hangs/timeout             May be infinite loop     Add timeout, check code
+Intermittent failures          Race condition            Check threading code
+
+
+METRICS TO TRACK
+================
+
+Track these over time:
+
+1. Test Pass Rate (should stay 100%)
+   Trend: ████████████████ 100%
+
+2. Average Test Duration (should stay < 60 sec)
+   Trend: ████░░░░░░░░░░░░ 50 sec → 60 sec (regression!)
+
+3. Memory Leaks Found (should stay 0)
+   Trend: ░░░░░░░░░░░░░░░░ 0 bytes (good!)
+
+4. Performance Gate Violations (should stay 0)
+   Trend: ░░░░░░░░░░░░░░░░ All gates met (good!)
+
+5. User Crash Reports (should drop to 0 in first month)
+   Trend: ████████░░░░░░░░ 8 crashes → 0 crashes
+
+
+SUCCESS CRITERIA FOR SHIPPING
+=============================
+
+MUST HAVE (100% confidence to ship):
+  ✓ All correctness tests pass
+  ✓ All memory tests pass (0 leaks)
+  ✓ All performance gates met
+
+SHOULD HAVE (90%+ confidence):
+  ✓ All stress tests pass
+  ✓ Manual 30-min gameplay test successful
+  ✓ No visual artifacts observed
+
+NICE TO HAVE (95%+ confidence):
+  ✓ Performance trending correctly
+  ✓ Memory stable over time
+  ✓ No intermittent failures
+
+
+QUICK COMMAND REFERENCE
+=======================
+
+Test yourself → Check → Common fix
+─────────────────────────────────────────────────────────────
+ctest -V       Not running?  CMakeLists.txt needs add_subdir
+ctest -L fast  Slow?         Fix performance bottleneck
+ctest -R Name  Still fail?   Add debug output, rerun
+valgrind ...   Leak?         Search for missing delete
+perf report    Slow func?    Optimize hot path
+
+
+═════════════════════════════════════════════════════════════════════════════════
+
+"Every test that saves one hour of debugging is worth it."
+- Paraphrasing Kent Beck, TDD pioneer
+
+Key insight: The hardest bugs to fix are found in production.
+Tests catch them early when they're easy to fix.
+
+═════════════════════════════════════════════════════════════════════════════════

@@ -82,6 +82,7 @@ else()
 endif()
 
 # Copy assets directory to build output directory
+# (includes blocks, biomes, textures, and all subdirectories)
 add_custom_command(TARGET voxel-engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/assets
@@ -112,3 +113,6 @@ add_custom_command(TARGET voxel-engine POST_BUILD
         $<TARGET_FILE_DIR:voxel-engine>/docs
     COMMENT "Copying documentation to build directory"
 )
+
+# Add tests subdirectory
+add_subdirectory(tests)

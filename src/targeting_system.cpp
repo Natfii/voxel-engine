@@ -217,7 +217,7 @@ void TargetingSystem::updateOutlineBuffer(VulkanRenderer* renderer) {
 
 std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& position) {
     // Create a wireframe cube with 12 edges (24 vertices for lines)
-    const float size = 0.5f;
+    const float size = 1.0f;
     const float offset = 0.003f; // Minimal offset (Minecraft-style thin outline)
 
     std::vector<float> vertices;

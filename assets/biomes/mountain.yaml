@@ -1,0 +1,49 @@
+# Mountain Biome
+# Tall, rocky terrain with sparse vegetation and high elevation
+
+# Required properties
+name: "Mountain"
+temperature: 35        # Cold (high altitude)
+moisture: 40           # Low-moderate
+age: 20                # Young, rough, jagged terrain
+activity: 30           # Low structure spawning (hard to build on mountains)
+
+# Vegetation
+trees_spawn: true
+tree_density: 25       # Sparse trees at lower elevations
+vegetation_density: 30 # Limited vegetation
+
+# Spawning
+spawn_location: "AboveGround"
+lowest_y: 70           # Higher base elevation
+biome_rarity_weight: 35  # Somewhat uncommon
+river_compatible: true   # Rivers flow down mountains
+underwater_biome: false
+height_multiplier: 3.5   # 3.5x taller for dramatic mountains (reaches Y=110+)
+
+# Primary blocks
+primary_surface_block: 1   # Stone (exposed rock on peaks)
+primary_stone_block: 1     # Stone
+primary_log_block: 6       # Oak log (at lower elevations)
+primary_leave_block: 7     # Oak leaves
+
+# Block requirements
+required_blocks: "1"       # Must have lots of stone
+blacklisted_blocks: ""
+
+# Structures
+required_structures: ""
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: true
+
+# Weather
+primary_weather: "clear"
+blacklisted_weather: ""
+
+# Atmosphere
+fog_color: "200,210,220"  # Slightly blue-grey mountain mist
+
+# Ore distribution (mountains have more ores!)
+ore_spawn_rates: "coal:1.5,iron:1.8,gold:2.0"

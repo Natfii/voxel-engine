@@ -30,8 +30,8 @@ RaycastHit Raycast::castRay(World* world, const glm::vec3& origin, const glm::ve
         std::abs(1.0f / dir.z)
     );
 
-    // Current voxel position (in block space, where 1 block = 0.5 units)
-    glm::vec3 voxelPos = pos / 0.5f;
+    // Current voxel position (in block space, where 1 block = 1.0 units)
+    glm::vec3 voxelPos = pos;
     glm::ivec3 mapPos(
         static_cast<int>(std::floor(voxelPos.x)),
         static_cast<int>(std::floor(voxelPos.y)),
@@ -51,11 +51,11 @@ RaycastHit Raycast::castRay(World* world, const glm::vec3& origin, const glm::ve
     // DDA traversal
     glm::ivec3 normal(0, 0, 0);
     float totalDist = 0.0f;
-    const float maxDist = maxDistance / 0.5f; // Convert to block space
+    const float maxDist = maxDistance; // Already in block space
 
     while (totalDist < maxDist) {
         // Check current voxel
-        glm::vec3 worldPos(mapPos.x * 0.5f, mapPos.y * 0.5f, mapPos.z * 0.5f);
+        glm::vec3 worldPos(static_cast<float>(mapPos.x), static_cast<float>(mapPos.y), static_cast<float>(mapPos.z));
         int blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
 
         if (isSolid(blockID)) { // Hit a solid block (not air)
@@ -65,7 +65,7 @@ RaycastHit Raycast::castRay(World* world, const glm::vec3& origin, const glm::ve
             result.blockX = mapPos.x;
             result.blockY = mapPos.y;
             result.blockZ = mapPos.z;
-            result.distance = totalDist * 0.5f; // Convert back to world units
+            result.distance = totalDist; // Already in world units
             return result;
         }
 

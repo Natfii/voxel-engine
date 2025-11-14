@@ -35,7 +35,8 @@
       "Bash(glslc:*)",
       "Bash(nul)",
       "Bash(dir /b \"c:\\Users\\Natal\\Downloads\\How Water Works in Dwarfcorp – DwarfCorp_files\")",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "mcp__ide__getDiagnostics"
     ],
     "deny": [],
     "ask": []

@@ -129,17 +129,17 @@ private:
     bool m_sprintKeyPressed; ///< Tracks sprint key state for toggle mode (reserved)
 
     // ========== Player Dimensions ==========
-    // All dimensions in world units (blocks are 0.5 world units)
-    static constexpr float PLAYER_WIDTH = 0.25f;      ///< Player width (0.5 blocks wide, tighter than Minecraft)
-    static constexpr float PLAYER_HEIGHT = 0.9f;      ///< Player height (1.8 blocks tall, like Minecraft)
-    static constexpr float PLAYER_EYE_HEIGHT = 0.8f;  ///< Eye height from feet (1.6 blocks, 0.8 world units)
+    // All dimensions in world units (blocks are 1.0 world units)
+    static constexpr float PLAYER_WIDTH = 0.5f;       ///< Player width (0.5 blocks wide, tighter than Minecraft)
+    static constexpr float PLAYER_HEIGHT = 1.8f;      ///< Player height (1.8 blocks tall, like Minecraft)
+    static constexpr float PLAYER_EYE_HEIGHT = 1.6f;  ///< Eye height from feet (1.6 blocks)
 
     // ========== Physics Constants ==========
-    static constexpr float GRAVITY = 16.0f;            ///< Gravity acceleration (32 blocks/s², 16 world units/s²)
-    static constexpr float JUMP_VELOCITY = 4.2f;       ///< Initial jump velocity (~1.1 block jump height)
-    static constexpr float WALK_SPEED = 2.15f;         ///< Base walk speed (4.3 blocks/s, 2.15 world units/s)
+    static constexpr float GRAVITY = 32.0f;            ///< Gravity acceleration (32 blocks/s²)
+    static constexpr float JUMP_VELOCITY = 8.4f;       ///< Initial jump velocity (~1.1 block jump height)
+    static constexpr float WALK_SPEED = 4.3f;          ///< Base walk speed (4.3 blocks/s)
     static constexpr float SPRINT_MULTIPLIER = 1.5f;   ///< Sprint speed multiplier (6.45 blocks/s when sprinting)
-    static constexpr float SWIM_SPEED = 1.5f;          ///< Swimming speed (reserved for future)
+    static constexpr float SWIM_SPEED = 3.0f;          ///< Swimming speed (3.0 blocks/s)
     static constexpr float BUOYANCY_FORCE = 15.5f;     ///< Upward force when in water (almost neutral buoyancy)
     static constexpr float WATER_DRAG = 5.0f;          ///< Water drag coefficient (higher = more drag, damping)
 

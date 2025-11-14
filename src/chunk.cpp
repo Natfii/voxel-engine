@@ -22,7 +22,7 @@
 
 // Static member initialization
 std::unique_ptr<FastNoiseLite> Chunk::s_noise = nullptr;
-static std::mutex s_noiseMutex;  // Protect noise access for thread safety
+// Note: s_noiseMutex removed - FastNoiseLite is thread-safe for reads
 
 void Chunk::initNoise(int seed) {
     if (s_noise == nullptr) {
@@ -70,16 +70,16 @@ Chunk::Chunk(int x, int y, int z)
     }
 
     // Calculate world-space bounds for culling
-    // Blocks are 0.5 world units in size
-    float worldX = m_x * WIDTH * 0.5f;
-    float worldY = m_y * HEIGHT * 0.5f;
-    float worldZ = m_z * DEPTH * 0.5f;
+    // Blocks are 1.0 world units in size
+    float worldX = m_x * WIDTH;
+    float worldY = m_y * HEIGHT;
+    float worldZ = m_z * DEPTH;
 
     m_minBounds = glm::vec3(worldX, worldY, worldZ);
     m_maxBounds = glm::vec3(
-        worldX + WIDTH * 0.5f,
-        worldY + HEIGHT * 0.5f,
-        worldZ + DEPTH * 0.5f
+        worldX + WIDTH,
+        worldY + HEIGHT,
+        worldZ + DEPTH
     );
 }
 
@@ -112,12 +112,9 @@ int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
         return BASE_HEIGHT; // Fallback to flat terrain if noise not initialized
     }
 
-    // Thread-safe noise sampling (FastNoiseLite may not be thread-safe)
-    float noise;
-    {
-        std::lock_guard<std::mutex> lock(s_noiseMutex);
-        noise = s_noise->GetNoise(worldX, worldZ);
-    }
+    // FastNoiseLite is thread-safe for reads - no mutex needed
+    // This was causing serialization during parallel chunk generation
+    float noise = s_noise->GetNoise(worldX, worldZ);
 
     // Map noise to height range [BASE_HEIGHT - HEIGHT_VARIATION, BASE_HEIGHT + HEIGHT_VARIATION]
     int height = BASE_HEIGHT + (int)(noise * HEIGHT_VARIATION);
@@ -140,39 +137,110 @@ int Chunk::getTerrainHeightAt(float worldX, float worldZ) {
  *
  * Performance: ~32,000 blocks processed per chunk (32³)
  */
-void Chunk::generate() {
+void Chunk::generate(BiomeMap* biomeMap) {
     using namespace TerrainGeneration;
+
+    if (!biomeMap) {
+        std::cerr << "ERROR: BiomeMap is null in Chunk::generate()" << std::endl;
+        return;
+    }
 
     for (int x = 0; x < WIDTH; x++) {
         for (int z = 0; z < DEPTH; z++) {
-            // Convert local coords to world coords
-            float worldX = (m_x * WIDTH + x) * 0.5f;
-            float worldZ = (m_z * DEPTH + z) * 0.5f;
+            // Convert local coords to world coords (blocks are 1.0 units)
+            // Cast to int64_t before multiplication to prevent overflow with large chunk coords
+            float worldX = static_cast<float>(static_cast<int64_t>(m_x) * WIDTH + x);
+            float worldZ = static_cast<float>(static_cast<int64_t>(m_z) * DEPTH + z);
 
-            // Get terrain height for this column
-            int terrainHeight = getTerrainHeightAt(worldX, worldZ);
+            // Get biome at this position
+            const Biome* biome = biomeMap->getBiomeAt(worldX, worldZ);
+            if (!biome) {
+                // Fallback: Fill with stone underground, air above
+                int terrainHeight = biomeMap->getTerrainHeightAt(worldX, worldZ);
+                for (int y = 0; y < HEIGHT; y++) {
+                    int worldY = static_cast<int64_t>(m_y) * HEIGHT + y;
+                    if (worldY < terrainHeight) {
+                        m_blocks[x][y][z] = BLOCK_STONE;
+                    } else {
+                        m_blocks[x][y][z] = BLOCK_AIR;
+                    }
+                }
+                continue;
+            }
 
-            // Fill column from bottom to terrain height
+            // Get terrain height from biome map
+            int terrainHeight = biomeMap->getTerrainHeightAt(worldX, worldZ);
+
+            // Check if this is an ocean area (hardcoded biome - not YAML)
+            // Ocean = terrain significantly below water level
+            bool isOcean = (terrainHeight < WATER_LEVEL - 8);  // 8+ blocks below water = ocean
+
+            // Fill column
             for (int y = 0; y < HEIGHT; y++) {
-                int worldY = m_y * HEIGHT + y;
+                int worldY = static_cast<int64_t>(m_y) * HEIGHT + y;
+                float worldYf = static_cast<float>(worldY);
 
+                // Check if this is inside a cave
+                float caveDensity = biomeMap->getCaveDensityAt(worldX, worldYf, worldZ);
+                bool isCave = caveDensity < 0.45f;  // Threshold for cave air
+
+                // Check if inside underground biome chamber
+                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ);
+
+                // Determine block placement
                 if (worldY < terrainHeight) {
-                    // Determine block type based on depth from surface
+                    // Below surface
+
+                    // OCEAN BIOME LOGIC (hardcoded, not YAML)
+                    if (isOcean) {
+                        // Ocean floor - no caves in ocean areas for clean underwater terrain
+                        int depthFromSurface = terrainHeight - worldY;
+
+                        if (depthFromSurface <= 3) {
+                            // Ocean floor top layers - sand
+                            m_blocks[x][y][z] = BLOCK_SAND;
+                        } else {
+                            // Deep ocean floor - stone
+                            m_blocks[x][y][z] = BLOCK_STONE;
+                        }
+                        continue;
+                    }
+
+                    // LAND BIOME LOGIC
+                    // If in cave, create air pocket (caves generate endlessly downward)
+                    // Only prevent caves in the top 5 blocks below surface to avoid surface holes
+                    if (isCave && worldY < terrainHeight - 5) {
+                        m_blocks[x][y][z] = BLOCK_AIR;
+                        continue;
+                    }
+
+                    // If in underground chamber, create large open space (endless chambers)
+                    if (isUndergroundChamber) {
+                        m_blocks[x][y][z] = BLOCK_AIR;
+                        continue;
+                    }
+
+                    // Solid terrain - determine block type
                     int depthFromSurface = terrainHeight - worldY;
 
                     if (depthFromSurface == 1) {
-                        m_blocks[x][y][z] = BLOCK_GRASS;  // Grass on top
+                        // Top layer - use biome's surface block
+                        m_blocks[x][y][z] = biome->primary_surface_block;
                     } else if (depthFromSurface <= TOPSOIL_DEPTH) {
-                        m_blocks[x][y][z] = BLOCK_DIRT;  // Dirt below grass
+                        // Topsoil layer - dirt
+                        m_blocks[x][y][z] = BLOCK_DIRT;
                     } else {
-                        m_blocks[x][y][z] = BLOCK_STONE;  // Stone at bottom
+                        // Deep underground - use biome's stone block
+                        m_blocks[x][y][z] = biome->primary_stone_block;
                     }
+
                 } else if (worldY < WATER_LEVEL) {
-                    // Fill with water up to water level
+                    // Above terrain but below water level
                     m_blocks[x][y][z] = BLOCK_WATER;
-                    m_blockMetadata[x][y][z] = 0;  // 0 = source block (infinite water)
+                    m_blockMetadata[x][y][z] = 0;  // Source block
                 } else {
-                    m_blocks[x][y][z] = BLOCK_AIR;  // Air above water level
+                    // Above water level
+                    m_blocks[x][y][z] = BLOCK_AIR;
                 }
             }
         }
@@ -246,27 +314,27 @@ void Chunk::generateMesh(World* world) {
      *
      * Face storage order (offsets into cube array):
      *   0-11:  Front face (z=0, facing -Z)
-     *   12-23: Back face (z=0.5, facing +Z)
+     *   12-23: Back face (z=1.0, facing +Z)
      *   24-35: Left face (x=0, facing -X)
-     *   36-47: Right face (x=0.5, facing +X)
-     *   48-59: Top face (y=0.5, facing +Y)
+     *   36-47: Right face (x=1.0, facing +X)
+     *   48-59: Top face (y=1.0, facing +Y)
      *   60-71: Bottom face (y=0, facing -Y)
      *
      * Each face offset contains 12 floats (4 vertices × 3 components).
      */
     static constexpr std::array<float, 72> cube = {{
         // Front face (z = 0, facing -Z) - vertices: BL, BR, TR, TL
-        0,0,0,  0.5f,0,0,  0.5f,0.5f,0,  0,0.5f,0,
-        // Back face (z = 0.5, facing +Z) - vertices: BR, BL, TL, TR (reversed for correct winding)
-        0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
+        0,0,0,  1.0f,0,0,  1.0f,1.0f,0,  0,1.0f,0,
+        // Back face (z = 1.0, facing +Z) - vertices: BR, BL, TL, TR (reversed for correct winding)
+        1.0f,0,1.0f,  0,0,1.0f,  0,1.0f,1.0f,  1.0f,1.0f,1.0f,
         // Left face (x = 0, facing -X) - vertices: BL, BR, TR, TL
-        0,0,0.5f,  0,0,0,  0,0.5f,0,  0,0.5f,0.5f,
-        // Right face (x = 0.5, facing +X) - vertices: BL, BR, TR, TL
-        0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
-        // Top face (y = 0.5, facing +Y) - vertices: BL, BR, TR, TL
-        0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
+        0,0,1.0f,  0,0,0,  0,1.0f,0,  0,1.0f,1.0f,
+        // Right face (x = 1.0, facing +X) - vertices: BL, BR, TR, TL
+        1.0f,0,0,  1.0f,0,1.0f,  1.0f,1.0f,1.0f,  1.0f,1.0f,0,
+        // Top face (y = 1.0, facing +Y) - vertices: BL, BR, TR, TL
+        0,1.0f,0,  1.0f,1.0f,0,  1.0f,1.0f,1.0f,  0,1.0f,1.0f,
         // Bottom face (y = 0, facing -Y) - vertices: BL, BR, TR, TL
-        0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,  0,0,0
+        0,0,1.0f,  1.0f,0,1.0f,  1.0f,0,0,  0,0,0
     }};
 
     /**
@@ -319,7 +387,7 @@ void Chunk::generateMesh(World* world) {
         int worldBlockX = m_x * WIDTH + x;
         int worldBlockY = m_y * HEIGHT + y;
         int worldBlockZ = m_z * DEPTH + z;
-        return glm::vec3(worldBlockX * 0.5f, worldBlockY * 0.5f, worldBlockZ * 0.5f);
+        return glm::vec3(static_cast<float>(worldBlockX), static_cast<float>(worldBlockY), static_cast<float>(worldBlockZ));
     };
 
     // Helper lambda to check if a block is solid (non-air)
@@ -335,6 +403,8 @@ void Chunk::generateMesh(World* world) {
             blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         }
         if (blockID == 0) return false;
+        // Bounds check before registry access to prevent crash
+        if (blockID < 0 || blockID >= registry.count()) return false;
         return !registry.get(blockID).isLiquid;  // Solid = not air and not liquid
     };
 
@@ -349,6 +419,8 @@ void Chunk::generateMesh(World* world) {
             blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         }
         if (blockID == 0) return false;
+        // Bounds check before registry access to prevent crash
+        if (blockID < 0 || blockID >= registry.count()) return false;
         return registry.get(blockID).isLiquid;
     };
 
@@ -387,7 +459,10 @@ void Chunk::generateMesh(World* world) {
                         int worldZ = m_z * DEPTH + Z;
 
                         // Simple hash function for pseudo-random offset
-                        unsigned int seed = (worldX * 73856093) ^ (worldY * 19349663) ^ (worldZ * 83492791);
+                        // Cast to unsigned before multiplication to avoid signed integer overflow (UB)
+                        unsigned int seed = (static_cast<unsigned int>(worldX) * 73856093U) ^
+                                          (static_cast<unsigned int>(worldY) * 19349663U) ^
+                                          (static_cast<unsigned int>(worldZ) * 83492791U);
                         float randU = ((seed >> 0) & 0xFF) / 255.0f;
                         float randV = ((seed >> 8) & 0xFF) / 255.0f;
 
@@ -404,17 +479,17 @@ void Chunk::generateMesh(World* world) {
                 };
 
                 // Calculate world position for this block
-                float bx = float(m_x * WIDTH + X) * 0.5f;
-                float by = float(m_y * HEIGHT + Y) * 0.5f;
-                float bz = float(m_z * DEPTH + Z) * 0.5f;
+                float bx = float(m_x * WIDTH + X);
+                float by = float(m_y * HEIGHT + Y);
+                float bz = float(m_z * DEPTH + Z);
 
                 // Water level height adjustment (Minecraft-style flowing water)
                 // Level 0 = source (full height), Level 7 = edge (very low)
                 float waterHeightAdjust = 0.0f;
                 if (def.isLiquid) {
                     uint8_t waterLevel = m_blockMetadata[X][Y][Z];
-                    // Each level reduces height by 1/8th of a block (0.0625 world units)
-                    waterHeightAdjust = -waterLevel * (0.5f / 8.0f);
+                    // Each level reduces height by 1/8th of a block (0.125 world units)
+                    waterHeightAdjust = -waterLevel * (1.0f / 8.0f);
                 }
 
                 // Helper to render a face with the appropriate texture (indexed rendering)
@@ -717,6 +792,13 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
         }
         throw;  // Re-throw to caller
     }
+
+    // Free CPU-side mesh data after successful GPU upload
+    // Data is now on GPU (DEVICE_LOCAL memory), no need to keep CPU copy
+    m_vertices.clear();
+    m_vertices.shrink_to_fit();
+    m_indices.clear();
+    m_indices.shrink_to_fit();
     }  // End of opaque buffer creation
 
     // ========== CREATE TRANSPARENT BUFFERS ==========
@@ -809,11 +891,20 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
             }
             throw;  // Re-throw to caller
         }
+
+        // Free CPU-side transparent mesh data after successful GPU upload
+        m_transparentVertices.clear();
+        m_transparentVertices.shrink_to_fit();
+        m_transparentIndices.clear();
+        m_transparentIndices.shrink_to_fit();
     }  // End of transparent buffer creation
 }
 
 void Chunk::destroyBuffers(VulkanRenderer* renderer) {
     VkDevice device = renderer->getDevice();
+
+    // Note: GPU synchronization should be done once at high level (main.cpp does vkDeviceWaitIdle)
+    // before calling cleanup on all chunks. Doing it per-chunk is incredibly slow (hundreds of waits).
 
     // Destroy opaque buffers
     if (m_vertexBuffer != VK_NULL_HANDLE) {
