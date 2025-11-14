@@ -78,8 +78,18 @@ private:
     std::unordered_map<uint64_t, BiomeCell> m_biomeCache;
     mutable std::shared_mutex m_cacheMutex;  // Shared mutex: parallel reads, exclusive writes
 
+    // WEEK 1 OPTIMIZATION: Cache expensive per-block lookups
+    // Terrain height cache (2D: worldX, worldZ) - quantized to 2-block resolution
+    std::unordered_map<uint64_t, int> m_terrainHeightCache;
+    mutable std::shared_mutex m_terrainCacheMutex;
+
+    // Cave density cache (3D: worldX, worldY, worldZ) - quantized to 2-block resolution
+    std::unordered_map<uint64_t, float> m_caveDensityCache;
+    mutable std::shared_mutex m_caveCacheMutex;
+
     // Helper functions
     uint64_t coordsToKey(int x, int z) const;
+    uint64_t coordsToKey3D(int x, int y, int z) const;
     const Biome* selectBiome(float temperature, float moisture);
     float mapNoiseTo01(float noise);  // Maps [-1, 1] to [0, 1]
     float mapNoiseToRange(float noise, float min, float max);

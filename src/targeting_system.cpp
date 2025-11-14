@@ -8,7 +8,7 @@
 
 TargetingSystem::TargetingSystem()
     : m_enabled(true),
-      m_maxDistance(2.5f),
+      m_maxDistance(5.0f),  // 5 blocks reach (blocks are 1.0 units)
       m_crosshairVisible(true),
       m_crosshairSize(10.0f),
       m_crosshairThickness(2.0f),

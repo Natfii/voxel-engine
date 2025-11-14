@@ -490,6 +490,9 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
 }
 
 Chunk* World::getChunkAt(int chunkX, int chunkY, int chunkZ) {
+    // THREAD SAFETY: Shared lock for concurrent reads
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
     // O(1) hash map lookup instead of O(n) linear search
     auto it = m_chunkMap.find(ChunkCoord{chunkX, chunkY, chunkZ});
     if (it != m_chunkMap.end()) {

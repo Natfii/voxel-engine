@@ -146,6 +146,21 @@ const Biome* BiomeMap::getBiomeAt(float worldX, float worldZ) {
 int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     using namespace TerrainGeneration;
 
+    // WEEK 1 OPTIMIZATION: Cache terrain height (quantize to 2-block resolution)
+    int quantizedX = static_cast<int>(worldX / 2.0f);
+    int quantizedZ = static_cast<int>(worldZ / 2.0f);
+    uint64_t key = coordsToKey(quantizedX, quantizedZ);
+
+    // Check cache first
+    {
+        std::shared_lock<std::shared_mutex> lock(m_terrainCacheMutex);
+        auto it = m_terrainHeightCache.find(key);
+        if (it != m_terrainHeightCache.end()) {
+            return it->second;
+        }
+    }
+
+    // Not in cache - compute it
     // Get biome at this location
     const Biome* biome = getBiomeAt(worldX, worldZ);
     if (!biome) {
@@ -171,6 +186,14 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     // Calculate final height
     int height = BASE_HEIGHT + static_cast<int>(noise * heightVariation);
 
+    // Cache result (with size limit)
+    {
+        std::unique_lock<std::shared_mutex> lock(m_terrainCacheMutex);
+        if (m_terrainHeightCache.size() < MAX_CACHE_SIZE) {
+            m_terrainHeightCache[key] = height;
+        }
+    }
+
     // NOTE: Do NOT clamp to lowest_y here - that creates floating terrain with void underneath!
     // The lowest_y property is for biome spawn elevation, not terrain height limits.
     // We must always generate terrain from Y=0 upward to avoid gaps.
@@ -180,6 +203,7 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
 
 float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
     // FastNoiseLite is thread-safe for reads - no mutex needed
+    // Note: Cave density caching disabled - noise lookups are fast enough
 
     // === Winding Tunnel System (primary cave network) ===
     // Creates long, continuous tunnels that connect underground biomes
@@ -246,6 +270,20 @@ uint64_t BiomeMap::coordsToKey(int x, int z) const {
     std::memcpy(&ux, &x, sizeof(uint32_t));
     std::memcpy(&uz, &z, sizeof(uint32_t));
     return (static_cast<uint64_t>(ux) << 32) | static_cast<uint64_t>(uz);
+}
+
+uint64_t BiomeMap::coordsToKey3D(int x, int y, int z) const {
+    // Pack 3D coordinates into 64-bit key using memcpy to handle negative numbers correctly
+    // Use upper 32 bits for (x,y) and lower 32 bits for z with a simple hash
+    uint32_t ux, uy, uz;
+    std::memcpy(&ux, &x, sizeof(uint32_t));
+    std::memcpy(&uy, &y, sizeof(uint32_t));
+    std::memcpy(&uz, &z, sizeof(uint32_t));
+
+    // Combine using XOR and shifts to create unique 64-bit key
+    uint64_t key = (static_cast<uint64_t>(ux) << 32) | static_cast<uint64_t>(uz);
+    key ^= (static_cast<uint64_t>(uy) << 16);  // XOR in Y coordinate
+    return key;
 }
 
 const Biome* BiomeMap::selectBiome(float temperature, float moisture) {

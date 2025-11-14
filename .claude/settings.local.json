@@ -36,7 +36,14 @@
       "Bash(nul)",
       "Bash(dir /b \"c:\\Users\\Natal\\Downloads\\How Water Works in Dwarfcorp – DwarfCorp_files\")",
       "Bash(dir:*)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(ctest:*)",
+      "Bash(exit:*)",
+      "Bash(./test_performance.exe:*)",
+      "Bash(./tests/Release/test_performance.exe:*)",
+      "Bash(./build/tests/Release/test_performance.exe)"
     ],
     "deny": [],
     "ask": []
