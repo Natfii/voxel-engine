@@ -188,6 +188,20 @@ public:
     bool addStreamedChunk(std::unique_ptr<Chunk> chunk);
 
     /**
+     * @brief Removes a chunk from the world
+     *
+     * Used by WorldStreaming to unload distant chunks.
+     * Destroys Vulkan buffers and removes from chunk map.
+     *
+     * @param chunkX Chunk X coordinate
+     * @param chunkY Chunk Y coordinate
+     * @param chunkZ Chunk Z coordinate
+     * @param renderer Vulkan renderer for buffer cleanup
+     * @return True if chunk was removed, false if not found
+     */
+    bool removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* renderer);
+
+    /**
      * @brief Gets the block ID at the specified world position
      *
      * @param worldX World X coordinate

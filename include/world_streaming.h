@@ -33,6 +33,7 @@
 #include <memory>
 #include <functional>
 #include <unordered_set>
+#include <chrono>
 #include <glm/glm.hpp>
 
 // Forward declarations
@@ -245,6 +246,33 @@ private:
      */
     glm::vec3 chunkToWorldPos(int chunkX, int chunkY, int chunkZ) const;
 
+    /**
+     * @brief Unloads chunks beyond the unload distance
+     *
+     * @param playerPos Current player position
+     * @param unloadDistance Distance at which to unload chunks
+     */
+    void unloadDistantChunks(const glm::vec3& playerPos, float unloadDistance);
+
+    /**
+     * @brief Tracks a failed chunk generation attempt
+     *
+     * @param chunkX Chunk X coordinate
+     * @param chunkY Chunk Y coordinate
+     * @param chunkZ Chunk Z coordinate
+     * @param errorMsg Error message
+     */
+    void trackFailedChunk(int chunkX, int chunkY, int chunkZ, const std::string& errorMsg);
+
+    /**
+     * @brief Retries failed chunks with exponential backoff
+     *
+     * Checks failed chunks and retries those that have waited long enough.
+     * Uses exponential backoff: 1s, 2s, 4s, 8s, etc.
+     * Gives up after 5 attempts.
+     */
+    void retryFailedChunks();
+
     // === Core References ===
     World* m_world;                       ///< World instance being managed
     BiomeMap* m_biomeMap;                 ///< Biome map for generation
@@ -262,6 +290,16 @@ private:
 
     // === Deduplication Tracking ===
     std::unordered_set<ChunkCoord> m_chunksInFlight;   ///< Tracks chunks being generated (prevents duplicates)
+
+    // === Error Tracking and Retry ===
+    struct FailedChunk {
+        ChunkCoord coord;                ///< Chunk coordinates
+        int failureCount;                ///< Number of failed attempts
+        std::chrono::steady_clock::time_point lastAttempt;  ///< Time of last attempt
+        std::string errorMessage;        ///< Last error message
+    };
+    std::vector<FailedChunk> m_failedChunks;       ///< Chunks that failed to generate
+    mutable std::mutex m_failedChunksMutex;        ///< Protects m_failedChunks
 
     // === Completed Chunks (accessed by workers + main thread) ===
     std::vector<std::unique_ptr<Chunk>> m_completedChunks;  ///< Chunks ready for buffer upload

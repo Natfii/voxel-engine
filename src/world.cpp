@@ -571,6 +571,41 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
     return true;
 }
 
+bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* renderer) {
+    // Thread-safe removal
+    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    ChunkCoord coord{chunkX, chunkY, chunkZ};
+
+    // Find chunk
+    auto it = m_chunkMap.find(coord);
+    if (it == m_chunkMap.end()) {
+        return false;  // Chunk doesn't exist
+    }
+
+    Chunk* chunkPtr = it->second.get();
+
+    // Remove from vector (order doesn't matter, so use swap-and-pop for O(1))
+    auto vecIt = std::find(m_chunks.begin(), m_chunks.end(), chunkPtr);
+    if (vecIt != m_chunks.end()) {
+        // Swap with last element and pop
+        std::swap(*vecIt, m_chunks.back());
+        m_chunks.pop_back();
+    }
+
+    // Destroy Vulkan buffers before removing chunk
+    if (renderer) {
+        chunkPtr->destroyBuffers(renderer);
+    }
+
+    // Remove from map (this destroys the chunk via unique_ptr)
+    m_chunkMap.erase(it);
+
+    Logger::debug() << "Removed chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from world";
+
+    return true;
+}
+
 int World::getBlockAtUnsafe(float worldX, float worldY, float worldZ) {
     // UNSAFE: No locking - caller must hold m_chunkMapMutex
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);

@@ -146,8 +146,13 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
         }
     }
 
-    // TODO: Implement chunk unloading for chunks beyond unloadDistance
-    // This would require tracking loaded chunks and removing them from the world
+    // Unload chunks beyond unload distance
+    if (unloadDistance > loadDistance) {
+        unloadDistantChunks(playerPos, unloadDistance);
+    }
+
+    // Retry failed chunks with exponential backoff
+    retryFailedChunks();
 }
 
 void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
@@ -198,7 +203,20 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
                                   << chunkY << ", " << chunkZ << ") - duplicate or out of bounds";
                 }
             } catch (const std::exception& e) {
-                Logger::error() << "Failed to upload chunk: " << e.what();
+                // Track the failure for retry
+                int chunkX = chunk ? chunk->getChunkX() : -1;
+                int chunkY = chunk ? chunk->getChunkY() : -1;
+                int chunkZ = chunk ? chunk->getChunkZ() : -1;
+
+                Logger::error() << "Failed to upload chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): " << e.what();
+
+                if (chunk) {
+                    trackFailedChunk(chunkX, chunkY, chunkZ, std::string("Buffer creation failed: ") + e.what());
+
+                    // Remove from in-flight tracking
+                    std::lock_guard<std::mutex> lock(m_loadQueueMutex);
+                    m_chunksInFlight.erase(ChunkCoord{chunkX, chunkY, chunkZ});
+                }
             }
         }
     }
@@ -269,7 +287,17 @@ void WorldStreaming::workerThreadFunction() {
                                << request.chunkY << ", " << request.chunkZ
                                << ") - Priority: " << request.priority;
             } catch (const std::exception& e) {
-                Logger::error() << "Worker failed to generate chunk: " << e.what();
+                Logger::error() << "Worker failed to generate chunk (" << request.chunkX << ", "
+                               << request.chunkY << ", " << request.chunkZ << "): " << e.what();
+
+                // Track failure for potential retry
+                trackFailedChunk(request.chunkX, request.chunkY, request.chunkZ, e.what());
+
+                // Remove from in-flight tracking
+                {
+                    std::lock_guard<std::mutex> lock(m_loadQueueMutex);
+                    m_chunksInFlight.erase(ChunkCoord{request.chunkX, request.chunkY, request.chunkZ});
+                }
             }
         }
     }
@@ -314,4 +342,163 @@ glm::vec3 WorldStreaming::chunkToWorldPos(int chunkX, int chunkY, int chunkZ) co
     float worldZ = (chunkZ * CHUNK_SIZE + CHUNK_SIZE / 2.0f) * BLOCK_SIZE;
 
     return glm::vec3(worldX, worldY, worldZ);
+}
+
+void WorldStreaming::unloadDistantChunks(const glm::vec3& playerPos, float unloadDistance) {
+    const int CHUNK_SIZE = 32;
+    const float BLOCK_SIZE = 0.5f;
+
+    // Convert player position to chunk coordinates
+    int playerChunkX = static_cast<int>(std::floor(playerPos.x / (CHUNK_SIZE * BLOCK_SIZE)));
+    int playerChunkY = static_cast<int>(std::floor(playerPos.y / (CHUNK_SIZE * BLOCK_SIZE)));
+    int playerChunkZ = static_cast<int>(std::floor(playerPos.z / (CHUNK_SIZE * BLOCK_SIZE)));
+
+    // Calculate unload radius in chunks (slightly larger than load distance for hysteresis)
+    int unloadRadiusChunks = static_cast<int>(std::ceil(unloadDistance / (CHUNK_SIZE * BLOCK_SIZE))) + 2;
+
+    std::vector<ChunkCoord> chunksToUnload;
+
+    // Check chunks in a large sphere around the player
+    for (int dx = -unloadRadiusChunks; dx <= unloadRadiusChunks; ++dx) {
+        for (int dy = -unloadRadiusChunks; dy <= unloadRadiusChunks; ++dy) {
+            for (int dz = -unloadRadiusChunks; dz <= unloadRadiusChunks; ++dz) {
+                int chunkX = playerChunkX + dx;
+                int chunkY = playerChunkY + dy;
+                int chunkZ = playerChunkZ + dz;
+
+                // Check if chunk exists
+                if (m_world->getChunkAt(chunkX, chunkY, chunkZ) != nullptr) {
+                    // Calculate distance
+                    glm::vec3 chunkCenter = chunkToWorldPos(chunkX, chunkY, chunkZ);
+                    float distance = glm::distance(playerPos, chunkCenter);
+
+                    // If beyond unload distance, mark for removal
+                    if (distance > unloadDistance) {
+                        chunksToUnload.push_back({chunkX, chunkY, chunkZ});
+                    }
+                }
+            }
+        }
+    }
+
+    // Remove marked chunks
+    for (const auto& coord : chunksToUnload) {
+        if (m_world->removeChunk(coord.x, coord.y, coord.z, m_renderer)) {
+            Logger::debug() << "Unloaded distant chunk (" << coord.x << ", " << coord.y << ", " << coord.z << ")";
+            m_totalChunksUnloaded++;
+
+            // Also remove from in-flight tracking if present
+            std::lock_guard<std::mutex> lock(m_loadQueueMutex);
+            m_chunksInFlight.erase(coord);
+        }
+    }
+
+    if (!chunksToUnload.empty()) {
+        Logger::info() << "Unloaded " << chunksToUnload.size() << " distant chunks";
+    }
+}
+
+void WorldStreaming::trackFailedChunk(int chunkX, int chunkY, int chunkZ, const std::string& errorMsg) {
+    std::lock_guard<std::mutex> lock(m_failedChunksMutex);
+
+    ChunkCoord coord{chunkX, chunkY, chunkZ};
+
+    // Check if chunk already failed before
+    for (auto& failed : m_failedChunks) {
+        if (failed.coord.x == chunkX && failed.coord.y == chunkY && failed.coord.z == chunkZ) {
+            // Update existing failure
+            failed.failureCount++;
+            failed.lastAttempt = std::chrono::steady_clock::now();
+            failed.errorMessage = errorMsg;
+
+            Logger::warn() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                          << ") failed " << failed.failureCount << " times. Last error: " << errorMsg;
+            return;
+        }
+    }
+
+    // New failure
+    FailedChunk failed;
+    failed.coord = coord;
+    failed.failureCount = 1;
+    failed.lastAttempt = std::chrono::steady_clock::now();
+    failed.errorMessage = errorMsg;
+    m_failedChunks.push_back(failed);
+
+    Logger::warn() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                  << ") failed to generate: " << errorMsg;
+}
+
+void WorldStreaming::retryFailedChunks() {
+    std::vector<ChunkLoadRequest> retryRequests;
+    std::vector<ChunkCoord> toRemove;
+
+    auto now = std::chrono::steady_clock::now();
+
+    // Check which chunks are ready for retry
+    {
+        std::lock_guard<std::mutex> lock(m_failedChunksMutex);
+
+        for (auto& failed : m_failedChunks) {
+            // Give up after 5 attempts
+            if (failed.failureCount >= 5) {
+                Logger::error() << "Giving up on chunk (" << failed.coord.x << ", "
+                               << failed.coord.y << ", " << failed.coord.z
+                               << ") after " << failed.failureCount << " attempts";
+                toRemove.push_back(failed.coord);
+                continue;
+            }
+
+            // Calculate backoff time: 2^failureCount seconds
+            auto backoffSeconds = std::chrono::seconds(1 << failed.failureCount);  // 2, 4, 8, 16, 32
+            auto nextRetryTime = failed.lastAttempt + backoffSeconds;
+
+            // If enough time has passed, retry
+            if (now >= nextRetryTime) {
+                // Check if chunk still doesn't exist
+                if (m_world->getChunkAt(failed.coord.x, failed.coord.y, failed.coord.z) == nullptr) {
+                    float priority = 100.0f;  // Medium priority for retries
+                    retryRequests.push_back({failed.coord.x, failed.coord.y, failed.coord.z, priority});
+
+                    Logger::info() << "Retrying failed chunk (" << failed.coord.x << ", "
+                                  << failed.coord.y << ", " << failed.coord.z
+                                  << ") - Attempt " << (failed.failureCount + 1);
+                } else {
+                    // Chunk now exists (maybe loaded elsewhere), remove from failed list
+                    toRemove.push_back(failed.coord);
+                }
+            }
+        }
+
+        // Remove chunks that gave up or now exist
+        m_failedChunks.erase(
+            std::remove_if(m_failedChunks.begin(), m_failedChunks.end(),
+                [&toRemove](const FailedChunk& f) {
+                    return std::find_if(toRemove.begin(), toRemove.end(),
+                        [&f](const ChunkCoord& c) {
+                            return c.x == f.coord.x && c.y == f.coord.y && c.z == f.coord.z;
+                        }) != toRemove.end();
+                }),
+            m_failedChunks.end()
+        );
+    }
+
+    // Add retry requests to load queue
+    if (!retryRequests.empty()) {
+        std::lock_guard<std::mutex> lock(m_loadQueueMutex);
+
+        for (const auto& request : retryRequests) {
+            ChunkCoord coord{request.chunkX, request.chunkY, request.chunkZ};
+
+            // Only add if not already in flight
+            if (m_chunksInFlight.find(coord) == m_chunksInFlight.end()) {
+                m_chunksInFlight.insert(coord);
+                m_loadQueue.push(request);
+            }
+        }
+
+        if (!m_loadQueue.empty()) {
+            m_loadQueueCV.notify_all();
+        }
+    }
 }
