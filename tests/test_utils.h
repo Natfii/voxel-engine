@@ -143,11 +143,13 @@ inline void init_test_environment() {
     // Load blocks (required for rendering and world generation)
     std::cout << "Loading block types from: assets/blocks\n";
 
-    if (!BlockRegistry::getInstance().loadBlocks("assets/blocks")) {
+    // BlockRegistry needs a VulkanRenderer for texture loading, but tests use mock renderer
+    // Pass nullptr - blocks will load without textures (which is fine for logic tests)
+    if (!BlockRegistry::instance().loadBlocks("assets/blocks", nullptr)) {
         throw std::runtime_error("Failed to load blocks! Make sure assets/blocks directory exists.");
     }
 
-    std::cout << "Loaded " << BlockRegistry::getInstance().getBlockCount() << " block types\n";
+    std::cout << "Loaded " << BlockRegistry::instance().getBlockCount() << " block types\n";
     std::cout << "Test environment initialized successfully\n\n";
 }
 
