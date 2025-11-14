@@ -18,11 +18,12 @@ A complete, minimal-viable testing strategy for shipping chunk streaming safely.
 # Just need to update main CMakeLists.txt
 ```
 
-### Step 2: Update CMakeLists.txt
+### Step 2: Update CMakeLists.txt 
 Add this line to the END of `/home/user/voxel-engine/CMakeLists.txt`:
 ```cmake
 add_subdirectory(tests)
 ```
+# Already done
 
 ### Step 3: Build
 ```bash

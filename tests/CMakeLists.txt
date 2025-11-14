@@ -39,12 +39,20 @@ target_include_directories(test_chunk_correctness PRIVATE
     ${Vulkan_INCLUDE_DIRS}
 )
 
-target_link_libraries(test_chunk_correctness
-    ${Vulkan_LIBRARIES}
-    yaml-cpp
-    glfw
-    ${CMAKE_DL_LIBS}
-)
+if(WIN32)
+    target_link_libraries(test_chunk_correctness
+        ${Vulkan_LIBRARIES}
+        yaml-cpp
+        glfw3
+    )
+else()
+    target_link_libraries(test_chunk_correctness
+        ${Vulkan_LIBRARIES}
+        yaml-cpp
+        glfw
+        ${CMAKE_DL_LIBS}
+    )
+endif()
 
 # Enable Address Sanitizer on non-Windows
 if(NOT MSVC)
@@ -81,12 +89,20 @@ target_include_directories(test_memory_leaks PRIVATE
     ${Vulkan_INCLUDE_DIRS}
 )
 
-target_link_libraries(test_memory_leaks
-    ${Vulkan_LIBRARIES}
-    yaml-cpp
-    glfw
-    ${CMAKE_DL_LIBS}
-)
+if(WIN32)
+    target_link_libraries(test_memory_leaks
+        ${Vulkan_LIBRARIES}
+        yaml-cpp
+        glfw3
+    )
+else()
+    target_link_libraries(test_memory_leaks
+        ${Vulkan_LIBRARIES}
+        yaml-cpp
+        glfw
+        ${CMAKE_DL_LIBS}
+    )
+endif()
 
 # Enable Address Sanitizer
 if(NOT MSVC)
@@ -123,12 +139,20 @@ target_include_directories(test_performance PRIVATE
     ${Vulkan_INCLUDE_DIRS}
 )
 
-target_link_libraries(test_performance
-    ${Vulkan_LIBRARIES}
-    yaml-cpp
-    glfw
-    ${CMAKE_DL_LIBS}
-)
+if(WIN32)
+    target_link_libraries(test_performance
+        ${Vulkan_LIBRARIES}
+        yaml-cpp
+        glfw3
+    )
+else()
+    target_link_libraries(test_performance
+        ${Vulkan_LIBRARIES}
+        yaml-cpp
+        glfw
+        ${CMAKE_DL_LIBS}
+    )
+endif()
 
 if(NOT MSVC)
     target_compile_options(test_performance PRIVATE -fsanitize=address -fno-omit-frame-pointer)
@@ -164,12 +188,20 @@ target_include_directories(test_stress PRIVATE
     ${Vulkan_INCLUDE_DIRS}
 )
 
-target_link_libraries(test_stress
-    ${Vulkan_LIBRARIES}
-    yaml-cpp
-    glfw
-    ${CMAKE_DL_LIBS}
-)
+if(WIN32)
+    target_link_libraries(test_stress
+        ${Vulkan_LIBRARIES}
+        yaml-cpp
+        glfw3
+    )
+else()
+    target_link_libraries(test_stress
+        ${Vulkan_LIBRARIES}
+        yaml-cpp
+        glfw
+        ${CMAKE_DL_LIBS}
+    )
+endif()
 
 if(NOT MSVC)
     target_compile_options(test_stress PRIVATE -fsanitize=address -fno-omit-frame-pointer)

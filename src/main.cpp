@@ -321,13 +321,13 @@ int main() {
             // Check at least 3 blocks below ground are solid
             for (int dy = -1; dy >= -3; dy--) {
                 if (groundY + dy < 0) break;  // Hit bedrock equivalent
-                int blockBelow = world.getBlockAt(x, (groundY + dy) * 0.5f, z);
+                int blockBelow = world.getBlockAt(x, static_cast<float>(groundY + dy), z);
                 if (blockBelow == 0) return false;  // Gap below - floating terrain!
             }
 
             // Check for 3 blocks of clear space above ground
             for (int dy = 1; dy <= 3; dy++) {
-                int blockAbove = world.getBlockAt(x, (groundY + dy) * 0.5f, z);
+                int blockAbove = world.getBlockAt(x, static_cast<float>(groundY + dy), z);
                 if (blockAbove != 0) return false;  // Not air - suffocation risk
             }
 
@@ -342,7 +342,7 @@ int main() {
                     int terrainHeight = world.getBiomeMap()->getTerrainHeightAt(checkX, checkZ);
                     int neighborGroundY = terrainHeight;
                     for (int y = terrainHeight; y >= groundY - 5 && y >= 0; y--) {
-                        int blockID = world.getBlockAt(checkX, y * 0.5f, checkZ);
+                        int blockID = world.getBlockAt(checkX, static_cast<float>(y), checkZ);
                         if (blockID != 0 && blockID != 5) {  // Not air, not water
                             neighborGroundY = y;
                             break;
@@ -372,7 +372,7 @@ int main() {
                 // Find solid ground
                 int testGroundY = terrainHeight;
                 for (int y = terrainHeight; y >= std::max(0, terrainHeight - 10); y--) {
-                    int blockID = world.getBlockAt(testX, y * 0.5f, testZ);
+                    int blockID = world.getBlockAt(testX, static_cast<float>(y), testZ);
                     if (blockID != 0 && blockID != 5) {  // Solid block (not air, not water)
                         testGroundY = y;
 
@@ -401,7 +401,7 @@ int main() {
             // Find actual ground at origin by searching downward from terrain height
             spawnGroundY = terrainHeight;
             for (int y = terrainHeight; y >= std::max(0, terrainHeight - 20); y--) {
-                int blockID = world.getBlockAt(0.0f, y * 0.5f, 0.0f);
+                int blockID = world.getBlockAt(0.0f, static_cast<float>(y), 0.0f);
                 if (blockID != 0 && blockID != 5) {  // Solid block (not air/water)
                     spawnGroundY = y;
                     break;
@@ -409,7 +409,7 @@ int main() {
             }
 
             // If still no ground found, emergency fallback uses terrain height
-            if (spawnGroundY < 0 || world.getBlockAt(0.0f, spawnGroundY * 0.5f, 0.0f) == 0) {
+            if (spawnGroundY < 0 || world.getBlockAt(0.0f, static_cast<float>(spawnGroundY), 0.0f) == 0) {
                 std::cout << "CRITICAL: No ground found anywhere, emergency spawn at terrain height Y=" << terrainHeight << std::endl;
                 spawnGroundY = terrainHeight;
             }
@@ -417,7 +417,17 @@ int main() {
 
         // Convert to world coordinates with eye height (feet position, not eye position)
         // Player constructor expects feet position, so don't add eye height
-        float spawnY = (spawnGroundY + 1) * 0.5f;  // 1 block above ground (feet position)
+        float spawnY = static_cast<float>(spawnGroundY + 1);  // 1 block above ground (feet position)
+
+        // Debug: Check blocks around spawn
+        std::cout << "Blocks at spawn location:" << std::endl;
+        for (int dy = -2; dy <= 3; dy++) {
+            int blockY = spawnGroundY + dy;
+            int blockID = world.getBlockAt(spawnX, static_cast<float>(blockY), spawnZ);
+            std::cout << "  Block Y=" << blockY << " (world Y=" << static_cast<float>(blockY)
+                      << "): " << blockID << (dy == 0 ? " <- GROUND" : "")
+                      << (dy == 1 ? " <- FEET" : "") << std::endl;
+        }
 
         std::cout << "Safe spawn found at (" << spawnX << ", " << spawnY << ", " << spawnZ
                   << ") - ground: Y=" << spawnGroundY << " (searched radius: "
@@ -632,11 +642,11 @@ int main() {
             if (underwater) {
                 // Get the block at camera position
                 // Convert player position to block coordinates, then back to world coordinates
-                int camX = static_cast<int>(std::floor(player.Position.x / 0.5f));
-                int camY = static_cast<int>(std::floor(player.Position.y / 0.5f));
-                int camZ = static_cast<int>(std::floor(player.Position.z / 0.5f));
+                int camX = static_cast<int>(std::floor(player.Position.x));
+                int camY = static_cast<int>(std::floor(player.Position.y));
+                int camZ = static_cast<int>(std::floor(player.Position.z));
                 // getBlockAt expects world coordinates (floats), not block coordinates (ints)
-                int liquidBlockID = world.getBlockAt(camX * 0.5f, camY * 0.5f, camZ * 0.5f);
+                int liquidBlockID = world.getBlockAt(static_cast<float>(camX), static_cast<float>(camY), static_cast<float>(camZ));
 
                 // If it's a liquid block, use its properties from YAML
                 auto& registry = BlockRegistry::instance();
@@ -690,16 +700,16 @@ int main() {
                     if (selectedItem.type == InventoryItemType::BLOCK) {
                         // Place block adjacent to the targeted block (using hit normal)
                         if (selectedItem.blockID > 0) {
-                            glm::vec3 placePosition = target.blockPosition + target.hitNormal * 0.5f;
+                            glm::vec3 placePosition = target.blockPosition + target.hitNormal;
                             world.placeBlock(placePosition, selectedItem.blockID, &renderer);
                         }
                     } else if (selectedItem.type == InventoryItemType::STRUCTURE) {
                         // Place structure at ground level below targeted position
                         // Convert target block position to block coordinates
                         glm::ivec3 targetBlockCoords(
-                            (int)(target.blockPosition.x / 0.5f),
-                            (int)(target.blockPosition.y / 0.5f),
-                            (int)(target.blockPosition.z / 0.5f)
+                            (int)(target.blockPosition.x),
+                            (int)(target.blockPosition.y),
+                            (int)(target.blockPosition.z)
                         );
 
                         // Find ground level by casting ray downward
@@ -863,34 +873,52 @@ int main() {
             renderer.endFrame();
         }
 
+        std::cout << "Shutting down..." << std::endl;
+
         // Wait for device to finish before cleanup
+        std::cout << "  Waiting for GPU to finish..." << std::endl;
         vkDeviceWaitIdle(renderer.getDevice());
+        std::cout << "  GPU idle" << std::endl;
 
         // Cleanup world chunk buffers
+        std::cout << "  Cleaning up world..." << std::endl;
         world.cleanup(&renderer);
+        std::cout << "  World cleanup complete" << std::endl;
 
         // Cleanup ImGui
+        std::cout << "  Cleaning up ImGui..." << std::endl;
         ImGui_ImplVulkan_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
         vkDestroyDescriptorPool(renderer.getDevice(), imguiPool, nullptr);
+        std::cout << "  ImGui cleanup complete" << std::endl;
 
         // Save current window size to config
+        std::cout << "  Saving config..." << std::endl;
         int currentWidth, currentHeight;
         glfwGetWindowSize(window, &currentWidth, &currentHeight);
         config.setInt("Window", "width", currentWidth);
         config.setInt("Window", "height", currentHeight);
         config.saveToFile("config.ini");
+        std::cout << "  Config saved" << std::endl;
 
+        std::cout << "  Destroying window..." << std::endl;
         glfwDestroyWindow(window);
+        std::cout << "  Terminating GLFW..." << std::endl;
         glfwTerminate();
+        std::cout << "  Cleaning up noise..." << std::endl;
         Chunk::cleanupNoise();
 
         std::cout << "Shutdown complete." << std::endl;
+        std::cout << "Exiting main()..." << std::endl;
+        std::cout.flush();  // Force flush before destructors run
         return 0;
 
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << std::endl;
         return -1;
     }
+
+    std::cout << "After exception handling" << std::endl;
+    std::cout.flush();
 }

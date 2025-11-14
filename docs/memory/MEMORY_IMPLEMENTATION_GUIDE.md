@@ -312,9 +312,9 @@ void World::updateLoadRegion(const glm::vec3& playerPos, int radius) {
     m_lastPlayerPos = playerPos;
 
     // Calculate which chunks to load
-    int centerChunkX = (int)(playerPos.x / 16.0f);  // 32 blocks * 0.5 = 16 world units
-    int centerChunkY = (int)(playerPos.y / 16.0f);
-    int centerChunkZ = (int)(playerPos.z / 16.0f);
+    int centerChunkX = (int)(playerPos.x / 32.0f);  // 32 blocks * 1.0 = 32 world units
+    int centerChunkY = (int)(playerPos.y / 32.0f);
+    int centerChunkZ = (int)(playerPos.z / 32.0f);
 
     // Find all loaded chunks that are outside radius
     std::vector<ChunkCoord> toUnload;

@@ -70,16 +70,16 @@ Chunk::Chunk(int x, int y, int z)
     }
 
     // Calculate world-space bounds for culling
-    // Blocks are 0.5 world units in size
-    float worldX = m_x * WIDTH * 0.5f;
-    float worldY = m_y * HEIGHT * 0.5f;
-    float worldZ = m_z * DEPTH * 0.5f;
+    // Blocks are 1.0 world units in size
+    float worldX = m_x * WIDTH;
+    float worldY = m_y * HEIGHT;
+    float worldZ = m_z * DEPTH;
 
     m_minBounds = glm::vec3(worldX, worldY, worldZ);
     m_maxBounds = glm::vec3(
-        worldX + WIDTH * 0.5f,
-        worldY + HEIGHT * 0.5f,
-        worldZ + DEPTH * 0.5f
+        worldX + WIDTH,
+        worldY + HEIGHT,
+        worldZ + DEPTH
     );
 }
 
@@ -147,10 +147,10 @@ void Chunk::generate(BiomeMap* biomeMap) {
 
     for (int x = 0; x < WIDTH; x++) {
         for (int z = 0; z < DEPTH; z++) {
-            // Convert local coords to world coords (blocks are 0.5 units)
+            // Convert local coords to world coords (blocks are 1.0 units)
             // Cast to int64_t before multiplication to prevent overflow with large chunk coords
-            float worldX = (static_cast<int64_t>(m_x) * WIDTH + x) * 0.5f;
-            float worldZ = (static_cast<int64_t>(m_z) * DEPTH + z) * 0.5f;
+            float worldX = static_cast<float>(static_cast<int64_t>(m_x) * WIDTH + x);
+            float worldZ = static_cast<float>(static_cast<int64_t>(m_z) * DEPTH + z);
 
             // Get biome at this position
             const Biome* biome = biomeMap->getBiomeAt(worldX, worldZ);
@@ -178,7 +178,7 @@ void Chunk::generate(BiomeMap* biomeMap) {
             // Fill column
             for (int y = 0; y < HEIGHT; y++) {
                 int worldY = static_cast<int64_t>(m_y) * HEIGHT + y;
-                float worldYf = worldY * 0.5f;
+                float worldYf = static_cast<float>(worldY);
 
                 // Check if this is inside a cave
                 float caveDensity = biomeMap->getCaveDensityAt(worldX, worldYf, worldZ);
@@ -314,27 +314,27 @@ void Chunk::generateMesh(World* world) {
      *
      * Face storage order (offsets into cube array):
      *   0-11:  Front face (z=0, facing -Z)
-     *   12-23: Back face (z=0.5, facing +Z)
+     *   12-23: Back face (z=1.0, facing +Z)
      *   24-35: Left face (x=0, facing -X)
-     *   36-47: Right face (x=0.5, facing +X)
-     *   48-59: Top face (y=0.5, facing +Y)
+     *   36-47: Right face (x=1.0, facing +X)
+     *   48-59: Top face (y=1.0, facing +Y)
      *   60-71: Bottom face (y=0, facing -Y)
      *
      * Each face offset contains 12 floats (4 vertices × 3 components).
      */
     static constexpr std::array<float, 72> cube = {{
         // Front face (z = 0, facing -Z) - vertices: BL, BR, TR, TL
-        0,0,0,  0.5f,0,0,  0.5f,0.5f,0,  0,0.5f,0,
-        // Back face (z = 0.5, facing +Z) - vertices: BR, BL, TL, TR (reversed for correct winding)
-        0.5f,0,0.5f,  0,0,0.5f,  0,0.5f,0.5f,  0.5f,0.5f,0.5f,
+        0,0,0,  1.0f,0,0,  1.0f,1.0f,0,  0,1.0f,0,
+        // Back face (z = 1.0, facing +Z) - vertices: BR, BL, TL, TR (reversed for correct winding)
+        1.0f,0,1.0f,  0,0,1.0f,  0,1.0f,1.0f,  1.0f,1.0f,1.0f,
         // Left face (x = 0, facing -X) - vertices: BL, BR, TR, TL
-        0,0,0.5f,  0,0,0,  0,0.5f,0,  0,0.5f,0.5f,
-        // Right face (x = 0.5, facing +X) - vertices: BL, BR, TR, TL
-        0.5f,0,0,  0.5f,0,0.5f,  0.5f,0.5f,0.5f,  0.5f,0.5f,0,
-        // Top face (y = 0.5, facing +Y) - vertices: BL, BR, TR, TL
-        0,0.5f,0,  0.5f,0.5f,0,  0.5f,0.5f,0.5f,  0,0.5f,0.5f,
+        0,0,1.0f,  0,0,0,  0,1.0f,0,  0,1.0f,1.0f,
+        // Right face (x = 1.0, facing +X) - vertices: BL, BR, TR, TL
+        1.0f,0,0,  1.0f,0,1.0f,  1.0f,1.0f,1.0f,  1.0f,1.0f,0,
+        // Top face (y = 1.0, facing +Y) - vertices: BL, BR, TR, TL
+        0,1.0f,0,  1.0f,1.0f,0,  1.0f,1.0f,1.0f,  0,1.0f,1.0f,
         // Bottom face (y = 0, facing -Y) - vertices: BL, BR, TR, TL
-        0,0,0.5f,  0.5f,0,0.5f,  0.5f,0,0,  0,0,0
+        0,0,1.0f,  1.0f,0,1.0f,  1.0f,0,0,  0,0,0
     }};
 
     /**
@@ -387,7 +387,7 @@ void Chunk::generateMesh(World* world) {
         int worldBlockX = m_x * WIDTH + x;
         int worldBlockY = m_y * HEIGHT + y;
         int worldBlockZ = m_z * DEPTH + z;
-        return glm::vec3(worldBlockX * 0.5f, worldBlockY * 0.5f, worldBlockZ * 0.5f);
+        return glm::vec3(static_cast<float>(worldBlockX), static_cast<float>(worldBlockY), static_cast<float>(worldBlockZ));
     };
 
     // Helper lambda to check if a block is solid (non-air)
@@ -479,17 +479,17 @@ void Chunk::generateMesh(World* world) {
                 };
 
                 // Calculate world position for this block
-                float bx = float(m_x * WIDTH + X) * 0.5f;
-                float by = float(m_y * HEIGHT + Y) * 0.5f;
-                float bz = float(m_z * DEPTH + Z) * 0.5f;
+                float bx = float(m_x * WIDTH + X);
+                float by = float(m_y * HEIGHT + Y);
+                float bz = float(m_z * DEPTH + Z);
 
                 // Water level height adjustment (Minecraft-style flowing water)
                 // Level 0 = source (full height), Level 7 = edge (very low)
                 float waterHeightAdjust = 0.0f;
                 if (def.isLiquid) {
                     uint8_t waterLevel = m_blockMetadata[X][Y][Z];
-                    // Each level reduces height by 1/8th of a block (0.0625 world units)
-                    waterHeightAdjust = -waterLevel * (0.5f / 8.0f);
+                    // Each level reduces height by 1/8th of a block (0.125 world units)
+                    waterHeightAdjust = -waterLevel * (1.0f / 8.0f);
                 }
 
                 // Helper to render a face with the appropriate texture (indexed rendering)

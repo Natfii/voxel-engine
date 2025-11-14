@@ -138,7 +138,7 @@ TEST(MeshGenerationPerformance) {
 
     std::cout << "  ✓ Mesh generation within gate (< 3ms)\n";
 
-    world.cleanup(&g_testRenderer);
+    world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
     Chunk::cleanupNoise();
 }
 
@@ -171,7 +171,7 @@ TEST(WorldInitializationPerformance) {
 
     std::cout << "  ✓ World initialization within gate\n";
 
-    world.cleanup(&g_testRenderer);
+    world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
     Chunk::cleanupNoise();
 }
 
@@ -319,7 +319,7 @@ TEST(WorldBlockAccessPerformance) {
 
     std::cout << "  ✓ World block access performance acceptable\n";
 
-    world.cleanup(&g_testRenderer);
+    world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
     Chunk::cleanupNoise();
 }
 

@@ -37,7 +37,7 @@ TEST(RapidTeleportationStress) {
         // Chunk may be null if out of bounds - that's OK
     }
 
-    world.cleanup(&g_testRenderer);
+    world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
     Chunk::cleanupNoise();
 
     std::cout << "✓ Rapid teleportation stress test passed\n";
@@ -87,7 +87,7 @@ TEST(WorldBoundaryConditions) {
     // Blocks at valid positions should be non-zero if in solid terrain
     // Can't assert specific values, just that we don't crash
 
-    world.cleanup(&g_testRenderer);
+    world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
     Chunk::cleanupNoise();
 
     std::cout << "✓ World boundary conditions test passed\n";
@@ -128,7 +128,7 @@ TEST(MassiveBlockModification) {
         // Just verify it doesn't crash
     }
 
-    world.cleanup(&g_testRenderer);
+    world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
     Chunk::cleanupNoise();
 
     std::cout << "✓ Massive block modification test passed\n";
@@ -154,7 +154,7 @@ TEST(ExtremeWorldSize) {
         }
     }
 
-    world.cleanup(&g_testRenderer);
+    world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
     Chunk::cleanupNoise();
 
     std::cout << "✓ Extreme world size test passed\n";
@@ -265,7 +265,7 @@ TEST(OverlappingBlockModifications) {
         }
     }
 
-    world.cleanup(&g_testRenderer);
+    world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
     Chunk::cleanupNoise();
 
     std::cout << "✓ Overlapping block modifications test passed\n";
@@ -308,7 +308,7 @@ TEST(ChunkAccessPatternStress) {
         }
     }
 
-    world.cleanup(&g_testRenderer);
+    world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
     Chunk::cleanupNoise();
 
     std::cout << "✓ Chunk access pattern stress test passed\n";

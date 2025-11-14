@@ -480,7 +480,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     if (checkCollision(Position, world)) {
         // Player is currently inside a block - calculate correction
         glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
-        float blockGridY = std::ceil(feetPos.y / 0.5f) * 0.5f;
+        float blockGridY = std::ceil(feetPos.y);
         float correctionY = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
 
         // Only apply correction if it's significant (player is really stuck, not just touching edge)
@@ -509,8 +509,8 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
             if (!m_inLiquid) {
                 // On land: snap feet to top of block grid for precise landing
                 glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
-                // Round feet position UP to next 0.5 block boundary
-                float blockGridY = std::ceil(feetPos.y / 0.5f) * 0.5f;
+                // Round feet position UP to next 1.0 block boundary
+                float blockGridY = std::ceil(feetPos.y);
                 // Set movement to place feet exactly on block grid
                 movement.y = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
             } else {
@@ -614,13 +614,13 @@ bool Player::checkCollision(const glm::vec3& position, World* world) {
     glm::vec3 minBound = feetPos - glm::vec3(halfWidth, 0.0f, halfWidth);
     glm::vec3 maxBound = feetPos + glm::vec3(halfWidth, PLAYER_HEIGHT, halfWidth);
 
-    // Convert to block coordinates (blocks are 0.5 units)
-    int minX = (int)std::floor(minBound.x / 0.5f);
-    int minY = (int)std::floor(minBound.y / 0.5f);
-    int minZ = (int)std::floor(minBound.z / 0.5f);
-    int maxX = (int)std::floor(maxBound.x / 0.5f);
-    int maxY = (int)std::floor(maxBound.y / 0.5f);
-    int maxZ = (int)std::floor(maxBound.z / 0.5f);
+    // Convert to block coordinates (blocks are 1.0 units)
+    int minX = (int)std::floor(minBound.x);
+    int minY = (int)std::floor(minBound.y);
+    int minZ = (int)std::floor(minBound.z);
+    int maxX = (int)std::floor(maxBound.x);
+    int maxY = (int)std::floor(maxBound.y);
+    int maxZ = (int)std::floor(maxBound.z);
 
     // DEBUG: Print what we're checking (only if debug_collision is enabled)
     static int checkCounter = 0;
@@ -636,9 +636,9 @@ bool Player::checkCollision(const glm::vec3& position, World* world) {
         for (int y = minY; y <= maxY; y++) {
             for (int z = minZ; z <= maxZ; z++) {
                 // Convert block coordinates back to world position
-                float worldX = x * 0.5f;
-                float worldY = y * 0.5f;
-                float worldZ = z * 0.5f;
+                float worldX = static_cast<float>(x);
+                float worldY = static_cast<float>(y);
+                float worldZ = static_cast<float>(z);
 
                 int blockID = world->getBlockAt(worldX, worldY, worldZ);
 
@@ -745,22 +745,22 @@ bool Player::checkHorizontalCollision(const glm::vec3& position, World* world) {
     glm::vec3 minBound = feetPos + glm::vec3(-halfWidth, stepHeight, -halfWidth);
     glm::vec3 maxBound = feetPos + glm::vec3(halfWidth, PLAYER_HEIGHT, halfWidth);
 
-    // Convert to block coordinates (blocks are 0.5 units)
-    int minX = (int)std::floor(minBound.x / 0.5f);
-    int minY = (int)std::floor(minBound.y / 0.5f);
-    int minZ = (int)std::floor(minBound.z / 0.5f);
-    int maxX = (int)std::floor(maxBound.x / 0.5f);
-    int maxY = (int)std::floor(maxBound.y / 0.5f);
-    int maxZ = (int)std::floor(maxBound.z / 0.5f);
+    // Convert to block coordinates (blocks are 1.0 units)
+    int minX = (int)std::floor(minBound.x);
+    int minY = (int)std::floor(minBound.y);
+    int minZ = (int)std::floor(minBound.z);
+    int maxX = (int)std::floor(maxBound.x);
+    int maxY = (int)std::floor(maxBound.y);
+    int maxZ = (int)std::floor(maxBound.z);
 
     // Check each block in the range
     for (int x = minX; x <= maxX; x++) {
         for (int y = minY; y <= maxY; y++) {
             for (int z = minZ; z <= maxZ; z++) {
                 // Convert block coordinates back to world position
-                float worldX = x * 0.5f;
-                float worldY = y * 0.5f;
-                float worldZ = z * 0.5f;
+                float worldX = static_cast<float>(x);
+                float worldY = static_cast<float>(y);
+                float worldZ = static_cast<float>(z);
 
                 int blockID = world->getBlockAt(worldX, worldY, worldZ);
                 // Check if block is solid (not air and not liquid)

@@ -76,10 +76,10 @@ TEST(WorldLoadUnloadCycles) {
             world.setBlockAt(10.0f, 10.0f, 10.0f, 0);
 
             // Create buffers
-            world.createBuffers(&g_testRenderer);
+            world.createBuffers(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
 
             // Cleanup
-            world.cleanup(&g_testRenderer);
+            world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
 
             Chunk::cleanupNoise();
         } // World destroyed here
@@ -109,11 +109,11 @@ TEST(ChunkBufferLifecycle) {
         uint32_t vertexCount = c.getVertexCount();
         if (vertexCount > 0) {
             // Only create buffer if chunk has geometry
-            c.createVertexBuffer(&g_testRenderer);
+            c.createVertexBuffer(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
         }
 
         // Destroy buffers
-        c.destroyBuffers(&g_testRenderer);
+        c.destroyBuffers(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
     }
 
     Chunk::cleanupNoise();
@@ -133,10 +133,10 @@ TEST(LargeWorldCleanup) {
     world.generateWorld();
 
     std::cout << "  Creating GPU buffers...\n";
-    world.createBuffers(&g_testRenderer);
+    world.createBuffers(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
 
     std::cout << "  Cleaning up world...\n";
-    world.cleanup(&g_testRenderer);
+    world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
 
     // At this point, all resources should be freed
     // (Verify with Valgrind or ASAN)
@@ -162,7 +162,7 @@ TEST(RepeatedWorldRegeneration) {
         world.decorateWorld();
 
         // Cleanup
-        world.cleanup(&g_testRenderer);
+        world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
 
         Chunk::cleanupNoise();
 
@@ -205,7 +205,7 @@ TEST(BlockModificationMemorySafety) {
         // Just verify it doesn't crash
     }
 
-    world.cleanup(&g_testRenderer);
+    world.cleanup(reinterpret_cast<VulkanRenderer*>(&g_testRenderer));
     Chunk::cleanupNoise();
 
     std::cout << "✓ Block modification memory safety verified\n";

@@ -13,6 +13,7 @@
 #include <vector>
 #include <string>
 #include <cstdlib>
+#include "../include/biome_map.h"
 
 // ============================================================
 // Test Assertion Macros
@@ -163,11 +164,11 @@ public:
     bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                      VkMemoryPropertyFlags properties,
                      VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
-        // Allocate dummy handles
-        static VkBuffer dummyBuffer = reinterpret_cast<VkBuffer>(0x1000);
-        static VkDeviceMemory dummyMemory = reinterpret_cast<VkDeviceMemory>(0x2000);
-        buffer = dummyBuffer++;
-        bufferMemory = dummyMemory++;
+        // Allocate dummy handles using counters to avoid pointer arithmetic on incomplete types
+        static uintptr_t bufferCounter = 0x1000;
+        static uintptr_t memoryCounter = 0x2000;
+        buffer = reinterpret_cast<VkBuffer>(bufferCounter++);
+        bufferMemory = reinterpret_cast<VkDeviceMemory>(memoryCounter++);
         return true;
     }
 
@@ -199,35 +200,10 @@ extern MockVulkanRenderer g_testRenderer;
 // Mock Biome System
 // ============================================================
 
-// Forward declare Biome struct to match BiomeMap interface
-struct Biome;
-
-class MockBiomeMap {
+class MockBiomeMap : public BiomeMap {
 public:
-    // Match the exact interface of BiomeMap class
-    const Biome* getBiomeAt(float worldX, float worldZ) const {
-        return nullptr;  // Chunk::generate() handles null case with fallback
-    }
-
-    int getTerrainHeightAt(float worldX, float worldZ) const {
-        return 30;  // Constant height for testing
-    }
-
-    float getTemperatureAt(float worldX, float worldZ) const {
-        return 0.5f;
-    }
-
-    float getMoistureAt(float worldX, float worldZ) const {
-        return 0.5f;
-    }
-
-    float getCaveDensityAt(float worldX, float worldY, float worldZ) const {
-        return 1.0f;  // Solid (no caves) for testing
-    }
-
-    bool isUndergroundBiomeAt(float worldX, float worldY, float worldZ) const {
-        return false;  // No underground biomes for testing
-    }
+    // Call BiomeMap constructor with dummy seed
+    MockBiomeMap() : BiomeMap(0) {}
 };
 
 extern MockBiomeMap g_testBiomeMap;

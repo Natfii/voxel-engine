@@ -282,10 +282,10 @@ bool StructureRegistry::spawnStructure(const std::string& name, World* world, co
                 glm::ivec3 blockPos = startPos + glm::ivec3(x, y, z);
 
                 // Place the block in the world
-                // Convert block coordinates to world coordinates (blocks are 0.5 units)
-                float worldX = blockPos.x * 0.5f;
-                float worldY = blockPos.y * 0.5f;
-                float worldZ = blockPos.z * 0.5f;
+                // Convert block coordinates to world coordinates (blocks are 1.0 units)
+                float worldX = static_cast<float>(blockPos.x);
+                float worldY = static_cast<float>(blockPos.y);
+                float worldZ = static_cast<float>(blockPos.z);
 
                 world->setBlockAt(worldX, worldY, worldZ, blockID);
 

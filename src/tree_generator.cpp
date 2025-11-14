@@ -57,10 +57,10 @@ bool TreeGenerator::placeTree(World* world, int blockX, int blockY, int blockZ, 
         int by = blockY + block.offset.y;
         int bz = blockZ + block.offset.z;
 
-        // Convert block coordinates to world coordinates (1 block = 0.5 world units)
-        float worldX = bx * 0.5f;
-        float worldY = by * 0.5f;
-        float worldZ = bz * 0.5f;
+        // Convert block coordinates to world coordinates (1 block = 1.0 world units)
+        float worldX = static_cast<float>(bx);
+        float worldY = static_cast<float>(by);
+        float worldZ = static_cast<float>(bz);
 
         int existingBlock = world->getBlockAt(worldX, worldY, worldZ);
 
@@ -78,9 +78,9 @@ bool TreeGenerator::placeTree(World* world, int blockX, int blockY, int blockZ, 
         int bz = blockZ + block.offset.z;
 
         // Convert block coordinates to world coordinates
-        float worldX = bx * 0.5f;
-        float worldY = by * 0.5f;
-        float worldZ = bz * 0.5f;
+        float worldX = static_cast<float>(bx);
+        float worldY = static_cast<float>(by);
+        float worldZ = static_cast<float>(bz);
 
         // Don't regenerate mesh for each block - will batch regenerate in decorateWorld()
         world->setBlockAt(worldX, worldY, worldZ, block.blockID, false);

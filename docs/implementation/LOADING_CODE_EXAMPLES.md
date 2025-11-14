@@ -150,7 +150,7 @@ void StreamingSystem::start() {
         }
 
         float distance = glm::distance(
-            glm::vec3(chunk->getX() * 16.0f, 0.0f, chunk->getZ() * 16.0f),
+            glm::vec3(chunk->getX() * 32.0f, 0.0f, chunk->getZ() * 32.0f),
             m_playerPos
         );
 
