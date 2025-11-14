@@ -9,6 +9,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <shared_mutex>
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
@@ -325,6 +326,10 @@ private:
     int m_seed;                          ///< World generation seed
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_chunkMap;  ///< Fast O(1) chunk lookup by coordinates
     std::vector<Chunk*> m_chunks;  ///< All chunks for iteration (does not own memory)
+
+    // THREAD SAFETY: Protects m_chunkMap access for future chunk streaming
+    // Use std::shared_lock for readers (many simultaneous), std::unique_lock for writers (exclusive)
+    mutable std::shared_mutex m_chunkMapMutex;
 
     // Water simulation and particles
     std::unique_ptr<WaterSimulation> m_waterSimulation;  ///< Water flow simulation

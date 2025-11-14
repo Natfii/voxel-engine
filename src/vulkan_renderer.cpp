@@ -1957,9 +1957,20 @@ void VulkanRenderer::endSingleTimeCommands(VkCommandBuffer commandBuffer) {
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(m_graphicsQueue);
+    // PERFORMANCE FIX: Use fence instead of vkQueueWaitIdle for better batching
+    // This allows multiple buffer uploads to be submitted before waiting
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 
+    VkFence fence;
+    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
+
+    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence);
+
+    // Wait for this specific operation to complete (still synchronous, but more efficient)
+    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+
+    vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
 }
 

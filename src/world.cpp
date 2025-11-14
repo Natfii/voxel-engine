@@ -349,6 +349,12 @@ void World::createBuffers(VulkanRenderer* renderer) {
             chunk->createVertexBuffer(renderer);
         }
     }
+
+    // PERFORMANCE FIX: After all buffer uploads are submitted, wait once for GPU to finish
+    // This is much faster than waiting after each individual buffer upload (old approach)
+    // With fence-based approach in endSingleTimeCommands(), this ensures all uploads complete
+    // before we return from world initialization
+    vkQueueWaitIdle(renderer->getGraphicsQueue());
 }
 
 void World::cleanup(VulkanRenderer* renderer) {
