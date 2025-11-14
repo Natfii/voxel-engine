@@ -1930,6 +1930,60 @@ void VulkanRenderer::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDevice
     endSingleTimeCommands(commandBuffer);
 }
 
+void VulkanRenderer::beginBufferCopyBatch() {
+    // Allocate command buffer for batch
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = m_commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    vkAllocateCommandBuffers(m_device, &allocInfo, &m_batchCommandBuffer);
+
+    // Begin recording
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    vkBeginCommandBuffer(m_batchCommandBuffer, &beginInfo);
+}
+
+void VulkanRenderer::batchCopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+    // Record copy command into batch command buffer
+    VkBufferCopy copyRegion{};
+    copyRegion.size = size;
+    vkCmdCopyBuffer(m_batchCommandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+}
+
+void VulkanRenderer::submitBufferCopyBatch() {
+    // End command buffer recording
+    vkEndCommandBuffer(m_batchCommandBuffer);
+
+    // Submit all batched copies at once
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &m_batchCommandBuffer;
+
+    // Create fence to wait for completion
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+
+    VkFence fence;
+    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
+
+    // Submit batch
+    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence);
+
+    // Wait for all copies to complete
+    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+
+    // Cleanup
+    vkDestroyFence(m_device, fence, nullptr);
+    vkFreeCommandBuffers(m_device, m_commandPool, 1, &m_batchCommandBuffer);
+    m_batchCommandBuffer = VK_NULL_HANDLE;
+}
+
 VkCommandBuffer VulkanRenderer::beginSingleTimeCommands() {
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;

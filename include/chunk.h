@@ -177,6 +177,27 @@ public:
     void createVertexBuffer(VulkanRenderer* renderer);
 
     /**
+     * @brief Creates Vulkan vertex and index buffers in batched mode
+     *
+     * Like createVertexBuffer(), but uses batched buffer copying for better performance.
+     * Must be called between renderer->beginBufferCopyBatch() and renderer->submitBufferCopyBatch().
+     * After batch submission, call cleanupStagingBuffers() to clean up temporary staging buffers.
+     *
+     * @param renderer Vulkan renderer for buffer creation
+     */
+    void createVertexBufferBatched(VulkanRenderer* renderer);
+
+    /**
+     * @brief Cleans up staging buffers after batched upload completes
+     *
+     * Must be called after renderer->submitBufferCopyBatch() completes.
+     * Destroys temporary staging buffers created by createVertexBufferBatched().
+     *
+     * @param renderer Vulkan renderer that created the buffers
+     */
+    void cleanupStagingBuffers(VulkanRenderer* renderer);
+
+    /**
      * @brief Destroys Vulkan buffers before cleanup
      *
      * Must be called before renderer shutdown.
@@ -349,6 +370,16 @@ private:
     VkDeviceMemory m_transparentIndexBufferMemory; ///< Index buffer memory (transparent)
     uint32_t m_transparentVertexCount;            ///< Number of vertices (transparent)
     uint32_t m_transparentIndexCount;             ///< Number of indices (transparent)
+
+    // ========== Staging Buffers (for batched uploads) ==========
+    VkBuffer m_vertexStagingBuffer;               ///< Staging buffer for opaque vertices
+    VkDeviceMemory m_vertexStagingBufferMemory;   ///< Staging buffer memory (opaque vertices)
+    VkBuffer m_indexStagingBuffer;                ///< Staging buffer for opaque indices
+    VkDeviceMemory m_indexStagingBufferMemory;    ///< Staging buffer memory (opaque indices)
+    VkBuffer m_transparentVertexStagingBuffer;    ///< Staging buffer for transparent vertices
+    VkDeviceMemory m_transparentVertexStagingBufferMemory; ///< Staging buffer memory (transparent vertices)
+    VkBuffer m_transparentIndexStagingBuffer;     ///< Staging buffer for transparent indices
+    VkDeviceMemory m_transparentIndexStagingBufferMemory;  ///< Staging buffer memory (transparent indices)
 
     // ========== Culling Data ==========
     glm::vec3 m_minBounds;                  ///< AABB minimum corner (world space)

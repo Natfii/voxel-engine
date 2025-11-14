@@ -58,6 +58,14 @@ Chunk::Chunk(int x, int y, int z)
       m_transparentIndexBufferMemory(VK_NULL_HANDLE),
       m_transparentVertexCount(0),
       m_transparentIndexCount(0),
+      m_vertexStagingBuffer(VK_NULL_HANDLE),
+      m_vertexStagingBufferMemory(VK_NULL_HANDLE),
+      m_indexStagingBuffer(VK_NULL_HANDLE),
+      m_indexStagingBufferMemory(VK_NULL_HANDLE),
+      m_transparentVertexStagingBuffer(VK_NULL_HANDLE),
+      m_transparentVertexStagingBufferMemory(VK_NULL_HANDLE),
+      m_transparentIndexStagingBuffer(VK_NULL_HANDLE),
+      m_transparentIndexStagingBufferMemory(VK_NULL_HANDLE),
       m_visible(false) {
 
     // Initialize all blocks to air and metadata to 0
@@ -966,6 +974,175 @@ void Chunk::destroyBuffers(VulkanRenderer* renderer) {
     if (m_transparentIndexBufferMemory != VK_NULL_HANDLE) {
         vkFreeMemory(device, m_transparentIndexBufferMemory, nullptr);
         m_transparentIndexBufferMemory = VK_NULL_HANDLE;
+    }
+}
+
+void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
+    if (m_vertexCount == 0 && m_transparentVertexCount == 0) {
+        return;  // No vertices to upload
+    }
+
+    // Destroy old buffers if they exist
+    destroyBuffers(renderer);
+
+    // Initialize staging buffers to NULL
+    m_vertexStagingBuffer = VK_NULL_HANDLE;
+    m_vertexStagingBufferMemory = VK_NULL_HANDLE;
+    m_indexStagingBuffer = VK_NULL_HANDLE;
+    m_indexStagingBufferMemory = VK_NULL_HANDLE;
+    m_transparentVertexStagingBuffer = VK_NULL_HANDLE;
+    m_transparentVertexStagingBufferMemory = VK_NULL_HANDLE;
+    m_transparentIndexStagingBuffer = VK_NULL_HANDLE;
+    m_transparentIndexStagingBufferMemory = VK_NULL_HANDLE;
+
+    VkDevice device = renderer->getDevice();
+
+    // ========== CREATE OPAQUE BUFFERS (BATCHED) ==========
+    if (m_vertexCount > 0) {
+        // Create vertex staging buffer and device buffer
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
+
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_vertexStagingBuffer, m_vertexStagingBufferMemory);
+
+        void* data;
+        vkMapMemory(device, m_vertexStagingBufferMemory, 0, vertexBufferSize, 0, &data);
+        memcpy(data, m_vertices.data(), (size_t)vertexBufferSize);
+        vkUnmapMemory(device, m_vertexStagingBufferMemory);
+
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                              m_vertexBuffer, m_vertexBufferMemory);
+
+        // Record copy command (doesn't submit yet)
+        renderer->batchCopyBuffer(m_vertexStagingBuffer, m_vertexBuffer, vertexBufferSize);
+
+        // Create index staging buffer and device buffer
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_indices.size();
+
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_indexStagingBuffer, m_indexStagingBufferMemory);
+
+        vkMapMemory(device, m_indexStagingBufferMemory, 0, indexBufferSize, 0, &data);
+        memcpy(data, m_indices.data(), (size_t)indexBufferSize);
+        vkUnmapMemory(device, m_indexStagingBufferMemory);
+
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                              m_indexBuffer, m_indexBufferMemory);
+
+        // Record copy command (doesn't submit yet)
+        renderer->batchCopyBuffer(m_indexStagingBuffer, m_indexBuffer, indexBufferSize);
+    }
+
+    // ========== CREATE TRANSPARENT BUFFERS (BATCHED) ==========
+    if (m_transparentVertexCount > 0) {
+        // Create transparent vertex staging buffer and device buffer
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_transparentVertices.size();
+
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_transparentVertexStagingBuffer, m_transparentVertexStagingBufferMemory);
+
+        void* data;
+        vkMapMemory(device, m_transparentVertexStagingBufferMemory, 0, vertexBufferSize, 0, &data);
+        memcpy(data, m_transparentVertices.data(), (size_t)vertexBufferSize);
+        vkUnmapMemory(device, m_transparentVertexStagingBufferMemory);
+
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                              m_transparentVertexBuffer, m_transparentVertexBufferMemory);
+
+        // Record copy command (doesn't submit yet)
+        renderer->batchCopyBuffer(m_transparentVertexStagingBuffer, m_transparentVertexBuffer, vertexBufferSize);
+
+        // Create transparent index staging buffer and device buffer
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_transparentIndices.size();
+
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_transparentIndexStagingBuffer, m_transparentIndexStagingBufferMemory);
+
+        vkMapMemory(device, m_transparentIndexStagingBufferMemory, 0, indexBufferSize, 0, &data);
+        memcpy(data, m_transparentIndices.data(), (size_t)indexBufferSize);
+        vkUnmapMemory(device, m_transparentIndexStagingBufferMemory);
+
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                              m_transparentIndexBuffer, m_transparentIndexBufferMemory);
+
+        // Record copy command (doesn't submit yet)
+        renderer->batchCopyBuffer(m_transparentIndexStagingBuffer, m_transparentIndexBuffer, indexBufferSize);
+    }
+
+    // NOTE: Don't clean up staging buffers yet - caller will call cleanupStagingBuffers() after batch submit
+    // NOTE: Don't free CPU-side mesh data yet - we keep it in case of errors
+}
+
+void Chunk::cleanupStagingBuffers(VulkanRenderer* renderer) {
+    VkDevice device = renderer->getDevice();
+
+    // Destroy opaque staging buffers
+    if (m_vertexStagingBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, m_vertexStagingBuffer, nullptr);
+        m_vertexStagingBuffer = VK_NULL_HANDLE;
+    }
+    if (m_vertexStagingBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, m_vertexStagingBufferMemory, nullptr);
+        m_vertexStagingBufferMemory = VK_NULL_HANDLE;
+    }
+
+    if (m_indexStagingBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, m_indexStagingBuffer, nullptr);
+        m_indexStagingBuffer = VK_NULL_HANDLE;
+    }
+    if (m_indexStagingBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, m_indexStagingBufferMemory, nullptr);
+        m_indexStagingBufferMemory = VK_NULL_HANDLE;
+    }
+
+    // Destroy transparent staging buffers
+    if (m_transparentVertexStagingBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, m_transparentVertexStagingBuffer, nullptr);
+        m_transparentVertexStagingBuffer = VK_NULL_HANDLE;
+    }
+    if (m_transparentVertexStagingBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, m_transparentVertexStagingBufferMemory, nullptr);
+        m_transparentVertexStagingBufferMemory = VK_NULL_HANDLE;
+    }
+
+    if (m_transparentIndexStagingBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, m_transparentIndexStagingBuffer, nullptr);
+        m_transparentIndexStagingBuffer = VK_NULL_HANDLE;
+    }
+    if (m_transparentIndexStagingBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, m_transparentIndexStagingBufferMemory, nullptr);
+        m_transparentIndexStagingBufferMemory = VK_NULL_HANDLE;
+    }
+
+    // Free CPU-side mesh data after successful GPU upload
+    if (m_vertexCount > 0) {
+        m_vertices.clear();
+        m_vertices.shrink_to_fit();
+        m_indices.clear();
+        m_indices.shrink_to_fit();
+    }
+
+    if (m_transparentVertexCount > 0) {
+        m_transparentVertices.clear();
+        m_transparentVertices.shrink_to_fit();
+        m_transparentIndices.clear();
+        m_transparentIndices.shrink_to_fit();
     }
 }
 
