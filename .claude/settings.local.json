@@ -49,7 +49,8 @@
       "Bash(src/chunk.cpp)",
       "Bash(git restore:*)",
       "Bash(powershell -Command:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []
