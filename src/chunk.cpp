@@ -1282,10 +1282,22 @@ void Chunk::addMergedQuad(std::vector<Vertex>& vertices, std::vector<uint32_t>& 
     vertices.push_back({v3.x, v3.y, v3.z, cr, cg, cb, ca, u0, v1_uv});
 
     // Add 6 indices (two triangles)
-    indices.push_back(baseIndex + 0);
-    indices.push_back(baseIndex + 1);
-    indices.push_back(baseIndex + 2);
-    indices.push_back(baseIndex + 0);
-    indices.push_back(baseIndex + 2);
-    indices.push_back(baseIndex + 3);
+    // Winding order depends on direction to ensure correct backface culling
+    if (direction == 1) {
+        // Positive direction (front face) - counter-clockwise
+        indices.push_back(baseIndex + 0);
+        indices.push_back(baseIndex + 1);
+        indices.push_back(baseIndex + 2);
+        indices.push_back(baseIndex + 0);
+        indices.push_back(baseIndex + 2);
+        indices.push_back(baseIndex + 3);
+    } else {
+        // Negative direction (back face) - reversed winding
+        indices.push_back(baseIndex + 0);
+        indices.push_back(baseIndex + 2);
+        indices.push_back(baseIndex + 1);
+        indices.push_back(baseIndex + 0);
+        indices.push_back(baseIndex + 3);
+        indices.push_back(baseIndex + 2);
+    }
 }
