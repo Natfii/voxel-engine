@@ -489,16 +489,20 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     }
 }
 
-Chunk* World::getChunkAt(int chunkX, int chunkY, int chunkZ) {
-    // THREAD SAFETY: Shared lock for concurrent reads
-    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
-
+Chunk* World::getChunkAtUnsafe(int chunkX, int chunkY, int chunkZ) {
+    // UNSAFE: No locking - caller must hold m_chunkMapMutex
     // O(1) hash map lookup instead of O(n) linear search
     auto it = m_chunkMap.find(ChunkCoord{chunkX, chunkY, chunkZ});
     if (it != m_chunkMap.end()) {
         return it->second.get();
     }
     return nullptr;
+}
+
+Chunk* World::getChunkAt(int chunkX, int chunkY, int chunkZ) {
+    // THREAD SAFETY: Shared lock for concurrent reads
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+    return getChunkAtUnsafe(chunkX, chunkY, chunkZ);
 }
 
 int World::getBlockAt(float worldX, float worldY, float worldZ) {
@@ -511,6 +515,12 @@ int World::getBlockAt(float worldX, float worldY, float worldZ) {
     }
 
     return chunk->getBlock(coords.localX, coords.localY, coords.localZ);
+}
+
+Chunk* World::getChunkAtWorldPosUnsafe(float worldX, float worldY, float worldZ) {
+    // UNSAFE: No locking - caller must hold m_chunkMapMutex
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+    return getChunkAtUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
 }
 
 Chunk* World::getChunkAtWorldPos(float worldX, float worldY, float worldZ) {
@@ -570,6 +580,10 @@ void World::setBlockMetadataAt(float worldX, float worldY, float worldZ, uint8_t
 }
 
 void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer* renderer) {
+    // THREAD SAFETY: Acquire unique lock for exclusive write access
+    // This prevents race conditions when multiple threads break blocks simultaneously
+    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
     // Check if block is water
     int blockID = getBlockAt(worldX, worldY, worldZ);
     auto& registry = BlockRegistry::instance();
@@ -629,7 +643,7 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
 
     // Update the affected chunk and all adjacent chunks
     // Must regenerate MESH (not just vertex buffer) because face culling needs updating
-    Chunk* affectedChunk = getChunkAtWorldPos(worldX, worldY, worldZ);
+    Chunk* affectedChunk = getChunkAtWorldPosUnsafe(worldX, worldY, worldZ);
     if (affectedChunk) {
         try {
             affectedChunk->generateMesh(this);
@@ -643,13 +657,14 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
 
     // Always update all 6 adjacent chunks (not just on boundaries)
     // This handles cases like breaking grass revealing stone below
+    // Note: Using unsafe version since we already hold unique_lock
     Chunk* neighbors[6] = {
-        getChunkAtWorldPos(worldX - 1.0f, worldY, worldZ),  // -X
-        getChunkAtWorldPos(worldX + 1.0f, worldY, worldZ),  // +X
-        getChunkAtWorldPos(worldX, worldY - 1.0f, worldZ),  // -Y (below)
-        getChunkAtWorldPos(worldX, worldY + 1.0f, worldZ),  // +Y (above)
-        getChunkAtWorldPos(worldX, worldY, worldZ - 1.0f),  // -Z
-        getChunkAtWorldPos(worldX, worldY, worldZ + 1.0f)   // +Z
+        getChunkAtWorldPosUnsafe(worldX - 1.0f, worldY, worldZ),  // -X
+        getChunkAtWorldPosUnsafe(worldX + 1.0f, worldY, worldZ),  // +X
+        getChunkAtWorldPosUnsafe(worldX, worldY - 1.0f, worldZ),  // -Y (below)
+        getChunkAtWorldPosUnsafe(worldX, worldY + 1.0f, worldZ),  // +Y (above)
+        getChunkAtWorldPosUnsafe(worldX, worldY, worldZ - 1.0f),  // -Z
+        getChunkAtWorldPosUnsafe(worldX, worldY, worldZ + 1.0f)   // +Z
     };
 
     // Regenerate mesh and buffer for each unique neighbor chunk
@@ -689,6 +704,10 @@ void World::breakBlock(const glm::ivec3& coords, VulkanRenderer* renderer) {
 }
 
 void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, VulkanRenderer* renderer) {
+    // THREAD SAFETY: Acquire unique lock for exclusive write access
+    // This prevents race conditions when multiple threads place blocks simultaneously
+    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
     // Don't place air blocks (use breakBlock for that)
     if (blockID <= 0) return;
 
@@ -707,7 +726,7 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
 
     // Update the affected chunk and all adjacent chunks
     // Must regenerate MESH (not just vertex buffer) because face culling needs updating
-    Chunk* affectedChunk = getChunkAtWorldPos(worldX, worldY, worldZ);
+    Chunk* affectedChunk = getChunkAtWorldPosUnsafe(worldX, worldY, worldZ);
     if (affectedChunk) {
         try {
             affectedChunk->generateMesh(this);
@@ -720,13 +739,14 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
     }
 
     // Always update all 6 adjacent chunks (not just on boundaries)
+    // Note: Using unsafe version since we already hold unique_lock
     Chunk* neighbors[6] = {
-        getChunkAtWorldPos(worldX - 1.0f, worldY, worldZ),  // -X
-        getChunkAtWorldPos(worldX + 1.0f, worldY, worldZ),  // +X
-        getChunkAtWorldPos(worldX, worldY - 1.0f, worldZ),  // -Y (below)
-        getChunkAtWorldPos(worldX, worldY + 1.0f, worldZ),  // +Y (above)
-        getChunkAtWorldPos(worldX, worldY, worldZ - 1.0f),  // -Z
-        getChunkAtWorldPos(worldX, worldY, worldZ + 1.0f)   // +Z
+        getChunkAtWorldPosUnsafe(worldX - 1.0f, worldY, worldZ),  // -X
+        getChunkAtWorldPosUnsafe(worldX + 1.0f, worldY, worldZ),  // +X
+        getChunkAtWorldPosUnsafe(worldX, worldY - 1.0f, worldZ),  // -Y (below)
+        getChunkAtWorldPosUnsafe(worldX, worldY + 1.0f, worldZ),  // +Y (above)
+        getChunkAtWorldPosUnsafe(worldX, worldY, worldZ - 1.0f),  // -Z
+        getChunkAtWorldPosUnsafe(worldX, worldY, worldZ + 1.0f)   // +Z
     };
 
     // Regenerate mesh and buffer for each unique neighbor chunk

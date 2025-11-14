@@ -333,6 +333,28 @@ public:
     void decorateWorld();
 
 private:
+    /**
+     * @brief Internal chunk lookup without locking (caller must hold lock)
+     *
+     * Used internally by functions that already hold m_chunkMapMutex.
+     * UNSAFE: Caller must ensure proper locking!
+     *
+     * @param chunkX Chunk X coordinate
+     * @param chunkY Chunk Y coordinate
+     * @param chunkZ Chunk Z coordinate
+     * @return Pointer to chunk, or nullptr if not found
+     */
+    Chunk* getChunkAtUnsafe(int chunkX, int chunkY, int chunkZ);
+
+    /**
+     * @brief Internal chunk lookup by world position without locking
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @return Pointer to chunk, or nullptr if not found
+     */
+    Chunk* getChunkAtWorldPosUnsafe(float worldX, float worldY, float worldZ);
+
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
     int m_seed;                          ///< World generation seed
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_chunkMap;  ///< Fast O(1) chunk lookup by coordinates
