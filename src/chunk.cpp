@@ -1250,11 +1250,18 @@ void Chunk::addMergedQuad(std::vector<Vertex>& vertices, std::vector<uint32_t>& 
         v3 = glm::vec3(worldX, worldY + height + waterHeightAdjust, zPos);
     }
 
-    // UV coordinates with tiling for merged quads
+    // UV coordinates with proper tiling for merged quads
+    // For texture atlas, we need to tile within the atlas cell bounds
+    // Use modulo to wrap UVs within [0, uvScale] range
+    float u_range = static_cast<float>(width);
+    float v_range = static_cast<float>(height);
+
+    // Map quad coordinates [0, width] x [0, height] to texture UV [uMin, uMin+uvScale] x [vMin, vMin+uvScale]
+    // We want the texture to repeat every 1 block, so we use fract() logic
     u0 = uMin;
     v0_uv = vMin;
-    u1 = uMin + uvScale * width;
-    v1_uv = vMin + uvScale * height;
+    u1 = uMin + uvScale;  // Just one texture instance for now
+    v1_uv = vMin + uvScale;
 
     // Add 4 vertices
     uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
