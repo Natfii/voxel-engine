@@ -260,8 +260,14 @@ void Chunk::generate(BiomeMap* biomeMap) {
 
                 } else if (worldY < WATER_LEVEL) {
                     // Above terrain but below water level
-                    m_blocks[x][y][z] = BLOCK_WATER;
-                    m_blockMetadata[x][y][z] = 0;  // Source block
+                    // Use ice in cold biomes (temperature < 25), water otherwise
+                    if (biome->temperature < 25) {
+                        m_blocks[x][y][z] = BLOCK_ICE;
+                        m_blockMetadata[x][y][z] = 0;
+                    } else {
+                        m_blocks[x][y][z] = BLOCK_WATER;
+                        m_blockMetadata[x][y][z] = 0;  // Source block
+                    }
                 } else {
                     // Above water level
                     m_blocks[x][y][z] = BLOCK_AIR;

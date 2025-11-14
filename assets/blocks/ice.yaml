@@ -1,0 +1,18 @@
+id: 11
+name: "Ice"
+texture: "ice.png"
+texture_variation: 1.1  # Slight variation
+durability: 3           # Harder than snow but still breakable
+liquid: false           # Solid frozen water
+affected_by_gravity: false
+flammability: 0
+transparency: 0.4       # 40% transparent - can see through ice
+
+# Ice-specific rendering properties
+ice_properties:
+  tint_color: [0.8, 0.9, 1.0]     # Light blue tint (RGB 0-1)
+  slippery: true                   # Players slide on ice (future feature)
+
+# Biome compatibility
+temperature_range: "0-20"   # Only in very cold climates
+moisture_range: "50-100"    # Needs water to freeze

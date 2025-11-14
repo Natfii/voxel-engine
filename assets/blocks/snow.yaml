@@ -1,0 +1,13 @@
+id: 10
+name: "Snow"
+texture: "snow.png"
+texture_variation: 1.2  # Slight variation for natural look
+durability: 1           # Very soft, easy to break
+liquid: false
+affected_by_gravity: false
+flammability: 0
+transparency: 0.0
+
+# Biome compatibility
+temperature_range: "0-25"   # Only in cold climates
+moisture_range: "30-100"    # Needs moisture to form snow

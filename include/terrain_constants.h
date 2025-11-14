@@ -25,7 +25,11 @@ namespace TerrainGeneration {
     constexpr int BLOCK_WATER = 5;               ///< Water block ID (water.yaml)
     constexpr int BLOCK_OAK_LOG = 6;             ///< Oak log block ID (oak log.yaml)
     constexpr int BLOCK_LEAVES = 7;              ///< Leaves block ID (leaves.yaml)
-    constexpr int BLOCK_BEDROCK = 8;             ///< Bedrock block ID (bedrock.yaml)
+    constexpr int BLOCK_SPRUCE_LOG = 8;          ///< Spruce log block ID (spruce log.yaml)
+    constexpr int BLOCK_SPRUCE_LEAVES = 9;       ///< Spruce leaves block ID (spruce leaves.yaml)
+    constexpr int BLOCK_SNOW = 10;               ///< Snow block ID (snow.yaml)
+    constexpr int BLOCK_ICE = 11;                ///< Ice block ID (ice.yaml)
+    constexpr int BLOCK_BEDROCK = 12;            ///< Bedrock block ID (bedrock.yaml)
 
     // Water physics
     constexpr int WATER_LEVEL = 62;              ///< Sea level height in blocks (Y coordinate)
