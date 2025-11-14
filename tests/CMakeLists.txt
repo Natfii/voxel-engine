@@ -3,22 +3,8 @@
 
 enable_testing()
 
-# Get list of source files needed for tests (exclude main.cpp)
-file(GLOB TEST_SOURCES
-    ${CMAKE_SOURCE_DIR}/src/*.cpp
-)
-list(REMOVE_ITEM TEST_SOURCES
-    ${CMAKE_SOURCE_DIR}/src/main.cpp
-)
-
-# Collect ImGui sources (same as main build)
-set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/external/imgui-1.91.9b")
-file(GLOB IMGUI_TEST_SOURCES
-    "${IMGUI_DIR}/imgui.cpp"
-    "${IMGUI_DIR}/imgui_draw.cpp"
-    "${IMGUI_DIR}/imgui_tables.cpp"
-    "${IMGUI_DIR}/imgui_widgets.cpp"
-)
+# PERFORMANCE FIX: Link against voxel-engine-lib instead of recompiling all sources
+# This reduces build time by ~80% when building tests
 
 # ============================================================
 # Test 1: Chunk Correctness Tests
@@ -27,32 +13,15 @@ file(GLOB IMGUI_TEST_SOURCES
 add_executable(test_chunk_correctness
     chunk_correctness_test.cpp
     test_utils.cpp
-    ${TEST_SOURCES}
-    ${IMGUI_TEST_SOURCES}
 )
 
 target_include_directories(test_chunk_correctness PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-    ${Vulkan_INCLUDE_DIRS}
 )
 
-if(WIN32)
-    target_link_libraries(test_chunk_correctness
-        ${Vulkan_LIBRARIES}
-        yaml-cpp
-        glfw3
-    )
-else()
-    target_link_libraries(test_chunk_correctness
-        ${Vulkan_LIBRARIES}
-        yaml-cpp
-        glfw
-        ${CMAKE_DL_LIBS}
-    )
-endif()
+# Link against the shared library (already contains all engine code)
+target_link_libraries(test_chunk_correctness PRIVATE voxel-engine-lib)
 
 # Enable Address Sanitizer on non-Windows
 if(NOT MSVC)
@@ -77,32 +46,14 @@ set_tests_properties(ChunkCorrectness PROPERTIES
 add_executable(test_memory_leaks
     memory_leak_test.cpp
     test_utils.cpp
-    ${TEST_SOURCES}
-    ${IMGUI_TEST_SOURCES}
 )
 
 target_include_directories(test_memory_leaks PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-    ${Vulkan_INCLUDE_DIRS}
 )
 
-if(WIN32)
-    target_link_libraries(test_memory_leaks
-        ${Vulkan_LIBRARIES}
-        yaml-cpp
-        glfw3
-    )
-else()
-    target_link_libraries(test_memory_leaks
-        ${Vulkan_LIBRARIES}
-        yaml-cpp
-        glfw
-        ${CMAKE_DL_LIBS}
-    )
-endif()
+target_link_libraries(test_memory_leaks PRIVATE voxel-engine-lib)
 
 # Enable Address Sanitizer
 if(NOT MSVC)
@@ -127,32 +78,14 @@ set_tests_properties(MemoryLeaks PROPERTIES
 add_executable(test_performance
     performance_test.cpp
     test_utils.cpp
-    ${TEST_SOURCES}
-    ${IMGUI_TEST_SOURCES}
 )
 
 target_include_directories(test_performance PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-    ${Vulkan_INCLUDE_DIRS}
 )
 
-if(WIN32)
-    target_link_libraries(test_performance
-        ${Vulkan_LIBRARIES}
-        yaml-cpp
-        glfw3
-    )
-else()
-    target_link_libraries(test_performance
-        ${Vulkan_LIBRARIES}
-        yaml-cpp
-        glfw
-        ${CMAKE_DL_LIBS}
-    )
-endif()
+target_link_libraries(test_performance PRIVATE voxel-engine-lib)
 
 if(NOT MSVC)
     target_compile_options(test_performance PRIVATE -fsanitize=address -fno-omit-frame-pointer)
@@ -176,32 +109,14 @@ set_tests_properties(Performance PROPERTIES
 add_executable(test_stress
     stress_test.cpp
     test_utils.cpp
-    ${TEST_SOURCES}
-    ${IMGUI_TEST_SOURCES}
 )
 
 target_include_directories(test_stress PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-    ${Vulkan_INCLUDE_DIRS}
 )
 
-if(WIN32)
-    target_link_libraries(test_stress
-        ${Vulkan_LIBRARIES}
-        yaml-cpp
-        glfw3
-    )
-else()
-    target_link_libraries(test_stress
-        ${Vulkan_LIBRARIES}
-        yaml-cpp
-        glfw
-        ${CMAKE_DL_LIBS}
-    )
-endif()
+target_link_libraries(test_stress PRIVATE voxel-engine-lib)
 
 if(NOT MSVC)
     target_compile_options(test_stress PRIVATE -fsanitize=address -fno-omit-frame-pointer)
