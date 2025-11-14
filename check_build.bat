@@ -22,10 +22,10 @@ echo.
 echo [2/5] Checking if tests subdirectory exists in build...
 if not exist "build\tests" (
     echo [ERROR] build\tests directory does not exist!
-    echo This means CMake didn't process the tests.
+    echo This means CMake did not process the tests.
     echo.
     echo Possible causes:
-    echo   1. CMake was run before add_subdirectory(tests) was added
+    echo   1. CMake ran before add_subdirectory^(tests^) was added
     echo   2. CMake cache is stale
     echo.
     echo SOLUTION: Run clean reconfiguration
@@ -78,7 +78,7 @@ echo.
 echo [4/5] Checking CTestTestfile.cmake...
 if not exist "build\tests\CTestTestfile.cmake" (
     echo [ERROR] build\tests\CTestTestfile.cmake not found!
-    echo CMake didn't generate test configuration.
+    echo CMake did not generate test configuration.
     echo.
     echo SOLUTION: Reconfigure CMake
     echo   build.bat --clean
@@ -93,7 +93,7 @@ echo [5/5] Checking if tests are registered...
 findstr /C:"add_test" "build\tests\CTestTestfile.cmake" >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] No tests registered in CTestTestfile.cmake!
-    echo The file exists but has no add_test() calls.
+    echo The file exists but has no add_test^(^) calls.
     echo.
     echo SOLUTION: Reconfigure CMake
     echo   build.bat --clean
