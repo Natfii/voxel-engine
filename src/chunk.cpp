@@ -369,9 +369,13 @@ void Chunk::generateMesh(World* world) {
                 FaceMask mask[WIDTH][HEIGHT];
                 buildFaceMask(mask, axis, direction, sliceIndex, world);
 
+                // Determine mask dimensions for this axis
+                int maskWidth = (axis == 0) ? DEPTH : WIDTH;
+                int maskHeight = (axis == 1) ? DEPTH : HEIGHT;
+
                 // Greedy merge rectangles
-                for (int y = 0; y < HEIGHT; y++) {
-                    for (int x = 0; x < WIDTH; x++) {
+                for (int y = 0; y < maskHeight; y++) {
+                    for (int x = 0; x < maskWidth; x++) {
                         if (mask[x][y].blockID == -1 || mask[x][y].merged) {
                             continue;  // No face or already merged
                         }
@@ -382,8 +386,8 @@ void Chunk::generateMesh(World* world) {
                         uint8_t metadata = mask[x][y].metadata;
 
                         // Greedily expand rectangle
-                        int width = expandRectWidth(mask, x, y, blockID, textureIndex);
-                        int height = expandRectHeight(mask, x, y, width, blockID, textureIndex);
+                        int width = expandRectWidth(mask, x, y, blockID, textureIndex, maskWidth);
+                        int height = expandRectHeight(mask, x, y, width, blockID, textureIndex, maskHeight);
 
                         // Mark rectangle as merged
                         for (int ry = y; ry < y + height; ry++) {
@@ -1008,9 +1012,16 @@ bool Chunk::load(const std::string& worldPath) {
 
 void Chunk::buildFaceMask(FaceMask mask[WIDTH][HEIGHT], int axis, int direction,
                          int sliceIndex, World* world) {
+    // Determine mask dimensions based on axis
+    // Axis 0 (YZ slice): width=DEPTH, height=HEIGHT
+    // Axis 1 (XZ slice): width=WIDTH, height=DEPTH
+    // Axis 2 (XY slice): width=WIDTH, height=HEIGHT
+    int maskWidth = (axis == 0) ? DEPTH : WIDTH;
+    int maskHeight = (axis == 1) ? DEPTH : HEIGHT;
+
     // Initialize mask to "no face"
-    for (int y = 0; y < HEIGHT; y++) {
-        for (int x = 0; x < WIDTH; x++) {
+    for (int y = 0; y < maskHeight; y++) {
+        for (int x = 0; x < maskWidth; x++) {
             mask[x][y] = FaceMask();
         }
     }
@@ -1023,19 +1034,19 @@ void Chunk::buildFaceMask(FaceMask mask[WIDTH][HEIGHT], int axis, int direction,
     static const int dirZ[3][2] = {{0, 0}, {0, 0}, {-1, 1}};
 
     // Iterate through slice
-    for (int y = 0; y < HEIGHT; y++) {
-        for (int x = 0; x < WIDTH; x++) {
+    for (int y = 0; y < maskHeight; y++) {
+        for (int x = 0; x < maskWidth; x++) {
             // Convert 2D slice coordinates to 3D block coordinates
             int bx, by, bz;
-            if (axis == 0) {        // X-axis (YZ slice)
+            if (axis == 0) {        // X-axis (YZ slice): x->Z, y->Y
                 bx = sliceIndex;
                 by = y;
                 bz = x;
-            } else if (axis == 1) { // Y-axis (XZ slice)
+            } else if (axis == 1) { // Y-axis (XZ slice): x->X, y->Z
                 bx = x;
                 by = sliceIndex;
                 bz = y;
-            } else {                // Z-axis (XY slice)
+            } else {                // Z-axis (XY slice): x->X, y->Y
                 bx = x;
                 by = y;
                 bz = sliceIndex;
@@ -1128,11 +1139,11 @@ void Chunk::buildFaceMask(FaceMask mask[WIDTH][HEIGHT], int axis, int direction,
 }
 
 int Chunk::expandRectWidth(const FaceMask mask[WIDTH][HEIGHT], int startX, int startY,
-                          int blockID, int textureIndex) const {
+                          int blockID, int textureIndex, int maskWidth) const {
     int width = 1;
 
     // Expand right while blocks match and aren't merged
-    for (int x = startX + 1; x < WIDTH; x++) {
+    for (int x = startX + 1; x < maskWidth; x++) {
         if (mask[x][startY].blockID != blockID ||
             mask[x][startY].textureIndex != textureIndex ||
             mask[x][startY].merged) {
@@ -1145,11 +1156,11 @@ int Chunk::expandRectWidth(const FaceMask mask[WIDTH][HEIGHT], int startX, int s
 }
 
 int Chunk::expandRectHeight(const FaceMask mask[WIDTH][HEIGHT], int startX, int startY,
-                           int width, int blockID, int textureIndex) const {
+                           int width, int blockID, int textureIndex, int maskHeight) const {
     int height = 1;
 
     // Try to expand upward
-    for (int y = startY + 1; y < HEIGHT; y++) {
+    for (int y = startY + 1; y < maskHeight; y++) {
         // Check entire row matches
         bool rowMatches = true;
         for (int x = startX; x < startX + width; x++) {

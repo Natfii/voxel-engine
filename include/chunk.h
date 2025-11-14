@@ -411,10 +411,11 @@ private:
      * @param startY Starting Y coordinate
      * @param blockID Block type to match
      * @param textureIndex Texture index to match
+     * @param maskWidth Width of the mask
      * @return Width of expanded rectangle
      */
     int expandRectWidth(const FaceMask mask[WIDTH][HEIGHT], int startX, int startY,
-                       int blockID, int textureIndex) const;
+                       int blockID, int textureIndex, int maskWidth) const;
 
     /**
      * @brief Expands rectangle vertically while entire rows match
@@ -424,10 +425,11 @@ private:
      * @param width Width of rectangle (must match for entire row)
      * @param blockID Block type to match
      * @param textureIndex Texture index to match
+     * @param maskHeight Height of the mask
      * @return Height of expanded rectangle
      */
     int expandRectHeight(const FaceMask mask[WIDTH][HEIGHT], int startX, int startY,
-                        int width, int blockID, int textureIndex) const;
+                        int width, int blockID, int textureIndex, int maskHeight) const;
 
     /**
      * @brief Generates quad for merged rectangle
