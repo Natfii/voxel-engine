@@ -31,8 +31,8 @@ endif()
 
 add_test(
     NAME ChunkCorrectness
-    COMMAND test_chunk_correctness
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND $<TARGET_FILE:test_chunk_correctness>
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
 set_tests_properties(ChunkCorrectness PROPERTIES
     TIMEOUT 30
@@ -63,8 +63,8 @@ endif()
 
 add_test(
     NAME MemoryLeaks
-    COMMAND test_memory_leaks
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND $<TARGET_FILE:test_memory_leaks>
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
 set_tests_properties(MemoryLeaks PROPERTIES
     TIMEOUT 120
@@ -94,8 +94,8 @@ endif()
 
 add_test(
     NAME Performance
-    COMMAND test_performance
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND $<TARGET_FILE:test_performance>
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
 set_tests_properties(Performance PROPERTIES
     TIMEOUT 60
@@ -125,8 +125,8 @@ endif()
 
 add_test(
     NAME Stress
-    COMMAND test_stress
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND $<TARGET_FILE:test_stress>
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
 set_tests_properties(Stress PROPERTIES
     TIMEOUT 120
