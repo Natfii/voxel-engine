@@ -134,6 +134,31 @@ set_tests_properties(Stress PROPERTIES
 )
 
 # ============================================================
+# Test 5: Mesh Pooling Performance
+# ============================================================
+
+add_executable(test_mesh_pooling
+    test_mesh_pooling.cpp
+)
+
+target_include_directories(test_mesh_pooling PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_mesh_pooling PRIVATE voxel-engine-lib)
+
+add_test(
+    NAME MeshPooling
+    COMMAND $<TARGET_FILE:test_mesh_pooling>
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(MeshPooling PROPERTIES
+    TIMEOUT 30
+    LABELS "performance;pooling"
+)
+
+# ============================================================
 # Custom test commands
 # ============================================================
 

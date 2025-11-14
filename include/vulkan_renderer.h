@@ -245,6 +245,44 @@ public:
      */
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
 
+    // ========== Batched Buffer Copying ==========
+
+    /**
+     * @brief Begins a batch of buffer copy operations
+     *
+     * All subsequent batchCopyBuffer() calls will be recorded into a single
+     * command buffer. Call submitBufferCopyBatch() to execute all copies.
+     *
+     * Example:
+     *   renderer->beginBufferCopyBatch();
+     *   chunk1->createVertexBufferBatched(renderer);
+     *   chunk2->createVertexBufferBatched(renderer);
+     *   renderer->submitBufferCopyBatch();  // Submit all at once
+     *   chunk1->cleanupStagingBuffers(renderer);
+     *   chunk2->cleanupStagingBuffers(renderer);
+     */
+    void beginBufferCopyBatch();
+
+    /**
+     * @brief Records a buffer copy operation to the batch
+     *
+     * Must be called between beginBufferCopyBatch() and submitBufferCopyBatch().
+     * Does not execute the copy immediately - just records it.
+     *
+     * @param srcBuffer Source buffer
+     * @param dstBuffer Destination buffer
+     * @param size Number of bytes to copy
+     */
+    void batchCopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+
+    /**
+     * @brief Submits all batched buffer copies and waits for completion
+     *
+     * Executes all buffer copies recorded since beginBufferCopyBatch().
+     * Blocks until GPU completes all copies.
+     */
+    void submitBufferCopyBatch();
+
     // ========== Command Buffer Utilities ==========
 
     /**
@@ -520,4 +558,7 @@ private:
     uint32_t m_currentFrame = 0;
     uint32_t m_imageIndex = 0;
     bool m_framebufferResized = false;
+
+    // Batched buffer copying
+    VkCommandBuffer m_batchCommandBuffer = VK_NULL_HANDLE;
 };

@@ -10,6 +10,7 @@
 #include <vector>
 #include <array>
 #include <memory>
+#include <string>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include "voxelmath.h"
@@ -177,6 +178,27 @@ public:
     void createVertexBuffer(VulkanRenderer* renderer);
 
     /**
+     * @brief Creates Vulkan vertex and index buffers in batched mode
+     *
+     * Like createVertexBuffer(), but uses batched buffer copying for better performance.
+     * Must be called between renderer->beginBufferCopyBatch() and renderer->submitBufferCopyBatch().
+     * After batch submission, call cleanupStagingBuffers() to clean up temporary staging buffers.
+     *
+     * @param renderer Vulkan renderer for buffer creation
+     */
+    void createVertexBufferBatched(VulkanRenderer* renderer);
+
+    /**
+     * @brief Cleans up staging buffers after batched upload completes
+     *
+     * Must be called after renderer->submitBufferCopyBatch() completes.
+     * Destroys temporary staging buffers created by createVertexBufferBatched().
+     *
+     * @param renderer Vulkan renderer that created the buffers
+     */
+    void cleanupStagingBuffers(VulkanRenderer* renderer);
+
+    /**
      * @brief Destroys Vulkan buffers before cleanup
      *
      * Must be called before renderer shutdown.
@@ -288,6 +310,34 @@ public:
      */
     void setBlockMetadata(int x, int y, int z, uint8_t metadata);
 
+    // ========== Chunk Persistence ==========
+
+    /**
+     * @brief Saves chunk data to disk in binary format
+     *
+     * Creates a binary file containing all block and metadata information.
+     * File format:
+     * - Header (16 bytes): version (4), chunkX (4), chunkY (4), chunkZ (4)
+     * - Block data (32 KB): 32x32x32 block IDs
+     * - Metadata (32 KB): 32x32x32 metadata bytes
+     * Total: ~64 KB per chunk
+     *
+     * @param worldPath Path to world directory (e.g., "worlds/world_name")
+     * @return True if save succeeded, false on error
+     */
+    bool save(const std::string& worldPath) const;
+
+    /**
+     * @brief Loads chunk data from disk
+     *
+     * Reads binary chunk file and populates block and metadata arrays.
+     * Does not regenerate mesh - caller must call generateMesh() after loading.
+     *
+     * @param worldPath Path to world directory
+     * @return True if load succeeded, false if file doesn't exist or is corrupted
+     */
+    bool load(const std::string& worldPath);
+
     // ========== Chunk Position ==========
 
     /**
@@ -349,6 +399,16 @@ private:
     VkDeviceMemory m_transparentIndexBufferMemory; ///< Index buffer memory (transparent)
     uint32_t m_transparentVertexCount;            ///< Number of vertices (transparent)
     uint32_t m_transparentIndexCount;             ///< Number of indices (transparent)
+
+    // ========== Staging Buffers (for batched uploads) ==========
+    VkBuffer m_vertexStagingBuffer;               ///< Staging buffer for opaque vertices
+    VkDeviceMemory m_vertexStagingBufferMemory;   ///< Staging buffer memory (opaque vertices)
+    VkBuffer m_indexStagingBuffer;                ///< Staging buffer for opaque indices
+    VkDeviceMemory m_indexStagingBufferMemory;    ///< Staging buffer memory (opaque indices)
+    VkBuffer m_transparentVertexStagingBuffer;    ///< Staging buffer for transparent vertices
+    VkDeviceMemory m_transparentVertexStagingBufferMemory; ///< Staging buffer memory (transparent vertices)
+    VkBuffer m_transparentIndexStagingBuffer;     ///< Staging buffer for transparent indices
+    VkDeviceMemory m_transparentIndexStagingBufferMemory;  ///< Staging buffer memory (transparent indices)
 
     // ========== Culling Data ==========
     glm::vec3 m_minBounds;                  ///< AABB minimum corner (world space)

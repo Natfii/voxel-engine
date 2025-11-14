@@ -43,7 +43,14 @@
       "Bash(exit:*)",
       "Bash(./test_performance.exe:*)",
       "Bash(./tests/Release/test_performance.exe:*)",
-      "Bash(./build/tests/Release/test_performance.exe)"
+      "Bash(./build/tests/Release/test_performance.exe)",
+      "Bash(./build/tests/Release/test_mesh_pooling.exe:*)",
+      "Bash(ping:*)",
+      "Bash(src/chunk.cpp)",
+      "Bash(git restore:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(python:*)",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []
