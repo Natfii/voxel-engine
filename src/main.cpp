@@ -572,7 +572,7 @@ int main() {
         std::cout << "Entering main loop..." << std::endl;
 
         while (!glfwWindowShouldClose(window)) {
-            float currentFrame = glfwGetTime();
+            float currentFrame = static_cast<float>(glfwGetTime());
             deltaTime = currentFrame - lastFrame;
             lastFrame = currentFrame;
 
