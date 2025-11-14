@@ -25,6 +25,11 @@ TEST(ChunkLoadUnloadCycles) {
 
     Chunk::initNoise(42);
 
+    // Create World once outside the loop to avoid recreating TreeGenerator 100 times
+    // This is more realistic - in the real game, we don't destroy/recreate the world constantly
+    World world(3, 2, 3);
+    world.generateWorld();
+
     for (int cycle = 0; cycle < 100; cycle++) {
         // Create and destroy chunk
         {
@@ -37,9 +42,7 @@ TEST(ChunkLoadUnloadCycles) {
             c.setBlock(10, 10, 10, 3);
             c.setBlockMetadata(15, 15, 15, 42);
 
-            // Generate mesh
-            World world(3, 2, 3);
-            world.generateWorld();
+            // Generate mesh using persistent world
             c.generateMesh(&world);
         } // Chunk destroyed here
 

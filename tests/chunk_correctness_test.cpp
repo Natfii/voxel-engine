@@ -88,7 +88,8 @@ TEST(ChunkStateTransitions) {
 
     // 2. Generation fills blocks
     {
-        Chunk c(5, 5, 5);
+        // Use Y=0 to ensure chunk is at ground level and contains terrain
+        Chunk c(0, 0, 0);
         MockBiomeMap biomeMap;
         c.generate(reinterpret_cast<class BiomeMap*>(&biomeMap));
 
@@ -110,7 +111,8 @@ TEST(ChunkStateTransitions) {
 
     // 3. Mesh generation doesn't crash
     {
-        Chunk c(5, 5, 5);
+        // Use Y=0 to ensure chunk has actual terrain to mesh
+        Chunk c(0, 0, 0);
         MockBiomeMap biomeMap;
         c.generate(reinterpret_cast<class BiomeMap*>(&biomeMap));
 
