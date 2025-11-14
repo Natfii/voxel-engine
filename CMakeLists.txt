@@ -137,5 +137,8 @@ add_custom_command(TARGET voxel-engine POST_BUILD
     COMMENT "Copying documentation to build directory"
 )
 
+# Enable testing support (MUST be in root CMakeLists.txt)
+enable_testing()
+
 # Add tests subdirectory
 add_subdirectory(tests)
