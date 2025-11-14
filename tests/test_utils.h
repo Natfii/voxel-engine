@@ -14,6 +14,8 @@
 #include <string>
 #include <cstdlib>
 #include "../include/biome_map.h"
+#include "../include/biome_system.h"
+#include "../include/block_system.h"
 
 // ============================================================
 // Test Assertion Macros
@@ -123,7 +125,44 @@ inline void register_test(const std::string& name, void (*fn)()) {
     all_tests.push_back({name, fn});
 }
 
+// ============================================================
+// Test Initialization
+// ============================================================
+
+inline void init_test_environment() {
+    // Load biomes (required for World creation)
+    std::cout << "Initializing test environment...\n";
+    std::cout << "Loading biomes from: assets/biomes\n";
+
+    if (!BiomeRegistry::getInstance().loadBiomes("assets/biomes")) {
+        throw std::runtime_error("Failed to load biomes! Make sure assets/biomes directory exists.");
+    }
+
+    std::cout << "Loaded " << BiomeRegistry::getInstance().getBiomeCount() << " biomes\n";
+
+    // Load blocks (required for rendering and world generation)
+    std::cout << "Loading block types from: assets/blocks\n";
+
+    // BlockRegistry needs a VulkanRenderer for texture loading, but tests use mock renderer
+    // Pass nullptr - blocks will load without textures (which is fine for logic tests)
+    if (!BlockRegistry::instance().loadBlocks("assets/blocks", nullptr)) {
+        throw std::runtime_error("Failed to load blocks! Make sure assets/blocks directory exists.");
+    }
+
+    std::cout << "Loaded " << BlockRegistry::instance().count() << " block types\n";
+    std::cout << "Test environment initialized successfully\n\n";
+}
+
 inline void run_all_tests() {
+    // Initialize test environment first (load biomes, blocks, etc.)
+    try {
+        init_test_environment();
+    } catch (const std::exception& e) {
+        std::cerr << "FATAL: Test environment initialization failed: " << e.what() << "\n";
+        std::cerr << "Make sure you run tests from the project root directory.\n";
+        exit(1);
+    }
+
     for (const auto& [name, fn] : all_tests) {
         TestResult result;
         result.name = name;

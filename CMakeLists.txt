@@ -50,29 +50,47 @@ else()
     include_directories(${Vulkan_INCLUDE_DIRS})
 endif()
 
-file(GLOB_RECURSE SOURCES src/*.cpp)
+# PERFORMANCE FIX: Create a library for common code to avoid recompiling for tests
+# This reduces build time from 5x to 1x when tests are enabled
+file(GLOB_RECURSE ENGINE_SOURCES src/*.cpp)
+list(REMOVE_ITEM ENGINE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
 
-add_executable(voxel-engine ${SOURCES} ${IMGUI_SOURCES})
+# Create shared library with all engine code (except main.cpp)
+add_library(voxel-engine-lib STATIC ${ENGINE_SOURCES} ${IMGUI_SOURCES})
 
-# Platform-specific linking
+target_include_directories(voxel-engine-lib PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/external
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+    ${Vulkan_INCLUDE_DIRS}
+)
+
+# Platform-specific includes for library
 if(WIN32)
-    target_link_libraries(voxel-engine
+    target_include_directories(voxel-engine-lib PUBLIC
+        ${CMAKE_SOURCE_DIR}/external/glfw-3.4/include
+    )
+endif()
+
+# Link libraries to the shared library
+if(WIN32)
+    target_link_libraries(voxel-engine-lib PUBLIC
         ${Vulkan_LIBRARIES}
         glfw3
         yaml-cpp
     )
 else()
-    # Linux
     if(glfw3_FOUND)
-        target_link_libraries(voxel-engine
+        target_link_libraries(voxel-engine-lib PUBLIC
             ${Vulkan_LIBRARIES}
             glfw
             yaml-cpp
             ${CMAKE_DL_LIBS}
         )
     else()
-        # Direct linking when package config not available
-        target_link_libraries(voxel-engine
+        target_link_libraries(voxel-engine-lib PUBLIC
             ${Vulkan_LIBRARIES}
             -lglfw
             yaml-cpp
@@ -80,6 +98,11 @@ else()
         )
     endif()
 endif()
+
+# Main executable just links against the library
+add_executable(voxel-engine src/main.cpp)
+target_link_libraries(voxel-engine PRIVATE voxel-engine-lib)
+
 
 # Copy assets directory to build output directory
 # (includes blocks, biomes, textures, and all subdirectories)
@@ -113,6 +136,9 @@ add_custom_command(TARGET voxel-engine POST_BUILD
         $<TARGET_FILE_DIR:voxel-engine>/docs
     COMMENT "Copying documentation to build directory"
 )
+
+# Enable testing support (MUST be in root CMakeLists.txt)
+enable_testing()
 
 # Add tests subdirectory
 add_subdirectory(tests)

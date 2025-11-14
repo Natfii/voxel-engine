@@ -349,6 +349,12 @@ void World::createBuffers(VulkanRenderer* renderer) {
             chunk->createVertexBuffer(renderer);
         }
     }
+
+    // PERFORMANCE FIX: After all buffer uploads are submitted, wait once for GPU to finish
+    // This is much faster than waiting after each individual buffer upload (old approach)
+    // With fence-based approach in endSingleTimeCommands(), this ensures all uploads complete
+    // before we return from world initialization
+    vkQueueWaitIdle(renderer->getGraphicsQueue());
 }
 
 void World::cleanup(VulkanRenderer* renderer) {
@@ -484,6 +490,9 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
 }
 
 Chunk* World::getChunkAt(int chunkX, int chunkY, int chunkZ) {
+    // THREAD SAFETY: Shared lock for concurrent reads
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
     // O(1) hash map lookup instead of O(n) linear search
     auto it = m_chunkMap.find(ChunkCoord{chunkX, chunkY, chunkZ});
     if (it != m_chunkMap.end()) {

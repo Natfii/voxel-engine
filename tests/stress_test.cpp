@@ -202,6 +202,12 @@ TEST(MetadataStress) {
 
     std::cout << "  Setting and checking 10000 metadata values...\n";
 
+    // Track the last value written to each position
+    std::unordered_map<uint32_t, uint8_t> lastValues;
+    auto makeKey = [](int x, int y, int z) -> uint32_t {
+        return (x << 10) | (y << 5) | z;
+    };
+
     // Set lots of metadata
     for (int i = 0; i < 10000; i++) {
         int x = (i * 7) % 32;
@@ -210,20 +216,22 @@ TEST(MetadataStress) {
         uint8_t value = i % 256;
 
         c.setBlockMetadata(x, y, z, value);
+        lastValues[makeKey(x, y, z)] = value;  // Track last write
     }
 
-    // Verify a sample
-    for (int i = 0; i < 100; i++) {
-        int x = (i * 7) % 32;
-        int y = (i * 11) % 32;
-        int z = (i * 13) % 32;
-        uint8_t expected = i % 256;
+    // Verify all unique positions have correct values
+    int verified = 0;
+    for (const auto& [key, expected] : lastValues) {
+        int x = (key >> 10) & 0x1F;
+        int y = (key >> 5) & 0x1F;
+        int z = key & 0x1F;
 
         uint8_t actual = c.getBlockMetadata(x, y, z);
         ASSERT_EQ(actual, expected);
+        verified++;
     }
 
-    std::cout << "✓ Metadata stress test passed\n";
+    std::cout << "✓ Metadata stress test passed (verified " << verified << " unique positions)\n";
 }
 
 // ============================================================

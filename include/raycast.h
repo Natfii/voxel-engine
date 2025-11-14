@@ -16,6 +16,6 @@ struct RaycastHit {
 class Raycast {
 public:
     // Cast a ray from origin in direction, returns first solid block hit
-    // maxDistance is in world units (default 5 blocks = 2.5 units)
-    static RaycastHit castRay(World* world, const glm::vec3& origin, const glm::vec3& direction, float maxDistance = 2.5f);
+    // maxDistance is in world units (default 5 blocks = 5.0 units, blocks are 1.0 units)
+    static RaycastHit castRay(World* world, const glm::vec3& origin, const glm::vec3& direction, float maxDistance = 5.0f);
 };
