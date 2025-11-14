@@ -546,7 +546,7 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
     if (chunkX < -halfWidth || chunkX >= halfWidth ||
         chunkY < 0 || chunkY >= m_height ||
         chunkZ < -halfDepth || chunkZ >= halfDepth) {
-        Logger::warn() << "Attempted to add out-of-bounds chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
+        Logger::warning() << "Attempted to add out-of-bounds chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
         return false;
     }
 
@@ -557,7 +557,7 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
 
     // Check for duplicates
     if (m_chunkMap.find(coord) != m_chunkMap.end()) {
-        Logger::warn() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") already exists, discarding streamed chunk";
+        Logger::warning() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") already exists, discarding streamed chunk";
         return false;
     }
 

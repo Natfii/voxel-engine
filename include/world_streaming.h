@@ -36,28 +36,13 @@
 #include <chrono>
 #include <glm/glm.hpp>
 
+// Need full ChunkCoord definition for hash function in unordered_set
+#include "world.h"
+
 // Forward declarations
-class World;
 class Chunk;
 class VulkanRenderer;
 class BiomeMap;
-struct ChunkCoord;  // From world.h
-
-/**
- * @brief Hash function for ChunkCoord to enable use in unordered_set
- */
-namespace std {
-    template<>
-    struct hash<ChunkCoord> {
-        size_t operator()(const ChunkCoord& coord) const {
-            // Cantor pairing function variation for 3D coordinates
-            size_t h1 = hash<int>()(coord.x);
-            size_t h2 = hash<int>()(coord.y);
-            size_t h3 = hash<int>()(coord.z);
-            return h1 ^ (h2 << 1) ^ (h3 << 2);
-        }
-    };
-}
 
 /**
  * @brief Chunk loading request with priority

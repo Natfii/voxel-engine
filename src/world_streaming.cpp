@@ -35,7 +35,7 @@ WorldStreaming::~WorldStreaming() {
 void WorldStreaming::start(int numWorkers) {
     // Don't start if already running
     if (m_running.load()) {
-        Logger::warn() << "WorldStreaming already running";
+        Logger::warning() << "WorldStreaming already running";
         return;
     }
 
@@ -199,7 +199,7 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
                                    << ") - Vertices: " << vertexCount;
                     m_totalChunksLoaded++;
                 } else {
-                    Logger::warn() << "Failed to integrate chunk (" << chunkX << ", "
+                    Logger::warning() << "Failed to integrate chunk (" << chunkX << ", "
                                   << chunkY << ", " << chunkZ << ") - duplicate or out of bounds";
                 }
             } catch (const std::exception& e) {
@@ -411,7 +411,7 @@ void WorldStreaming::trackFailedChunk(int chunkX, int chunkY, int chunkZ, const 
             failed.lastAttempt = std::chrono::steady_clock::now();
             failed.errorMessage = errorMsg;
 
-            Logger::warn() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+            Logger::warning() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                           << ") failed " << failed.failureCount << " times. Last error: " << errorMsg;
             return;
         }
@@ -425,7 +425,7 @@ void WorldStreaming::trackFailedChunk(int chunkX, int chunkY, int chunkZ, const 
     failed.errorMessage = errorMsg;
     m_failedChunks.push_back(failed);
 
-    Logger::warn() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+    Logger::warning() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                   << ") failed to generate: " << errorMsg;
 }
 

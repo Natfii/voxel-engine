@@ -229,9 +229,10 @@ int main() {
         int worldWidth = config.getInt("World", "world_width", 12);
         int worldDepth = config.getInt("World", "world_depth", 12);
 
-        // World height is hardcoded as near-infinite to match Minecraft's horizontal infinite feel
-        // See TerrainGeneration::WORLD_HEIGHT_CHUNKS for the constant
-        const int worldHeight = TerrainGeneration::WORLD_HEIGHT_CHUNKS;
+        // World height: default 3 chunks (96 blocks) for fast startup
+        // Can be increased in config.ini for taller worlds
+        // Note: Streaming system can load additional chunks on-demand
+        int worldHeight = config.getInt("World", "world_height", 3);
 
         // Loading stage 1: Block registry (10%)
         loadingProgress = 0.05f;
@@ -307,117 +308,35 @@ int main() {
         loadingMessage = "Finding safe spawn location";
         renderLoadingScreen();
 
-        // Find a safe spawn location - search in expanding spiral if needed
+        // Simple spawn logic: Start at (0, 0, 0) and search upward for the surface
         float spawnX = 0.0f;
         float spawnZ = 0.0f;
         int spawnGroundY = -1;
-        const int WATER_LEVEL = 62;  // From terrain_constants.h
 
-        auto isSafeSpawn = [&](float x, float z, int groundY) -> bool {
-            // Must be above water
-            if (groundY < WATER_LEVEL) return false;
+        std::cout << "Finding spawn at (0, 0, 0)..." << std::endl;
 
-            // CRITICAL: Verify ground is actually solid (not floating terrain)
-            // Check at least 3 blocks below ground are solid
-            for (int dy = -1; dy >= -3; dy--) {
-                if (groundY + dy < 0) break;  // Hit bedrock equivalent
-                int blockBelow = world.getBlockAt(x, static_cast<float>(groundY + dy), z);
-                if (blockBelow == 0) return false;  // Gap below - floating terrain!
-            }
+        // Search upward from Y=0 to find the SURFACE (last solid block before air)
+        const int MAX_WORLD_HEIGHT = worldHeight * 32;  // Convert chunks to blocks
+        for (int y = 0; y < MAX_WORLD_HEIGHT - 1; y++) {
+            int currentBlock = world.getBlockAt(0.0f, static_cast<float>(y), 0.0f);
+            int aboveBlock = world.getBlockAt(0.0f, static_cast<float>(y + 1), 0.0f);
 
-            // Check for 3 blocks of clear space above ground
-            for (int dy = 1; dy <= 3; dy++) {
-                int blockAbove = world.getBlockAt(x, static_cast<float>(groundY + dy), z);
-                if (blockAbove != 0) return false;  // Not air - suffocation risk
-            }
-
-            // Check surrounding area is relatively flat (within 3 blocks)
-            for (int dx = -1; dx <= 1; dx++) {
-                for (int dz = -1; dz <= 1; dz++) {
-                    if (dx == 0 && dz == 0) continue;
-                    float checkX = x + dx;
-                    float checkZ = z + dz;
-
-                    // Find ground height at this position
-                    int terrainHeight = world.getBiomeMap()->getTerrainHeightAt(checkX, checkZ);
-                    int neighborGroundY = terrainHeight;
-                    for (int y = terrainHeight; y >= groundY - 5 && y >= 0; y--) {
-                        int blockID = world.getBlockAt(checkX, static_cast<float>(y), checkZ);
-                        if (blockID != 0 && blockID != 5) {  // Not air, not water
-                            neighborGroundY = y;
-                            break;
-                        }
-                    }
-
-                    // Too steep if difference > 3 blocks
-                    if (std::abs(neighborGroundY - groundY) > 3) return false;
-                }
-            }
-
-            return true;
-        };
-
-        // Search for safe spawn in expanding spiral
-        bool foundSafeSpawn = false;
-        const int MAX_SEARCH_RADIUS = 50;  // Search up to 50 blocks away
-
-        for (int radius = 0; radius <= MAX_SEARCH_RADIUS && !foundSafeSpawn; radius++) {
-            for (int angle = 0; angle < 360 && !foundSafeSpawn; angle += 45) {
-                float testX = radius * cos(angle * 3.14159f / 180.0f);
-                float testZ = radius * sin(angle * 3.14159f / 180.0f);
-
-                // Get terrain height at this position
-                int terrainHeight = world.getBiomeMap()->getTerrainHeightAt(testX, testZ);
-
-                // Find solid ground
-                int testGroundY = terrainHeight;
-                for (int y = terrainHeight; y >= std::max(0, terrainHeight - 10); y--) {
-                    int blockID = world.getBlockAt(testX, static_cast<float>(y), testZ);
-                    if (blockID != 0 && blockID != 5) {  // Solid block (not air, not water)
-                        testGroundY = y;
-
-                        // Test if this is a safe spawn
-                        if (isSafeSpawn(testX, testZ, testGroundY)) {
-                            spawnX = testX;
-                            spawnZ = testZ;
-                            spawnGroundY = testGroundY;
-                            foundSafeSpawn = true;
-                            break;
-                        }
-                    }
-                }
+            // Found surface: current is solid (not air/water) AND above is air
+            if ((currentBlock != 0 && currentBlock != 5) && aboveBlock == 0) {
+                spawnGroundY = y;
+                std::cout << "Found surface at Y=" << y << " (block ID: " << currentBlock << ")" << std::endl;
+                break;
             }
         }
 
-        // Fallback if no safe spawn found (should be rare with proper terrain)
-        if (!foundSafeSpawn) {
-            std::cout << "WARNING: Could not find safe spawn in radius, searching at origin..." << std::endl;
-            spawnX = 0.0f;
-            spawnZ = 0.0f;
-
-            // Get terrain height from biome map (works with any world height)
-            int terrainHeight = world.getBiomeMap()->getTerrainHeightAt(0.0f, 0.0f);
-
-            // Find actual ground at origin by searching downward from terrain height
-            spawnGroundY = terrainHeight;
-            for (int y = terrainHeight; y >= std::max(0, terrainHeight - 20); y--) {
-                int blockID = world.getBlockAt(0.0f, static_cast<float>(y), 0.0f);
-                if (blockID != 0 && blockID != 5) {  // Solid block (not air/water)
-                    spawnGroundY = y;
-                    break;
-                }
-            }
-
-            // If still no ground found, emergency fallback uses terrain height
-            if (spawnGroundY < 0 || world.getBlockAt(0.0f, static_cast<float>(spawnGroundY), 0.0f) == 0) {
-                std::cout << "CRITICAL: No ground found anywhere, emergency spawn at terrain height Y=" << terrainHeight << std::endl;
-                spawnGroundY = terrainHeight;
-            }
+        // Emergency fallback if no surface found (shouldn't happen with proper terrain)
+        if (spawnGroundY < 0) {
+            std::cout << "WARNING: No surface found, using Y=64 as fallback" << std::endl;
+            spawnGroundY = 64;
         }
 
-        // Convert to world coordinates with eye height (feet position, not eye position)
-        // Player constructor expects feet position, so don't add eye height
-        float spawnY = static_cast<float>(spawnGroundY + 1);  // 1 block above ground (feet position)
+        // Spawn 2 blocks above the surface (feet position)
+        float spawnY = static_cast<float>(spawnGroundY + 2);
 
         // Debug: Check blocks around spawn
         std::cout << "Blocks at spawn location:" << std::endl;
@@ -429,9 +348,8 @@ int main() {
                       << (dy == 1 ? " <- FEET" : "") << std::endl;
         }
 
-        std::cout << "Safe spawn found at (" << spawnX << ", " << spawnY << ", " << spawnZ
-                  << ") - ground: Y=" << spawnGroundY << " (searched radius: "
-                  << (foundSafeSpawn ? "found" : "fallback") << ")" << std::endl;
+        std::cout << "Spawn at (" << spawnX << ", " << spawnY << ", " << spawnZ
+                  << ") - surface Y=" << spawnGroundY << std::endl;
 
         // Loading stage 10: Spawning player (95%)
         loadingProgress = 0.95f;
