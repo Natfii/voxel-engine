@@ -457,6 +457,7 @@ private:
 
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
     int m_seed;                          ///< World generation seed
+    std::string m_worldName;             ///< World name (extracted from save path)
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_chunkMap;  ///< Fast O(1) chunk lookup by coordinates
     std::vector<Chunk*> m_chunks;  ///< All chunks for iteration (does not own memory)
 

@@ -96,6 +96,26 @@ public:
      */
     bool isCameraUnderwater() const { return m_cameraUnderwater; }
 
+    /**
+     * @brief Saves player state to disk
+     *
+     * Saves position, rotation, velocity, and other state to player.dat file
+     *
+     * @param worldPath Path to world directory
+     * @return True if save succeeded, false on error
+     */
+    bool savePlayerState(const std::string& worldPath) const;
+
+    /**
+     * @brief Loads player state from disk
+     *
+     * Loads position, rotation, velocity, and other state from player.dat file
+     *
+     * @param worldPath Path to world directory
+     * @return True if load succeeded, false if file doesn't exist
+     */
+    bool loadPlayerState(const std::string& worldPath);
+
     // ========== Public Camera State ==========
     // Public for easy access from rendering and gameplay code
 

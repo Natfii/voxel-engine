@@ -1,0 +1,15 @@
+id: 12
+name: "Bedrock"
+texture: "bedrock.png"
+durability: -1  # Unbreakable
+liquid: false
+affected_by_gravity: false
+flammability: 0
+transparency: 0.0
+
+# Bedrock color fallback (dark grey) if texture not found
+# Add bedrock.png texture file for proper appearance
+
+# Biome compatibility
+temperature_range: "0-100"  # Universal - spawns at world bottom
+moisture_range: "0-100"     # Universal - spawns at world bottom

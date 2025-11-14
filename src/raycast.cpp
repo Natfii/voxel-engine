@@ -9,6 +9,11 @@ RaycastHit Raycast::castRay(World* world, const glm::vec3& origin, const glm::ve
     result.hit = false;
     result.distance = 0.0f;
 
+    // Null pointer check - return empty result if world is null
+    if (world == nullptr) {
+        return result;
+    }
+
     // Normalize direction
     glm::vec3 dir = glm::normalize(direction);
 
@@ -24,10 +29,12 @@ RaycastHit Raycast::castRay(World* world, const glm::vec3& origin, const glm::ve
     );
 
     // Delta distance: how far we travel along the ray to cross one voxel
+    // Use epsilon to prevent divide-by-zero crashes when ray is axis-aligned
+    const float epsilon = 0.0001f;
     glm::vec3 deltaDist(
-        std::abs(1.0f / dir.x),
-        std::abs(1.0f / dir.y),
-        std::abs(1.0f / dir.z)
+        std::abs(1.0f / std::max(std::abs(dir.x), epsilon)),
+        std::abs(1.0f / std::max(std::abs(dir.y), epsilon)),
+        std::abs(1.0f / std::max(std::abs(dir.z), epsilon))
     );
 
     // Current voxel position (in block space, where 1 block = 1.0 units)

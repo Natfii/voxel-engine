@@ -1,0 +1,48 @@
+# Winter Forest Biome
+# Cold forest with snow-covered ground and spruce trees
+
+# Required properties
+name: "Winter Forest"
+temperature: 15         # Cold
+moisture: 65            # Moderate-high moisture (snow)
+age: 50                 # Moderate terrain roughness
+activity: 45            # Moderate structure spawning
+
+# Vegetation
+trees_spawn: true       # Spruce trees
+tree_density: 60        # Moderate forest density
+vegetation_density: 20  # Low undergrowth (snow coverage)
+
+# Spawning
+spawn_location: "AboveGround"
+lowest_y: 55
+biome_rarity_weight: 50  # Moderately common
+river_compatible: true   # Rivers can exist (may freeze at edges)
+underwater_biome: false
+
+# Primary blocks
+primary_surface_block: 10  # Snow
+primary_stone_block: 1     # Stone
+primary_log_block: 8       # Spruce log
+primary_leave_block: 9     # Spruce leaves
+
+# Block requirements
+required_blocks: "8,9,10"  # Must have spruce logs, leaves, and snow
+blacklisted_blocks: ""
+
+# Structures
+required_structures: ""
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: true
+
+# Weather
+primary_weather: "snow"
+blacklisted_weather: ""  # Can have all weather (snow, clear, etc.)
+
+# Atmosphere
+fog_color: "210,225,240"  # Light blue-grey from snow and evergreens
+
+# Ore distribution (normal)
+ore_spawn_rates: "coal:1.0,iron:1.0,gold:1.0"

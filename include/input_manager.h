@@ -5,6 +5,7 @@
 class InputManager {
 public:
     enum class Context {
+        MAIN_MENU,   // Main menu - before game starts
         GAMEPLAY,    // Normal gameplay - all controls enabled
         MENU,        // Pause menu open - gameplay controls disabled
         CONSOLE,     // Console open - gameplay controls disabled

@@ -1,0 +1,48 @@
+# Ice Tundra Biome
+# Frozen wasteland with snow-covered ground, ice instead of water, no trees
+
+# Required properties
+name: "Ice Tundra"
+temperature: 5          # Super cold
+moisture: 50            # Moderate moisture (snow)
+age: 80                 # Very flat, ancient terrain
+activity: 15            # Very low structure spawning
+
+# Vegetation
+trees_spawn: false      # No trees in ice tundra
+tree_density: 0
+vegetation_density: 0   # Barren landscape
+
+# Spawning
+spawn_location: "AboveGround"
+lowest_y: 55
+biome_rarity_weight: 30  # Uncommon biome
+river_compatible: true   # Rivers become ice
+underwater_biome: false
+
+# Primary blocks
+primary_surface_block: 10  # Snow
+primary_stone_block: 1     # Stone
+primary_log_block: -1      # No logs (no trees)
+primary_leave_block: -1    # No leaves (no trees)
+
+# Block requirements
+required_blocks: "10,11"   # Must have snow and ice
+blacklisted_blocks: "5"    # No water (ice only)
+
+# Structures
+required_structures: ""
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: true
+
+# Weather
+primary_weather: "snow"
+blacklisted_weather: "rain"  # Too cold for rain, only snow
+
+# Atmosphere
+fog_color: "200,220,255"  # Cold blue-white fog
+
+# Ore distribution (normal)
+ore_spawn_rates: "coal:1.0,iron:1.0,gold:1.0"

@@ -29,6 +29,8 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_set>
+#include <filesystem>
+#include <fstream>
 
 // ========== WORLD GENERATION CONFIGURATION ==========
 
@@ -501,7 +503,11 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
 }
 
 Chunk* World::getChunkAtUnsafe(int chunkX, int chunkY, int chunkZ) {
-    // UNSAFE: No locking - caller must hold m_chunkMapMutex
+    // ============================================================================
+    // WARNING: UNSAFE - NO LOCKING!
+    // Caller MUST hold m_chunkMapMutex (shared or unique lock) before calling!
+    // Calling this without holding the lock will cause race conditions and crashes!
+    // ============================================================================
     // O(1) hash map lookup instead of O(n) linear search
     auto it = m_chunkMap.find(ChunkCoord{chunkX, chunkY, chunkZ});
     if (it != m_chunkMap.end()) {
@@ -529,7 +535,11 @@ int World::getBlockAt(float worldX, float worldY, float worldZ) {
 }
 
 Chunk* World::getChunkAtWorldPosUnsafe(float worldX, float worldY, float worldZ) {
-    // UNSAFE: No locking - caller must hold m_chunkMapMutex
+    // ============================================================================
+    // WARNING: UNSAFE - NO LOCKING!
+    // Caller MUST hold m_chunkMapMutex (shared or unique lock) before calling!
+    // Calling this without holding the lock will cause race conditions and crashes!
+    // ============================================================================
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
     return getChunkAtUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
 }
@@ -618,7 +628,11 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
 }
 
 int World::getBlockAtUnsafe(float worldX, float worldY, float worldZ) {
-    // UNSAFE: No locking - caller must hold m_chunkMapMutex
+    // ============================================================================
+    // WARNING: UNSAFE - NO LOCKING!
+    // Caller MUST hold m_chunkMapMutex (shared or unique lock) before calling!
+    // Calling this without holding the lock will cause race conditions and crashes!
+    // ============================================================================
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
     Chunk* chunk = getChunkAtUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
     if (chunk == nullptr) {
@@ -628,7 +642,11 @@ int World::getBlockAtUnsafe(float worldX, float worldY, float worldZ) {
 }
 
 void World::setBlockAtUnsafe(float worldX, float worldY, float worldZ, int blockID) {
-    // UNSAFE: No locking - caller must hold m_chunkMapMutex
+    // ============================================================================
+    // WARNING: UNSAFE - NO LOCKING!
+    // Caller MUST hold m_chunkMapMutex (unique lock) before calling!
+    // Calling this without holding the lock will cause race conditions and crashes!
+    // ============================================================================
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
     Chunk* chunk = getChunkAtUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
     if (chunk == nullptr) {
@@ -638,7 +656,11 @@ void World::setBlockAtUnsafe(float worldX, float worldY, float worldZ, int block
 }
 
 uint8_t World::getBlockMetadataAtUnsafe(float worldX, float worldY, float worldZ) {
-    // UNSAFE: No locking - caller must hold m_chunkMapMutex
+    // ============================================================================
+    // WARNING: UNSAFE - NO LOCKING!
+    // Caller MUST hold m_chunkMapMutex (shared or unique lock) before calling!
+    // Calling this without holding the lock will cause race conditions and crashes!
+    // ============================================================================
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
     Chunk* chunk = getChunkAtUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
     if (chunk == nullptr) {
@@ -648,7 +670,11 @@ uint8_t World::getBlockMetadataAtUnsafe(float worldX, float worldY, float worldZ
 }
 
 void World::setBlockMetadataAtUnsafe(float worldX, float worldY, float worldZ, uint8_t metadata) {
-    // UNSAFE: No locking - caller must hold m_chunkMapMutex
+    // ============================================================================
+    // WARNING: UNSAFE - NO LOCKING!
+    // Caller MUST hold m_chunkMapMutex (unique lock) before calling!
+    // Calling this without holding the lock will cause race conditions and crashes!
+    // ============================================================================
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
     Chunk* chunk = getChunkAtUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
     if (chunk == nullptr) {
@@ -1092,4 +1118,151 @@ void World::updateWaterSimulation(float deltaTime, VulkanRenderer* renderer) {
             updatesThisFrame++;
         }
     }
+}
+
+// ========== World Persistence ==========
+
+bool World::saveWorld(const std::string& worldPath) const {
+    namespace fs = std::filesystem;
+
+    try {
+        // Store world name from path
+        const_cast<World*>(this)->m_worldName = fs::path(worldPath).filename().string();
+
+        // Create world directory
+        fs::create_directories(worldPath);
+        Logger::info() << "Saving world to: " << worldPath;
+
+        // Save world.meta file
+        fs::path metaPath = fs::path(worldPath) / "world.meta";
+        std::ofstream metaFile(metaPath, std::ios::binary);
+        if (!metaFile.is_open()) {
+            Logger::error() << "Failed to create world.meta file";
+            return false;
+        }
+
+        // Write metadata header (version 1)
+        constexpr uint32_t WORLD_FILE_VERSION = 1;
+        metaFile.write(reinterpret_cast<const char*>(&WORLD_FILE_VERSION), sizeof(uint32_t));
+
+        // Write world dimensions
+        metaFile.write(reinterpret_cast<const char*>(&m_width), sizeof(int));
+        metaFile.write(reinterpret_cast<const char*>(&m_height), sizeof(int));
+        metaFile.write(reinterpret_cast<const char*>(&m_depth), sizeof(int));
+
+        // Write world seed
+        metaFile.write(reinterpret_cast<const char*>(&m_seed), sizeof(int));
+
+        // Write world name length and name
+        uint32_t nameLength = static_cast<uint32_t>(m_worldName.length());
+        metaFile.write(reinterpret_cast<const char*>(&nameLength), sizeof(uint32_t));
+        metaFile.write(m_worldName.c_str(), nameLength);
+
+        metaFile.close();
+        Logger::info() << "World metadata saved successfully";
+
+        // Save all chunks
+        int savedChunks = 0;
+        int skippedChunks = 0;
+
+        for (const auto& [coord, chunk] : m_chunkMap) {
+            if (chunk && chunk->save(worldPath)) {
+                savedChunks++;
+            } else {
+                skippedChunks++;
+            }
+        }
+
+        Logger::info() << "World save complete - " << savedChunks << " chunks saved, "
+                      << skippedChunks << " chunks skipped";
+        return true;
+
+    } catch (const std::exception& e) {
+        Logger::error() << "Failed to save world: " << e.what();
+        return false;
+    }
+}
+
+bool World::loadWorld(const std::string& worldPath) {
+    namespace fs = std::filesystem;
+
+    try {
+        // Check if world directory exists
+        if (!fs::exists(worldPath)) {
+            Logger::error() << "World path does not exist: " << worldPath;
+            return false;
+        }
+
+        // Load world.meta file
+        fs::path metaPath = fs::path(worldPath) / "world.meta";
+        if (!fs::exists(metaPath)) {
+            Logger::error() << "world.meta file not found";
+            return false;
+        }
+
+        std::ifstream metaFile(metaPath, std::ios::binary);
+        if (!metaFile.is_open()) {
+            Logger::error() << "Failed to open world.meta file";
+            return false;
+        }
+
+        // Read and verify version
+        uint32_t version;
+        metaFile.read(reinterpret_cast<char*>(&version), sizeof(uint32_t));
+        if (version != 1) {
+            Logger::error() << "Unsupported world file version: " << version;
+            return false;
+        }
+
+        // Read world dimensions
+        int savedWidth, savedHeight, savedDepth, savedSeed;
+        metaFile.read(reinterpret_cast<char*>(&savedWidth), sizeof(int));
+        metaFile.read(reinterpret_cast<char*>(&savedHeight), sizeof(int));
+        metaFile.read(reinterpret_cast<char*>(&savedDepth), sizeof(int));
+        metaFile.read(reinterpret_cast<char*>(&savedSeed), sizeof(int));
+
+        // Verify dimensions match current world
+        if (savedWidth != m_width || savedHeight != m_height || savedDepth != m_depth) {
+            Logger::error() << "World dimension mismatch - saved: " << savedWidth << "x" << savedHeight
+                          << "x" << savedDepth << ", current: " << m_width << "x" << m_height << "x" << m_depth;
+            return false;
+        }
+
+        // Update seed to match saved world
+        m_seed = savedSeed;
+
+        // Read world name
+        uint32_t nameLength;
+        metaFile.read(reinterpret_cast<char*>(&nameLength), sizeof(uint32_t));
+        m_worldName.resize(nameLength);
+        metaFile.read(&m_worldName[0], nameLength);
+
+        metaFile.close();
+        Logger::info() << "Loaded world metadata: " << m_worldName << " (seed: " << m_seed << ")";
+
+        // Load all chunks
+        int loadedChunks = 0;
+        int generatedChunks = 0;
+
+        for (auto& [coord, chunk] : m_chunkMap) {
+            if (chunk && chunk->load(worldPath)) {
+                loadedChunks++;
+            } else {
+                // Chunk file doesn't exist - will need to be generated
+                generatedChunks++;
+            }
+        }
+
+        Logger::info() << "World load complete - " << loadedChunks << " chunks loaded, "
+                      << generatedChunks << " chunks need generation";
+        return true;
+
+    } catch (const std::exception& e) {
+        Logger::error() << "Failed to load world: " << e.what();
+        return false;
+    }
+}
+
+std::string World::getWorldName() const {
+    return m_worldName.empty() ? "Unnamed World" : m_worldName;
 }

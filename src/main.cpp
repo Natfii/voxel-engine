@@ -35,6 +35,7 @@
 #include "structure_system.h"
 #include "player.h"
 #include "pause_menu.h"
+#include "main_menu.h"
 #include "config.h"
 #include "console.h"
 #include "console_commands.h"
@@ -45,6 +46,12 @@
 #include "inventory.h"
 #include "terrain_constants.h"
 // BlockIconRenderer is now part of block_system.h
+
+// Game state
+enum class GameState {
+    MAIN_MENU,
+    IN_GAME
+};
 
 // Global variables
 VulkanRenderer* g_renderer = nullptr;
@@ -224,8 +231,73 @@ int main() {
             glfwPollEvents();  // Keep window responsive
         };
 
-        // Get world configuration from config file
-        int seed = config.getInt("World", "seed", 1124345);
+        // ========== MAIN MENU ==========
+        // Show main menu and wait for player to start game
+        std::cout << "Showing main menu..." << std::endl;
+        MainMenu mainMenu(window);
+        GameState gameState = GameState::MAIN_MENU;
+        int seed = config.getInt("World", "seed", 1124345);  // Default seed
+        bool shouldQuit = false;
+
+        // Enable cursor for menu
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        InputManager::instance().setContext(InputManager::Context::MAIN_MENU);
+
+        while (gameState == GameState::MAIN_MENU && !glfwWindowShouldClose(window)) {
+            glfwPollEvents();
+
+            // Begin frame for menu rendering
+            if (!renderer.beginFrame()) {
+                continue;
+            }
+
+            // Start ImGui frame
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+
+            // Render main menu and get result
+            MenuResult menuResult = mainMenu.render();
+
+            // Process menu result
+            if (menuResult.action == MenuAction::NEW_GAME) {
+                seed = menuResult.seed;
+                gameState = GameState::IN_GAME;
+                std::cout << "Starting new game with seed: " << seed << std::endl;
+            } else if (menuResult.action == MenuAction::LOAD_GAME) {
+                // TODO: Implement load game
+                std::cout << "Load game not yet implemented" << std::endl;
+            } else if (menuResult.action == MenuAction::QUIT) {
+                shouldQuit = true;
+                break;
+            }
+
+            // Render ImGui
+            ImGui::Render();
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), renderer.getCurrentCommandBuffer());
+
+            renderer.endFrame();
+        }
+
+        // If player quit from menu, exit early
+        if (shouldQuit || glfwWindowShouldClose(window)) {
+            std::cout << "Exiting from main menu..." << std::endl;
+
+            // Cleanup ImGui
+            ImGui_ImplVulkan_Shutdown();
+            ImGui_ImplGlfw_Shutdown();
+            ImGui::DestroyContext();
+            vkDestroyDescriptorPool(renderer.getDevice(), imguiPool, nullptr);
+
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            return 0;
+        }
+
+        // Disable cursor for gameplay
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+        // Get world configuration from config file (use seed from menu)
         int worldWidth = config.getInt("World", "world_width", 12);
         int worldDepth = config.getInt("World", "world_depth", 12);
 
@@ -346,13 +418,14 @@ int main() {
             for (int dx = -radius; dx <= radius && !foundSafeSpawn; dx++) {
                 for (int dz = -radius; dz <= radius && !foundSafeSpawn; dz++) {
                     // Only check perimeter of this radius (optimization)
-                    if (abs(dx) != radius && abs(dz) != radius) continue;
+                    // Special case: when radius=0, check the center point (0,0)
+                    if (radius > 0 && abs(dx) != radius && abs(dz) != radius) continue;
 
                     float testX = static_cast<float>(dx);
                     float testZ = static_cast<float>(dz);
 
-                    // Search upward from bottom to find surface
-                    for (int y = MAX_WORLD_HEIGHT - 2; y >= 10; y--) {  // Search from top down
+                    // Start search from Y=76 (top of terrain range) for efficiency
+                    for (int y = 76; y >= 10; y--) {  // Search from expected terrain height down
                         int currentBlock = world.getBlockAt(testX, static_cast<float>(y), testZ);
                         int aboveBlock = world.getBlockAt(testX, static_cast<float>(y + 1), testZ);
 
@@ -376,10 +449,61 @@ int main() {
 
         // Emergency fallback if no safe spawn found
         if (spawnGroundY < 0) {
-            std::cout << "WARNING: No safe spawn found, using fallback Y=64 at (0, 0)" << std::endl;
-            spawnX = 0.0f;
-            spawnZ = 0.0f;
-            spawnGroundY = 64;
+            std::cout << "WARNING: No safe spawn found in initial search, validating fallback at (0, 0, 64)" << std::endl;
+
+            // Try to find ground at (0,0) by searching downward from Y=76
+            bool foundFallback = false;
+            for (int y = 76; y >= 10; y--) {
+                int currentBlock = world.getBlockAt(0.0f, static_cast<float>(y), 0.0f);
+                int aboveBlock = world.getBlockAt(0.0f, static_cast<float>(y + 1), 0.0f);
+
+                if ((currentBlock != 0 && currentBlock != 5) && aboveBlock == 0) {
+                    if (isSafeSpawn(0.0f, 0.0f, y)) {
+                        spawnX = 0.0f;
+                        spawnZ = 0.0f;
+                        spawnGroundY = y;
+                        foundFallback = true;
+                        std::cout << "Fallback spawn validated at (0, " << y << ", 0)" << std::endl;
+                        break;
+                    }
+                }
+            }
+
+            // If fallback at (0,0) also failed, do expanding radius search with relaxed constraints
+            if (!foundFallback) {
+                std::cout << "WARNING: Fallback at (0,0) failed, searching in expanding radius..." << std::endl;
+                for (int radius = 1; radius <= 64 && !foundFallback; radius += 4) {
+                    for (int dx = -radius; dx <= radius && !foundFallback; dx += 4) {
+                        for (int dz = -radius; dz <= radius && !foundFallback; dz += 4) {
+                            for (int y = 76; y >= 10; y--) {
+                                float testX = static_cast<float>(dx);
+                                float testZ = static_cast<float>(dz);
+                                int currentBlock = world.getBlockAt(testX, static_cast<float>(y), testZ);
+                                int aboveBlock = world.getBlockAt(testX, static_cast<float>(y + 1), testZ);
+
+                                if ((currentBlock != 0 && currentBlock != 5) && aboveBlock == 0) {
+                                    if (isSafeSpawn(testX, testZ, y)) {
+                                        spawnX = testX;
+                                        spawnZ = testZ;
+                                        spawnGroundY = y;
+                                        foundFallback = true;
+                                        std::cout << "Emergency spawn found at (" << testX << ", " << y << ", " << testZ << ")" << std::endl;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Last resort: spawn at Y=64 even if not validated
+                if (!foundFallback) {
+                    std::cout << "CRITICAL WARNING: No safe spawn found anywhere, using unvalidated Y=64 at (0, 0)" << std::endl;
+                    spawnX = 0.0f;
+                    spawnZ = 0.0f;
+                    spawnGroundY = 64;
+                }
+            }
         }
 
         // Spawn 2 blocks above the surface (feet position)
@@ -844,6 +968,29 @@ int main() {
         std::cout << "  Waiting for GPU to finish..." << std::endl;
         vkDeviceWaitIdle(renderer.getDevice());
         std::cout << "  GPU idle" << std::endl;
+
+        // Save world, player, and inventory before cleanup
+        std::cout << "  Saving world..." << std::endl;
+        std::string worldPath = "worlds/world_" + std::to_string(seed);
+        if (world.saveWorld(worldPath)) {
+            std::cout << "  World saved successfully to " << worldPath << std::endl;
+        } else {
+            std::cout << "  Warning: Failed to save world" << std::endl;
+        }
+
+        std::cout << "  Saving player state..." << std::endl;
+        if (player.savePlayerState(worldPath)) {
+            std::cout << "  Player state saved successfully" << std::endl;
+        } else {
+            std::cout << "  Warning: Failed to save player state" << std::endl;
+        }
+
+        std::cout << "  Saving inventory..." << std::endl;
+        if (inventory.save(worldPath)) {
+            std::cout << "  Inventory saved successfully" << std::endl;
+        } else {
+            std::cout << "  Warning: Failed to save inventory" << std::endl;
+        }
 
         // Cleanup world chunk buffers
         std::cout << "  Cleaning up world..." << std::endl;

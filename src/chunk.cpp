@@ -191,12 +191,25 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 int worldY = static_cast<int64_t>(m_y) * HEIGHT + y;
                 float worldYf = static_cast<float>(worldY);
 
-                // Check if this is inside a cave
-                float caveDensity = biomeMap->getCaveDensityAt(worldX, worldYf, worldZ);
-                bool isCave = caveDensity < 0.45f;  // Threshold for cave air
+                // BEDROCK LAYER: Y=0 to Y=1 is always bedrock (unbreakable bottom)
+                if (worldY <= 1) {
+                    m_blocks[x][y][z] = BLOCK_BEDROCK;
+                    continue;
+                }
 
-                // Check if inside underground biome chamber
-                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ);
+                // SOLID STONE GUARANTEE: Y=2 to Y=10 is always stone (no caves)
+                // This prevents giant holes to the void and ensures solid foundation
+                if (worldY >= 2 && worldY <= 10) {
+                    m_blocks[x][y][z] = BLOCK_STONE;
+                    continue;
+                }
+
+                // Check if this is inside a cave (only for Y > 15)
+                float caveDensity = biomeMap->getCaveDensityAt(worldX, worldYf, worldZ);
+                bool isCave = (caveDensity < 0.45f) && (worldY > 15);  // Caves only above Y=15
+
+                // Check if inside underground biome chamber (only for Y > 15)
+                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ) && (worldY > 15);
 
                 // Determine block placement
                 if (worldY < terrainHeight) {
@@ -218,14 +231,14 @@ void Chunk::generate(BiomeMap* biomeMap) {
                     }
 
                     // LAND BIOME LOGIC
-                    // If in cave, create air pocket (caves generate endlessly downward)
-                    // Only prevent caves in the top 5 blocks below surface to avoid surface holes
-                    if (isCave && worldY < terrainHeight - 5) {
+                    // If in cave, create air pocket (caves only above Y=15)
+                    // Prevent caves in the top 10 blocks below surface to avoid surface holes
+                    if (isCave && worldY < terrainHeight - 10) {
                         m_blocks[x][y][z] = BLOCK_AIR;
                         continue;
                     }
 
-                    // If in underground chamber, create large open space (endless chambers)
+                    // If in underground chamber, create large open space (only above Y=15)
                     if (isUndergroundChamber) {
                         m_blocks[x][y][z] = BLOCK_AIR;
                         continue;
@@ -247,8 +260,14 @@ void Chunk::generate(BiomeMap* biomeMap) {
 
                 } else if (worldY < WATER_LEVEL) {
                     // Above terrain but below water level
-                    m_blocks[x][y][z] = BLOCK_WATER;
-                    m_blockMetadata[x][y][z] = 0;  // Source block
+                    // Use ice in cold biomes (temperature < 25), water otherwise
+                    if (biome->temperature < 25) {
+                        m_blocks[x][y][z] = BLOCK_ICE;
+                        m_blockMetadata[x][y][z] = 0;
+                    } else {
+                        m_blocks[x][y][z] = BLOCK_WATER;
+                        m_blockMetadata[x][y][z] = 0;  // Source block
+                    }
                 } else {
                     // Above water level
                     m_blocks[x][y][z] = BLOCK_AIR;

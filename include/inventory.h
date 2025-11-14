@@ -62,6 +62,10 @@ public:
     // Mouse input for inventory UI
     void handleMouseScroll(double yoffset);
 
+    // Persistence
+    bool save(const std::string& worldPath) const;
+    bool load(const std::string& worldPath);
+
 private:
     // Inventory state
     bool m_isOpen;
