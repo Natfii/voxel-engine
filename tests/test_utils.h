@@ -149,7 +149,7 @@ inline void init_test_environment() {
         throw std::runtime_error("Failed to load blocks! Make sure assets/blocks directory exists.");
     }
 
-    std::cout << "Loaded " << BlockRegistry::instance().getBlockCount() << " block types\n";
+    std::cout << "Loaded " << BlockRegistry::instance().count() << " block types\n";
     std::cout << "Test environment initialized successfully\n\n";
 }
 
