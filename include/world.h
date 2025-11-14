@@ -8,6 +8,7 @@
 #pragma once
 #include <vector>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <shared_mutex>
 #include <cstdint>
@@ -356,6 +357,44 @@ public:
      * Should be called after generateWorld() but before createBuffers()
      */
     void decorateWorld();
+
+    // ========== World Persistence ==========
+
+    /**
+     * @brief Saves all chunks to disk
+     *
+     * Creates world directory structure and saves:
+     * - world.meta: World metadata (seed, dimensions)
+     * - chunks/*.dat: Binary chunk files
+     *
+     * @param worldPath Path to world directory (e.g., "worlds/my_world")
+     * @return True if save succeeded, false on error
+     */
+    bool saveWorld(const std::string& worldPath) const;
+
+    /**
+     * @brief Loads all chunks from disk
+     *
+     * Loads world metadata and all chunk files. Skips chunks that don't exist
+     * (will be generated instead). Caller must call generateMesh() and
+     * createBuffers() after loading.
+     *
+     * @param worldPath Path to world directory
+     * @return True if load succeeded, false if world doesn't exist
+     */
+    bool loadWorld(const std::string& worldPath);
+
+    /**
+     * @brief Gets the world name (extracted from last path component)
+     * @return World name string
+     */
+    std::string getWorldName() const;
+
+    /**
+     * @brief Gets the world seed
+     * @return World seed value
+     */
+    int getSeed() const { return m_seed; }
 
 private:
     /**

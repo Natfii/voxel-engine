@@ -10,6 +10,7 @@
 #include <vector>
 #include <array>
 #include <memory>
+#include <string>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include "voxelmath.h"
@@ -308,6 +309,34 @@ public:
      * @param metadata Metadata value to set (0-255)
      */
     void setBlockMetadata(int x, int y, int z, uint8_t metadata);
+
+    // ========== Chunk Persistence ==========
+
+    /**
+     * @brief Saves chunk data to disk in binary format
+     *
+     * Creates a binary file containing all block and metadata information.
+     * File format:
+     * - Header (16 bytes): version (4), chunkX (4), chunkY (4), chunkZ (4)
+     * - Block data (32 KB): 32x32x32 block IDs
+     * - Metadata (32 KB): 32x32x32 metadata bytes
+     * Total: ~64 KB per chunk
+     *
+     * @param worldPath Path to world directory (e.g., "worlds/world_name")
+     * @return True if save succeeded, false on error
+     */
+    bool save(const std::string& worldPath) const;
+
+    /**
+     * @brief Loads chunk data from disk
+     *
+     * Reads binary chunk file and populates block and metadata arrays.
+     * Does not regenerate mesh - caller must call generateMesh() after loading.
+     *
+     * @param worldPath Path to world directory
+     * @return True if load succeeded, false if file doesn't exist or is corrupted
+     */
+    bool load(const std::string& worldPath);
 
     // ========== Chunk Position ==========
 

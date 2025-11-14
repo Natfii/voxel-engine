@@ -20,6 +20,8 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <mutex>
+#include <fstream>
+#include <filesystem>
 
 // Static member initialization
 std::unique_ptr<FastNoiseLite> Chunk::s_noise = nullptr;
@@ -1208,4 +1210,97 @@ void Chunk::setBlockMetadata(int x, int y, int z, uint8_t metadata) {
         return;  // Out of bounds
     }
     m_blockMetadata[x][y][z] = metadata;
+}
+
+bool Chunk::save(const std::string& worldPath) const {
+    namespace fs = std::filesystem;
+
+    try {
+        // Create chunks directory if it doesn't exist
+        fs::path chunksDir = fs::path(worldPath) / "chunks";
+        fs::create_directories(chunksDir);
+
+        // Create filename: chunk_X_Y_Z.dat
+        std::string filename = "chunk_" + std::to_string(m_x) + "_" + std::to_string(m_y) + "_" + std::to_string(m_z) + ".dat";
+        fs::path filepath = chunksDir / filename;
+
+        // Open file for binary writing
+        std::ofstream file(filepath, std::ios::binary);
+        if (!file.is_open()) {
+            return false;
+        }
+
+        // Write header (16 bytes)
+        constexpr uint32_t CHUNK_FILE_VERSION = 1;
+        file.write(reinterpret_cast<const char*>(&CHUNK_FILE_VERSION), sizeof(uint32_t));
+        file.write(reinterpret_cast<const char*>(&m_x), sizeof(int));
+        file.write(reinterpret_cast<const char*>(&m_y), sizeof(int));
+        file.write(reinterpret_cast<const char*>(&m_z), sizeof(int));
+
+        // Write block data (32 KB)
+        file.write(reinterpret_cast<const char*>(m_blocks), WIDTH * HEIGHT * DEPTH * sizeof(int));
+
+        // Write metadata (32 KB)
+        file.write(reinterpret_cast<const char*>(m_blockMetadata), WIDTH * HEIGHT * DEPTH * sizeof(uint8_t));
+
+        file.close();
+        return true;
+
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool Chunk::load(const std::string& worldPath) {
+    namespace fs = std::filesystem;
+
+    try {
+        // Build filepath
+        fs::path chunksDir = fs::path(worldPath) / "chunks";
+        std::string filename = "chunk_" + std::to_string(m_x) + "_" + std::to_string(m_y) + "_" + std::to_string(m_z) + ".dat";
+        fs::path filepath = chunksDir / filename;
+
+        // Check if file exists
+        if (!fs::exists(filepath)) {
+            return false;  // File doesn't exist - chunk needs to be generated
+        }
+
+        // Open file for binary reading
+        std::ifstream file(filepath, std::ios::binary);
+        if (!file.is_open()) {
+            return false;
+        }
+
+        // Read header (16 bytes)
+        uint32_t version;
+        int fileX, fileY, fileZ;
+        file.read(reinterpret_cast<char*>(&version), sizeof(uint32_t));
+        file.read(reinterpret_cast<char*>(&fileX), sizeof(int));
+        file.read(reinterpret_cast<char*>(&fileY), sizeof(int));
+        file.read(reinterpret_cast<char*>(&fileZ), sizeof(int));
+
+        // Verify coordinates match
+        if (fileX != m_x || fileY != m_y || fileZ != m_z) {
+            file.close();
+            return false;  // Coordinate mismatch
+        }
+
+        // Check version compatibility
+        if (version != 1) {
+            file.close();
+            return false;  // Unsupported version
+        }
+
+        // Read block data (32 KB)
+        file.read(reinterpret_cast<char*>(m_blocks), WIDTH * HEIGHT * DEPTH * sizeof(int));
+
+        // Read metadata (32 KB)
+        file.read(reinterpret_cast<char*>(m_blockMetadata), WIDTH * HEIGHT * DEPTH * sizeof(uint8_t));
+
+        file.close();
+        return true;
+
+    } catch (const std::exception&) {
+        return false;
+    }
 }
