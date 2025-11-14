@@ -9,5 +9,5 @@ flammability: 1
 transparency: 0.0
 
 # Biome compatibility
-temperature_range: "0-30"  # Cold climates
+temperature_range: "0-35"  # Cold climates
 moisture_range: "40-90"     # Needs moderate to high moisture
