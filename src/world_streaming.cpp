@@ -94,7 +94,7 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
 
     // Convert player position to chunk coordinates
     const int CHUNK_SIZE = 32;  // Chunk::WIDTH
-    const float BLOCK_SIZE = 0.5f;
+    const float BLOCK_SIZE = 1.0f;  // Blocks are 1.0 world units (not 0.5!)
     int playerChunkX = static_cast<int>(std::floor(playerPos.x / (CHUNK_SIZE * BLOCK_SIZE)));
     int playerChunkY = static_cast<int>(std::floor(playerPos.y / (CHUNK_SIZE * BLOCK_SIZE)));
     int playerChunkZ = static_cast<int>(std::floor(playerPos.z / (CHUNK_SIZE * BLOCK_SIZE)));
@@ -334,7 +334,7 @@ float WorldStreaming::calculateChunkPriority(int chunkX, int chunkY, int chunkZ,
 
 glm::vec3 WorldStreaming::chunkToWorldPos(int chunkX, int chunkY, int chunkZ) const {
     const int CHUNK_SIZE = 32;  // Chunk::WIDTH
-    const float BLOCK_SIZE = 0.5f;
+    const float BLOCK_SIZE = 1.0f;  // Blocks are 1.0 world units (not 0.5!)
 
     // Calculate center of chunk in world space
     float worldX = (chunkX * CHUNK_SIZE + CHUNK_SIZE / 2.0f) * BLOCK_SIZE;
@@ -346,7 +346,7 @@ glm::vec3 WorldStreaming::chunkToWorldPos(int chunkX, int chunkY, int chunkZ) co
 
 void WorldStreaming::unloadDistantChunks(const glm::vec3& playerPos, float unloadDistance) {
     const int CHUNK_SIZE = 32;
-    const float BLOCK_SIZE = 0.5f;
+    const float BLOCK_SIZE = 1.0f;  // Blocks are 1.0 world units (not 0.5!)
 
     // Convert player position to chunk coordinates
     int playerChunkX = static_cast<int>(std::floor(playerPos.x / (CHUNK_SIZE * BLOCK_SIZE)));

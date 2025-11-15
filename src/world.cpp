@@ -360,7 +360,7 @@ void World::decorateWorld() {
 
     // Decorate underground biome chambers
     for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
-        for (int chunkY = 0; chunkY < m_height; ++chunkY) {
+        for (int chunkY = -halfHeight; chunkY < m_height - halfHeight; ++chunkY) {
             for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
                 // Sample positions in underground chunks
                 std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
@@ -657,8 +657,9 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
     int halfHeight = m_height / 2;
     int halfDepth = m_depth / 2;
 
+    // World is centered at Y=0, so Y chunks range from -halfHeight to +halfHeight-1
     if (chunkX < -halfWidth || chunkX >= halfWidth ||
-        chunkY < 0 || chunkY >= m_height ||
+        chunkY < -halfHeight || chunkY >= halfHeight ||
         chunkZ < -halfDepth || chunkZ >= halfDepth) {
         Logger::warning() << "Attempted to add out-of-bounds chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
         return false;
@@ -1057,11 +1058,13 @@ void World::updateLiquids(VulkanRenderer* renderer) {
         for (int x = 0; x < m_width; ++x) {
             for (int z = 0; z < m_depth; ++z) {
                 int halfWidth = m_width / 2;
+                int halfHeight = m_height / 2;
                 int halfDepth = m_depth / 2;
                 int chunkX = x - halfWidth;
+                int chunkY = y - halfHeight;  // Convert to centered coordinates
                 int chunkZ = z - halfDepth;
 
-                Chunk* chunk = getChunkAt(chunkX, y, chunkZ);
+                Chunk* chunk = getChunkAt(chunkX, chunkY, chunkZ);
                 if (!chunk) continue;
 
                 // Early skip: If chunk has no vertices, it's likely empty

@@ -450,8 +450,8 @@ int main() {
                     float testX = static_cast<float>(dx);
                     float testZ = static_cast<float>(dz);
 
-                    // Start search from Y=76 (top of terrain range) for efficiency
-                    for (int y = 76; y >= 10; y--) {  // Search from expected terrain height down
+                    // Start search from MAX_TERRAIN_HEIGHT down to MIN_SEARCH_Y
+                    for (int y = MAX_TERRAIN_HEIGHT; y >= MIN_SEARCH_Y; y--) {  // Search from top of terrain down
                         int currentBlock = world.getBlockAt(testX, static_cast<float>(y), testZ);
                         int aboveBlock = world.getBlockAt(testX, static_cast<float>(y + 1), testZ);
 
@@ -477,9 +477,9 @@ int main() {
         if (spawnGroundY < 0) {
             std::cout << "WARNING: No safe spawn found in initial search, validating fallback at (0, 0, 64)" << std::endl;
 
-            // Try to find ground at (0,0) by searching downward from Y=76
+            // Try to find ground at (0,0) by searching downward from MAX_TERRAIN_HEIGHT
             bool foundFallback = false;
-            for (int y = 76; y >= 10; y--) {
+            for (int y = MAX_TERRAIN_HEIGHT; y >= MIN_SEARCH_Y; y--) {
                 int currentBlock = world.getBlockAt(0.0f, static_cast<float>(y), 0.0f);
                 int aboveBlock = world.getBlockAt(0.0f, static_cast<float>(y + 1), 0.0f);
 
@@ -501,7 +501,7 @@ int main() {
                 for (int radius = 1; radius <= 64 && !foundFallback; radius += 4) {
                     for (int dx = -radius; dx <= radius && !foundFallback; dx += 4) {
                         for (int dz = -radius; dz <= radius && !foundFallback; dz += 4) {
-                            for (int y = 76; y >= 10; y--) {
+                            for (int y = MAX_TERRAIN_HEIGHT; y >= MIN_SEARCH_Y; y--) {
                                 float testX = static_cast<float>(dx);
                                 float testZ = static_cast<float>(dz);
                                 int currentBlock = world.getBlockAt(testX, static_cast<float>(y), testZ);
