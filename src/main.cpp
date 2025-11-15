@@ -783,8 +783,9 @@ int main() {
             glfwGetFramebufferSize(window, &width, &height);
             float aspect = float(width) / float(height);
             // Near plane at 0.01 allows getting very close to blocks without clipping
-            // Far plane increased to 600.0f to support larger render distances
-            glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.01f, 600.0f);
+            // Far plane increased to 1200.0f to support wider world view (128x32x128 chunks)
+            // FOV increased to 70 degrees for better peripheral vision in expanded world
+            glm::mat4 projection = glm::perspective(glm::radians(70.0f), aspect, 0.01f, 1200.0f);
             // Flip Y axis for Vulkan (Vulkan's Y axis points down in NDC, OpenGL's points up)
             projection[1][1] *= -1;
 

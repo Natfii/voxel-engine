@@ -90,8 +90,9 @@ void main() {
     fogColor = mix(fogColor, nightFogColor, moonIntensity * 0.8);
 
     // Fog settings (default above water)
-    float fogStart = renderDistance * 0.7;   // Fog starts at 70% of render distance
-    float fogEnd = renderDistance * 0.95;    // Full fog at 95% of render distance
+    // Adjusted for wider world view - smoother fog transition over greater distance
+    float fogStart = renderDistance * 0.6;   // Fog starts at 60% of render distance
+    float fogEnd = renderDistance * 0.9;     // Full fog at 90% of render distance
 
     // Underwater fog settings (use dynamic liquid properties from YAML)
     if (cameraUnderwater) {
@@ -101,7 +102,8 @@ void main() {
     }
 
     // Discard fragments well beyond fog end to avoid visible banding
-    if (distance > renderDistance * 1.05) {
+    // Extended threshold for wider view distance
+    if (distance > renderDistance * 1.1) {
         discard;
     }
 
