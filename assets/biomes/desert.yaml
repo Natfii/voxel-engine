@@ -57,6 +57,12 @@ fog_color: "255,220,180"  # Warm, sandy haze
 # Ore distribution (slightly reduced due to sand)
 ore_spawn_rates: "coal:0.7,iron:0.8,gold:1.2"
 
+# === TERRAIN ROUGHNESS CONTROL (Agent 29) ===
+terrain_octaves: 4           # Moderate octaves for rolling sand dunes
+terrain_lacunarity: 2.2      # Moderate lacunarity for dune patterns
+terrain_gain: 0.5            # Standard gain for natural dune formations
+terrain_roughness: 40        # Moderate roughness: 40/100 = rolling dunes
+
 # === BIOME INFLUENCE FALLOFF CUSTOMIZATION (Agent 23) ===
 # Deserts have sharper transitions (distinct boundaries)
 falloff_use_custom: true

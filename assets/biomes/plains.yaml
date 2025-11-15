@@ -45,3 +45,9 @@ blacklisted_weather: ""
 
 # Ore distribution (normal rates)
 ore_spawn_rates: "coal:1.0,iron:1.0,gold:1.0"
+
+# === TERRAIN ROUGHNESS CONTROL (Agent 29) ===
+terrain_octaves: 3           # Fewer octaves = smoother, less detail
+terrain_lacunarity: 2.0      # Standard lacunarity for gentle rolling hills
+terrain_gain: 0.4            # Lower gain = less detail persistence (smoother)
+terrain_roughness: 15        # Explicit roughness: 15/100 = very smooth, flat terrain

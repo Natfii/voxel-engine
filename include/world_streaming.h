@@ -135,10 +135,12 @@ public:
      * @param playerPos Current player position in world space
      * @param loadDistance Maximum distance to load chunks (default: 128.0)
      * @param unloadDistance Distance at which to unload chunks (default: 160.0)
+     * @param cameraForward Camera forward direction (for priority calculation)
      */
     void updatePlayerPosition(const glm::vec3& playerPos,
                              float loadDistance = 128.0f,
-                             float unloadDistance = 160.0f);
+                             float unloadDistance = 160.0f,
+                             const glm::vec3& cameraForward = glm::vec3(0.0f, 0.0f, -1.0f));
 
     /**
      * @brief Processes chunks that finished generation
@@ -210,16 +212,23 @@ private:
                         const glm::vec3& playerPos, float loadDistance) const;
 
     /**
-     * @brief Calculates chunk priority (distance from player)
+     * @brief Calculates chunk priority (distance from player + camera direction)
+     *
+     * Priority calculation includes:
+     * - Distance from player (closer = higher priority)
+     * - Camera direction (in front of camera = higher priority)
+     * - Vertical distance weight (same level as player = higher priority)
      *
      * @param chunkX Chunk X coordinate
      * @param chunkY Chunk Y coordinate
      * @param chunkZ Chunk Z coordinate
      * @param playerPos Player position
-     * @return Distance from player to chunk center (lower = higher priority)
+     * @param cameraForward Camera forward direction
+     * @return Priority value (lower = higher priority)
      */
     float calculateChunkPriority(int chunkX, int chunkY, int chunkZ,
-                                 const glm::vec3& playerPos) const;
+                                 const glm::vec3& playerPos,
+                                 const glm::vec3& cameraForward) const;
 
     /**
      * @brief Converts chunk coordinates to world position (center of chunk)
@@ -292,7 +301,15 @@ private:
 
     // === Player Position ===
     glm::vec3 m_lastPlayerPos;            ///< Last known player position
+    glm::vec3 m_lastCameraForward;        ///< Last known camera direction
     mutable std::mutex m_playerPosMutex;  ///< Protects m_lastPlayerPos
+
+    // === Performance Adaptive Loading ===
+    std::atomic<float> m_lastFrameTime;   ///< Last frame time in milliseconds
+    std::atomic<int> m_maxChunksPerFrame; ///< Adaptive max chunks to process per frame
+    static constexpr int MIN_CHUNKS_PER_FRAME = 1;
+    static constexpr int MAX_CHUNKS_PER_FRAME = 8;
+    static constexpr float TARGET_FRAME_TIME_MS = 16.67f;  ///< Target 60 FPS
 
     // === Statistics ===
     std::atomic<size_t> m_totalChunksLoaded;    ///< Total chunks loaded since start

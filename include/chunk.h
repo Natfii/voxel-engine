@@ -170,6 +170,20 @@ public:
     void generateMesh(class World* world, bool callerHoldsLock = false);
 
     /**
+     * @brief Generates simplified LOD mesh for distant rendering
+     *
+     * Creates a reduced-detail mesh by sampling blocks at intervals.
+     * LOD level determines sampling rate:
+     * - LOD 1: Sample every 2nd block (50% reduction)
+     * - LOD 2: Sample every 4th block (75% reduction)
+     *
+     * @param world World instance to query neighboring chunks
+     * @param lodLevel LOD level (1 or 2)
+     * @param callerHoldsLock If true, caller already holds world's chunk map lock
+     */
+    void generateLODMesh(class World* world, int lodLevel, bool callerHoldsLock = false);
+
+    /**
      * @brief Creates Vulkan vertex and index buffers
      *
      * Uploads mesh data to GPU. Only call if vertexCount > 0.
@@ -215,8 +229,9 @@ public:
      *
      * @param commandBuffer Vulkan command buffer for recording
      * @param transparent If true, renders transparent geometry; if false, renders opaque geometry
+     * @param lodLevel LOD level to render (0=full detail, 1=medium, 2=low)
      */
-    void render(VkCommandBuffer commandBuffer, bool transparent = false);
+    void render(VkCommandBuffer commandBuffer, bool transparent = false, int lodLevel = 0);
 
     // ========== Terrain Queries ==========
 
@@ -263,6 +278,17 @@ public:
      * @return Transparent vertex count (0 if no transparent geometry)
      */
     uint32_t getTransparentVertexCount() const { return m_transparentVertexCount; }
+
+    /**
+     * @brief Gets the vertex count for a specific LOD level
+     * @param lodLevel LOD level (0=full, 1=medium, 2=low)
+     * @return Vertex count for the specified LOD
+     */
+    uint32_t getLODVertexCount(int lodLevel) const {
+        if (lodLevel == 1) return m_lod1VertexCount;
+        if (lodLevel == 2) return m_lod2VertexCount;
+        return m_vertexCount;
+    }
 
     // ========== Block Access ==========
 
@@ -400,6 +426,22 @@ private:
     VkDeviceMemory m_transparentIndexBufferMemory; ///< Index buffer memory (transparent)
     uint32_t m_transparentVertexCount;            ///< Number of vertices (transparent)
     uint32_t m_transparentIndexCount;             ///< Number of indices (transparent)
+
+    // ========== LOD Buffers (Level 1 - Medium Detail) ==========
+    VkBuffer m_lod1VertexBuffer;                  ///< GPU vertex buffer (LOD1)
+    VkDeviceMemory m_lod1VertexBufferMemory;      ///< Vertex buffer memory (LOD1)
+    VkBuffer m_lod1IndexBuffer;                   ///< GPU index buffer (LOD1)
+    VkDeviceMemory m_lod1IndexBufferMemory;       ///< Index buffer memory (LOD1)
+    uint32_t m_lod1VertexCount;                   ///< Number of vertices (LOD1)
+    uint32_t m_lod1IndexCount;                    ///< Number of indices (LOD1)
+
+    // ========== LOD Buffers (Level 2 - Low Detail) ==========
+    VkBuffer m_lod2VertexBuffer;                  ///< GPU vertex buffer (LOD2)
+    VkDeviceMemory m_lod2VertexBufferMemory;      ///< Vertex buffer memory (LOD2)
+    VkBuffer m_lod2IndexBuffer;                   ///< GPU index buffer (LOD2)
+    VkDeviceMemory m_lod2IndexBufferMemory;       ///< Index buffer memory (LOD2)
+    uint32_t m_lod2VertexCount;                   ///< Number of vertices (LOD2)
+    uint32_t m_lod2IndexCount;                    ///< Number of indices (LOD2)
 
     // ========== Staging Buffers (for batched uploads) ==========
     VkBuffer m_vertexStagingBuffer;               ///< Staging buffer for opaque vertices

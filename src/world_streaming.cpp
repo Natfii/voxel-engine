@@ -13,6 +13,7 @@
 #include "logger.h"
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 
 WorldStreaming::WorldStreaming(World* world, BiomeMap* biomeMap, VulkanRenderer* renderer)
     : m_world(world)
@@ -21,10 +22,13 @@ WorldStreaming::WorldStreaming(World* world, BiomeMap* biomeMap, VulkanRenderer*
     , m_running(false)
     , m_activeWorkers(0)
     , m_lastPlayerPos(0.0f, 0.0f, 0.0f)
+    , m_lastCameraForward(0.0f, 0.0f, -1.0f)
+    , m_lastFrameTime(16.67f)
+    , m_maxChunksPerFrame(4)
     , m_totalChunksLoaded(0)
     , m_totalChunksUnloaded(0)
 {
-    Logger::info() << "WorldStreaming initialized";
+    Logger::info() << "WorldStreaming initialized with adaptive loading";
 }
 
 WorldStreaming::~WorldStreaming() {
@@ -85,11 +89,13 @@ void WorldStreaming::stop() {
 
 void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
                                           float loadDistance,
-                                          float unloadDistance) {
-    // Update stored player position
+                                          float unloadDistance,
+                                          const glm::vec3& cameraForward) {
+    // Update stored player position and camera direction
     {
         std::lock_guard<std::mutex> lock(m_playerPosMutex);
         m_lastPlayerPos = playerPos;
+        m_lastCameraForward = glm::normalize(cameraForward);
     }
 
     // Convert player position to chunk coordinates
@@ -116,8 +122,8 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
                 if (shouldLoadChunk(chunkX, chunkY, chunkZ, playerPos, loadDistance)) {
                     // Check if chunk already exists
                     if (m_world->getChunkAt(chunkX, chunkY, chunkZ) == nullptr) {
-                        // Calculate priority (distance)
-                        float priority = calculateChunkPriority(chunkX, chunkY, chunkZ, playerPos);
+                        // Calculate priority (distance + camera direction)
+                        float priority = calculateChunkPriority(chunkX, chunkY, chunkZ, playerPos, cameraForward);
 
                         newRequests.push_back({chunkX, chunkY, chunkZ, priority});
                     }
@@ -156,6 +162,12 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
 }
 
 void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
+    // Use adaptive max chunks if provided value is the default (4)
+    if (maxChunksPerFrame == 4) {
+        maxChunksPerFrame = m_maxChunksPerFrame.load();
+    }
+
+    auto startTime = std::chrono::high_resolution_clock::now();
     std::vector<std::unique_ptr<Chunk>> chunksToUpload;
 
     // Retrieve completed chunks
@@ -219,6 +231,22 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
                 }
             }
         }
+    }
+
+    // Adaptive loading: adjust max chunks per frame based on performance
+    auto endTime = std::chrono::high_resolution_clock::now();
+    float frameTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+    m_lastFrameTime.store(frameTimeMs);
+
+    // If frame time is too high, reduce chunk loading
+    // If frame time is low, increase chunk loading (up to limit)
+    int currentMax = m_maxChunksPerFrame.load();
+    if (frameTimeMs > TARGET_FRAME_TIME_MS * 1.2f) {
+        // Frame took too long, reduce chunks per frame
+        m_maxChunksPerFrame.store(std::max(MIN_CHUNKS_PER_FRAME, currentMax - 1));
+    } else if (frameTimeMs < TARGET_FRAME_TIME_MS * 0.8f && currentMax < MAX_CHUNKS_PER_FRAME) {
+        // Frame was fast, increase chunks per frame
+        m_maxChunksPerFrame.store(std::min(MAX_CHUNKS_PER_FRAME, currentMax + 1));
     }
 }
 
@@ -327,9 +355,30 @@ bool WorldStreaming::shouldLoadChunk(int chunkX, int chunkY, int chunkZ,
 }
 
 float WorldStreaming::calculateChunkPriority(int chunkX, int chunkY, int chunkZ,
-                                             const glm::vec3& playerPos) const {
+                                             const glm::vec3& playerPos,
+                                             const glm::vec3& cameraForward) const {
     glm::vec3 chunkCenter = chunkToWorldPos(chunkX, chunkY, chunkZ);
-    return glm::distance(playerPos, chunkCenter);
+
+    // Base priority: Euclidean distance (closer = lower value = higher priority)
+    float distance = glm::distance(playerPos, chunkCenter);
+
+    // Camera direction factor: chunks in front of camera are more important
+    glm::vec3 toChunk = glm::normalize(chunkCenter - playerPos);
+    float dotProduct = glm::dot(cameraForward, toChunk);
+
+    // Convert dot product (-1 to 1) to weight (0 to 2)
+    // -1 (behind) -> 2.0 (low priority)
+    //  0 (perpendicular) -> 1.0 (medium priority)
+    // +1 (in front) -> 0.0 (high priority)
+    float directionWeight = 1.0f - dotProduct;
+
+    // Vertical distance penalty: chunks on same Y level are more important
+    float verticalDistance = std::abs(chunkCenter.y - playerPos.y);
+    float verticalWeight = 1.0f + (verticalDistance / 100.0f);  // Small penalty for vertical distance
+
+    // Combined priority: distance * direction_weight * vertical_weight
+    // Lower value = higher priority
+    return distance * (0.5f + directionWeight * 0.5f) * verticalWeight;
 }
 
 glm::vec3 WorldStreaming::chunkToWorldPos(int chunkX, int chunkY, int chunkZ) const {
