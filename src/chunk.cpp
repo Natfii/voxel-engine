@@ -163,9 +163,9 @@ void Chunk::generate(BiomeMap* biomeMap) {
             float worldX = static_cast<float>(static_cast<int64_t>(m_x) * WIDTH + x);
             float worldZ = static_cast<float>(static_cast<int64_t>(m_z) * DEPTH + z);
 
-            // Get biome at this position
-            const Biome* biome = biomeMap->getBiomeAt(worldX, worldZ);
-            if (!biome) {
+            // Get biome influences at this position for blending
+            std::vector<BiomeInfluence> influences = biomeMap->getBiomeInfluences(worldX, worldZ);
+            if (influences.empty()) {
                 // Fallback: Fill with stone underground, air above
                 int terrainHeight = biomeMap->getTerrainHeightAt(worldX, worldZ);
                 for (int y = 0; y < HEIGHT; y++) {
@@ -178,6 +178,9 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 }
                 continue;
             }
+
+            // Get dominant biome (highest weight) for reference
+            const Biome* dominantBiome = influences[0].biome;
 
             // Get terrain height from biome map
             int terrainHeight = biomeMap->getTerrainHeightAt(worldX, worldZ);

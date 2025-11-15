@@ -66,14 +66,14 @@ BiomeMap::BiomeMap(int seed) {
     m_weirdnessNoise->SetFractalOctaves(4);
     m_weirdnessNoise->SetFractalLacunarity(2.5f);  // More dramatic variation
     m_weirdnessNoise->SetFractalGain(0.6f);
-    m_weirdnessNoise->SetFrequency(0.0008f);  // Very large scale for continental patterns
+    m_weirdnessNoise->SetFrequency(0.0003f);  // REDUCED ~3x: Extra wide continental patterns
 
     // Weirdness detail - local strange biome variations
     m_weirdnessDetail = std::make_unique<FastNoiseLite>(seed + 2100);
     m_weirdnessDetail->SetNoiseType(FastNoiseLite::NoiseType_Perlin);  // Perlin for smoother detail
     m_weirdnessDetail->SetFractalType(FastNoiseLite::FractalType_FBm);
     m_weirdnessDetail->SetFractalOctaves(2);
-    m_weirdnessDetail->SetFrequency(0.008f);  // Local weird patches
+    m_weirdnessDetail->SetFrequency(0.002f);  // REDUCED 4x: Larger weird patches (~500 blocks)
 
     // === LAYER 4: EROSION (Terrain Roughness & Transitions) ===
     // Erosion influences how rough or smooth terrain transitions are
@@ -83,14 +83,14 @@ BiomeMap::BiomeMap(int seed) {
     m_erosionNoise->SetFractalOctaves(4);
     m_erosionNoise->SetFractalLacunarity(2.3f);
     m_erosionNoise->SetFractalGain(0.5f);
-    m_erosionNoise->SetFrequency(0.0013f);  // Large scale erosion patterns
+    m_erosionNoise->SetFrequency(0.0004f);  // REDUCED ~3x: Extra wide erosion patterns
 
     // Erosion detail - local terrain roughness
     m_erosionDetail = std::make_unique<FastNoiseLite>(seed + 3100);
     m_erosionDetail->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_erosionDetail->SetFractalType(FastNoiseLite::FractalType_FBm);
     m_erosionDetail->SetFractalOctaves(3);
-    m_erosionDetail->SetFrequency(0.010f);  // Medium scale detail
+    m_erosionDetail->SetFrequency(0.0025f);  // REDUCED 4x: Larger detail features (~400 blocks)
 
     // Terrain height noise - controlled by biome age
     m_terrainNoise = std::make_unique<FastNoiseLite>(seed + 200);
@@ -126,6 +126,10 @@ BiomeMap::BiomeMap(int seed) {
 
     // Initialize RNG for feature blending
     m_featureRng.seed(seed + 88888);
+    // Initialize with balanced transition profile (default)
+    m_transitionProfile = BiomeTransition::PROFILE_BALANCED;
+
+    std::cout << "BiomeMap initialized with transition profile: " << m_transitionProfile.name << std::endl;
 }
 
 float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
@@ -241,7 +245,6 @@ const Biome* BiomeMap::getBiomeAt(float worldX, float worldZ) {
     }
 
     return biome;
-}
 }
 
 int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
@@ -492,37 +495,28 @@ float BiomeMap::mapNoiseToRange(float noise, float min, float max) {
 
 // ==================== Biome Blending System ====================
 
+void BiomeMap::setTransitionProfile(const BiomeTransition::TransitionProfile& profile) {
+    m_transitionProfile = profile;
+
+    // Clear influence cache when profile changes since weights will be different
+    {
+        std::unique_lock<std::shared_mutex> lock(m_influenceCacheMutex);
+        m_influenceCache.clear();
+    }
+
+    std::cout << "Biome transition profile set to: " << profile.name << std::endl;
+    std::cout << "  - Search Radius: " << profile.searchRadius << std::endl;
+    std::cout << "  - Blend Distance: " << profile.blendDistance << std::endl;
+    std::cout << "  - Transition Type: " << static_cast<int>(profile.type) << std::endl;
+    std::cout << "  - Max Biomes: " << profile.maxBiomes << std::endl;
+    std::cout << "  - Sharpness: " << profile.sharpness << std::endl;
+}
+
+
 float BiomeMap::calculateInfluenceWeight(float distance, float rarityWeight) const {
-    // Return 0 if beyond search radius
-    if (distance > BIOME_SEARCH_RADIUS) {
-        return 0.0f;
-    }
-
-    float weight;
-
-    if (distance <= BIOME_BLEND_DISTANCE) {
-        // Inner zone: linear falloff from 1.0 to blending
-        // At distance 0: weight = 1.0
-        // At distance BIOME_BLEND_DISTANCE: weight approaches 0.0
-        weight = 1.0f - (distance / BIOME_BLEND_DISTANCE);
-    } else {
-        // Outer zone: smooth exponential decay
-        // Creates smooth S-curve transition
-        float falloffDist = distance - BIOME_BLEND_DISTANCE;
-        float falloffRange = BIOME_SEARCH_RADIUS - BIOME_BLEND_DISTANCE;
-        float normalizedFalloff = falloffDist / falloffRange;
-
-        // Exponential decay: e^(-3x²) gives smooth falloff
-        // The coefficient -3.0 controls how quickly influence drops off
-        weight = std::exp(-3.0f * normalizedFalloff * normalizedFalloff);
-    }
-
-    // Apply biome rarity modifier
-    // Rarer biomes (lower rarity_weight) have less influence
-    // Common biomes (higher rarity_weight) have more influence
-    weight *= (rarityWeight / 50.0f);
-
-    return weight;
+    // Use the new configurable transition system
+    return BiomeTransition::calculateTransitionWeight(distance, m_transitionProfile, rarityWeight);
+}
 }
 
 std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences(float worldX, float worldZ) {

@@ -133,12 +133,12 @@ public:
      * based on player position and render distance.
      *
      * @param playerPos Current player position in world space
-     * @param loadDistance Maximum distance to load chunks (default: 64.0)
-     * @param unloadDistance Distance at which to unload chunks (default: 96.0)
+     * @param loadDistance Maximum distance to load chunks (default: 128.0)
+     * @param unloadDistance Distance at which to unload chunks (default: 160.0)
      */
     void updatePlayerPosition(const glm::vec3& playerPos,
-                             float loadDistance = 64.0f,
-                             float unloadDistance = 96.0f);
+                             float loadDistance = 128.0f,
+                             float unloadDistance = 160.0f);
 
     /**
      * @brief Processes chunks that finished generation

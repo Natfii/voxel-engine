@@ -309,12 +309,19 @@ void World::decorateWorld() {
                     float worldX = static_cast<float>(chunkX * Chunk::WIDTH + sampleX);
                     float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + sampleZ);
 
-                // Get biome at this position
-                const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
-                if (!biome || !biome->trees_spawn) continue;
+                // Check if trees can spawn at this position (biome blending aware)
+                if (!m_biomeMap->canTreesSpawn(worldX, worldZ)) continue;
 
-                // Check tree density probability
-                if (densityDist(rng) > biome->tree_density) continue;
+                // Get blended tree density (weighted average from all influencing biomes)
+                float blendedDensity = m_biomeMap->getBlendedTreeDensity(worldX, worldZ);
+
+                // Check tree density probability using blended value
+                if (densityDist(rng) > blendedDensity) continue;
+
+                // Select which biome's trees to use (weighted random based on biome influences)
+                // This creates smooth transitions: oak -> mixed oak/birch -> birch in transition zones
+                const Biome* treeBiome = m_biomeMap->selectTreeBiome(worldX, worldZ);
+                if (!treeBiome) continue;
 
                 // Get terrain height directly from biome map (already calculated!)
                 // This is 200x faster than searching from sky downward
@@ -342,8 +349,10 @@ void World::decorateWorld() {
                 int blockX = static_cast<int>(blockXf);
                 int blockZ = static_cast<int>(blockZf);
 
-                // Place tree using biome's tree templates (each biome has unique trees)
-                if (m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ, biome)) {
+                // Place tree using selected biome's tree templates
+                // In transition zones, this probabilistically selects trees from different biomes
+                // creating smooth blending (e.g., oak -> oak/birch mix -> birch)
+                if (m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ, treeBiome)) {
                     treesPlaced++;
 
                     // Track affected chunks (tree + neighbors) for mesh regeneration
