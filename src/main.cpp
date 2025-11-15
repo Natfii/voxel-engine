@@ -388,14 +388,15 @@ int main() {
         std::cout << "Finding safe spawn location..." << std::endl;
 
         const int MAX_WORLD_HEIGHT = worldHeight * 32;  // Convert chunks to blocks
+        const int MAX_TERRAIN_HEIGHT = 180;  // Max possible terrain height (base 64 + variation 30 * multiplier 3.5 + margin)
         const int SEARCH_RADIUS = 32;  // Search in 32 block radius
         const int MIN_SOLID_DEPTH = 5;  // Require at least 5 blocks of solid ground below
 
         // Helper to check if a location is safe to spawn
-        auto isSafeSpawn = [&world, MIN_SOLID_DEPTH, MAX_WORLD_HEIGHT](float x, float z, int groundY) -> bool {
+        auto isSafeSpawn = [&world, MIN_SOLID_DEPTH, MAX_TERRAIN_HEIGHT](float x, float z, int groundY) -> bool {
             // Bounds check
-            if (groundY < MIN_SOLID_DEPTH || groundY >= MAX_WORLD_HEIGHT - 4) {
-                return false;  // Too close to world boundaries
+            if (groundY < MIN_SOLID_DEPTH || groundY >= MAX_TERRAIN_HEIGHT - 4) {
+                return false;  // Too close to terrain boundaries
             }
 
             // Check if there's solid ground below (no caves)
@@ -431,8 +432,8 @@ int main() {
                     float testZ = static_cast<float>(dz);
 
                     // Search from max possible terrain height down to Y=10
-                    // Mountains can reach Y=151, so search from there
-                    for (int y = MAX_WORLD_HEIGHT - 10; y >= 10; y--) {
+                    // Mountains can reach Y=169 (base 64 + max variation 105), so search from Y=180
+                    for (int y = MAX_TERRAIN_HEIGHT; y >= 10; y--) {
                         int currentBlock = world.getBlockAt(testX, static_cast<float>(y), testZ);
                         int aboveBlock = world.getBlockAt(testX, static_cast<float>(y + 1), testZ);
 
@@ -458,9 +459,9 @@ int main() {
         if (spawnGroundY < 0) {
             std::cout << "WARNING: No safe spawn found in initial search, validating fallback at (0, 0, 64)" << std::endl;
 
-            // Try to find ground at (0,0) by searching downward from max height
+            // Try to find ground at (0,0) by searching downward from max terrain height
             bool foundFallback = false;
-            for (int y = MAX_WORLD_HEIGHT - 10; y >= 10; y--) {
+            for (int y = MAX_TERRAIN_HEIGHT; y >= 10; y--) {
                 int currentBlock = world.getBlockAt(0.0f, static_cast<float>(y), 0.0f);
                 int aboveBlock = world.getBlockAt(0.0f, static_cast<float>(y + 1), 0.0f);
 
@@ -482,7 +483,7 @@ int main() {
                 for (int radius = 1; radius <= 64 && !foundFallback; radius += 4) {
                     for (int dx = -radius; dx <= radius && !foundFallback; dx += 4) {
                         for (int dz = -radius; dz <= radius && !foundFallback; dz += 4) {
-                            for (int y = MAX_WORLD_HEIGHT - 10; y >= 10; y--) {
+                            for (int y = MAX_TERRAIN_HEIGHT; y >= 10; y--) {
                                 float testX = static_cast<float>(dx);
                                 float testZ = static_cast<float>(dz);
                                 int currentBlock = world.getBlockAt(testX, static_cast<float>(y), testZ);
