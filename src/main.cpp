@@ -388,9 +388,14 @@ int main() {
         std::cout << "Finding safe spawn location..." << std::endl;
 
         const int MAX_WORLD_HEIGHT = worldHeight * 32;  // Convert chunks to blocks
-        const int MAX_TERRAIN_HEIGHT = 180;  // Max possible terrain height (base 64 + variation 30 * multiplier 3.5 + margin)
+        // CRITICAL FIX: Terrain height cannot exceed world height!
+        // If world is only 3 chunks (96 blocks), searching Y=180 will find nothing
+        const int MAX_TERRAIN_HEIGHT = std::min(180, MAX_WORLD_HEIGHT - 1);  // Max possible terrain height (clamped to world bounds)
         const int SEARCH_RADIUS = 32;  // Search in 32 block radius
         const int MIN_SOLID_DEPTH = 5;  // Require at least 5 blocks of solid ground below
+
+        std::cout << "World height: " << MAX_WORLD_HEIGHT << " blocks (Y=0 to Y=" << (MAX_WORLD_HEIGHT-1) << ")" << std::endl;
+        std::cout << "Searching for spawn from Y=" << MAX_TERRAIN_HEIGHT << " down to Y=10" << std::endl;
 
         // Helper to check if a location is safe to spawn
         auto isSafeSpawn = [&world, MIN_SOLID_DEPTH, MAX_TERRAIN_HEIGHT](float x, float z, int groundY) -> bool {
@@ -520,14 +525,24 @@ int main() {
         // So eyes should be at groundY+1.1+1.6 = groundY+2.7
         float spawnY = static_cast<float>(spawnGroundY) + 2.7f;
 
-        // Debug: Check blocks around spawn
+        // Debug: Check blocks around spawn (extended range to detect caves)
         std::cout << "Blocks at spawn location:" << std::endl;
-        for (int dy = -2; dy <= 3; dy++) {
+        for (int dy = -10; dy <= 5; dy++) {
             int blockY = spawnGroundY + dy;
             int blockID = world.getBlockAt(spawnX, static_cast<float>(blockY), spawnZ);
-            std::cout << "  Block Y=" << blockY << " (world Y=" << static_cast<float>(blockY)
-                      << "): " << blockID << (dy == 0 ? " <- GROUND" : "")
-                      << (dy == 1 ? " <- FEET" : "") << std::endl;
+            const char* marker = "";
+            if (dy == 0) marker = " <- GROUND";
+            else if (dy == 1) marker = " <- FEET";
+            else if (dy == 2) marker = " <- HEAD";
+
+            std::cout << "  Y=" << blockY << ": blockID=" << blockID;
+            if (blockID == 0) std::cout << " (AIR)";
+            else if (blockID == 1) std::cout << " (STONE)";
+            else if (blockID == 2) std::cout << " (GRASS)";
+            else if (blockID == 3) std::cout << " (DIRT)";
+            else if (blockID == 5) std::cout << " (WATER)";
+            else if (blockID == 12) std::cout << " (BEDROCK)";
+            std::cout << marker << std::endl;
         }
 
         std::cout << "Spawn at (" << spawnX << ", " << spawnY << ", " << spawnZ

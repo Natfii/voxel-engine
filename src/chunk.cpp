@@ -182,6 +182,15 @@ void Chunk::generate(BiomeMap* biomeMap) {
             // Get terrain height from biome map
             int terrainHeight = biomeMap->getTerrainHeightAt(worldX, worldZ);
 
+            // CRITICAL FIX: Clamp terrain height to chunk's maximum possible Y coordinate
+            // If chunk Y=2 (blocks 64-95) and terrainHeight=120, the entire chunk would be solid
+            // because all worldY values (64-95) are < 120, leaving no surface to spawn on
+            int maxWorldY = static_cast<int>(static_cast<int64_t>(m_y) * HEIGHT + HEIGHT - 1);
+            if (terrainHeight > maxWorldY + 10) {
+                // Terrain is way above this chunk - fill as underground
+                terrainHeight = maxWorldY + 10;
+            }
+
             // Check if this is an ocean area (hardcoded biome - not YAML)
             // Ocean = terrain significantly below water level
             bool isOcean = (terrainHeight < WATER_LEVEL - 8);  // 8+ blocks below water = ocean
