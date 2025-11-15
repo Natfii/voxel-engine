@@ -454,9 +454,9 @@ void World::registerWaterBlocks() {
 
     // Iterate through all chunks
     for (auto& chunk : m_chunks) {
-        int chunkX = chunk->getX();
-        int chunkY = chunk->getY();
-        int chunkZ = chunk->getZ();
+        int chunkX = chunk->getChunkX();
+        int chunkY = chunk->getChunkY();
+        int chunkZ = chunk->getChunkZ();
 
         // Scan all blocks in chunk
         for (int localX = 0; localX < Chunk::WIDTH; localX++) {
