@@ -356,10 +356,13 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
         const Biome* biome = influence.biome;
         if (!biome) continue;
 
-        // === PER-BIOME HEIGHT VARIATION SYSTEM ===
-        // Use biome-specific noise frequency for different terrain types
-        float biomeNoise = m_terrainNoise->GetNoise(worldX * biome->height_noise_frequency,
-                                                      worldZ * biome->height_noise_frequency);
+        // === PER-BIOME HEIGHT VARIATION SYSTEM WITH ROUGHNESS CONTROL ===
+        // Use biome-specific noise parameters for different terrain types
+        float biomeNoise = generatePerBiomeNoise(worldX, worldZ,
+                                                biome->terrain_octaves,
+                                                biome->height_noise_frequency,
+                                                biome->terrain_lacunarity,
+                                                biome->terrain_gain);
 
         // Calculate height variation using biome-specific min/max ranges
         float heightVariation;
@@ -1422,4 +1425,113 @@ std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences3D(float worldX, float w
     }
 
     return modifiedInfluences;
+}
+
+// ==================== Multi-Layer Noise Configuration System ====================
+
+BiomeMap::BiomeMap(int seed, const BiomeNoise::BiomeNoiseConfig& config)
+    : m_seed(seed), m_noiseConfig(config) {
+    initializeNoiseGenerators();
+    m_voronoi = std::make_unique<BiomeVoronoi>(seed);
+    m_useVoronoiMode = false;
+    m_featureRng.seed(seed + 88888);
+    m_transitionProfile = BiomeTransition::PROFILE_BALANCED;
+}
+
+void BiomeMap::initializeNoiseGenerators() {
+    m_temperatureNoise = std::make_unique<FastNoiseLite>(m_seed);
+    applyLayerConfig(m_temperatureNoise.get(), m_noiseConfig.temperature.baseLayer);
+    m_temperatureVariation = std::make_unique<FastNoiseLite>(m_seed + 1000);
+    applyLayerConfig(m_temperatureVariation.get(), m_noiseConfig.temperature.detailLayer);
+    m_moistureNoise = std::make_unique<FastNoiseLite>(m_seed + 100);
+    applyLayerConfig(m_moistureNoise.get(), m_noiseConfig.moisture.baseLayer);
+    m_moistureVariation = std::make_unique<FastNoiseLite>(m_seed + 1100);
+    applyLayerConfig(m_moistureVariation.get(), m_noiseConfig.moisture.detailLayer);
+    m_weirdnessNoise = std::make_unique<FastNoiseLite>(m_seed + 2000);
+    applyLayerConfig(m_weirdnessNoise.get(), m_noiseConfig.weirdness.baseLayer);
+    m_weirdnessDetail = std::make_unique<FastNoiseLite>(m_seed + 2100);
+    applyLayerConfig(m_weirdnessDetail.get(), m_noiseConfig.weirdness.detailLayer);
+    m_erosionNoise = std::make_unique<FastNoiseLite>(m_seed + 3000);
+    applyLayerConfig(m_erosionNoise.get(), m_noiseConfig.erosion.baseLayer);
+    m_erosionDetail = std::make_unique<FastNoiseLite>(m_seed + 3100);
+    applyLayerConfig(m_erosionDetail.get(), m_noiseConfig.erosion.detailLayer);
+    m_terrainNoise = std::make_unique<FastNoiseLite>(m_seed + 200);
+    m_terrainNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_terrainNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
+    m_terrainNoise->SetFractalOctaves(5);
+    m_terrainNoise->SetFrequency(0.015f);
+    m_caveNoise = std::make_unique<FastNoiseLite>(m_seed + 300);
+    m_caveNoise->SetNoiseType(FastNoiseLite::NoiseType_Cellular);
+    m_caveNoise->SetFrequency(0.03f);
+    m_caveTunnelNoise = std::make_unique<FastNoiseLite>(m_seed + 350);
+    m_caveTunnelNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_caveTunnelNoise->SetFractalOctaves(3);
+    m_caveTunnelNoise->SetFrequency(0.02f);
+    m_undergroundChamberNoise = std::make_unique<FastNoiseLite>(m_seed + 400);
+    m_undergroundChamberNoise->SetNoiseType(FastNoiseLite::NoiseType_Cellular);
+    m_undergroundChamberNoise->SetFrequency(0.006f);
+    m_altitudeVariation = std::make_unique<FastNoiseLite>(m_seed + 5000);
+    m_altitudeVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_altitudeVariation->SetFractalOctaves(3);
+    m_altitudeVariation->SetFrequency(0.02f);
+    m_snowLineNoise = std::make_unique<FastNoiseLite>(m_seed + 5100);
+    m_snowLineNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_snowLineNoise->SetFractalOctaves(4);
+    m_snowLineNoise->SetFrequency(0.03f);
+}
+
+void BiomeMap::applyLayerConfig(FastNoiseLite* noise, const BiomeNoise::NoiseLayerConfig& config) {
+    if (!noise) return;
+    noise->SetNoiseType(config.noiseType);
+    noise->SetFractalType(config.fractalType);
+    noise->SetFrequency(config.frequency);
+    noise->SetFractalOctaves(config.octaves);
+    noise->SetFractalLacunarity(config.lacunarity);
+    noise->SetFractalGain(config.gain);
+}
+
+void BiomeMap::clearAllCaches() {
+    { std::unique_lock<std::shared_mutex> lock(m_cacheMutex); m_biomeCache.clear(); }
+    { std::unique_lock<std::shared_mutex> lock(m_influenceCacheMutex); m_influenceCache.clear(); }
+    { std::unique_lock<std::shared_mutex> lock(m_influenceCache3DMutex); m_influenceCache3D.clear(); }
+    { std::unique_lock<std::shared_mutex> lock(m_terrainCacheMutex); m_terrainHeightCache.clear(); }
+    { std::unique_lock<std::shared_mutex> lock(m_caveCacheMutex); m_caveDensityCache.clear(); }
+}
+
+void BiomeMap::setNoiseConfig(const BiomeNoise::BiomeNoiseConfig& config) {
+    m_noiseConfig = config;
+    initializeNoiseGenerators();
+    clearAllCaches();
+}
+
+void BiomeMap::setDimensionConfig(int dimension, const BiomeNoise::DimensionConfig& config) {
+    if (dimension == 0) m_noiseConfig.temperature = config;
+    else if (dimension == 1) m_noiseConfig.moisture = config;
+    else if (dimension == 2) m_noiseConfig.weirdness = config;
+    else if (dimension == 3) m_noiseConfig.erosion = config;
+    else return;
+    initializeNoiseGenerators();
+    clearAllCaches();
+}
+
+void BiomeMap::setLayerConfig(int dimension, bool isBase, const BiomeNoise::NoiseLayerConfig& cfg) {
+    if (dimension == 0) (isBase ? m_noiseConfig.temperature.baseLayer : m_noiseConfig.temperature.detailLayer) = cfg;
+    else if (dimension == 1) (isBase ? m_noiseConfig.moisture.baseLayer : m_noiseConfig.moisture.detailLayer) = cfg;
+    else if (dimension == 2) (isBase ? m_noiseConfig.weirdness.baseLayer : m_noiseConfig.weirdness.detailLayer) = cfg;
+    else if (dimension == 3) (isBase ? m_noiseConfig.erosion.baseLayer : m_noiseConfig.erosion.detailLayer) = cfg;
+    else return;
+    initializeNoiseGenerators();
+    clearAllCaches();
+}
+
+void BiomeMap::applyPreset(const std::string& name) {
+    BiomeNoise::BiomeNoiseConfig cfg;
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    if (lower == "continental") cfg = BiomeNoise::createContinentalConfig();
+    else if (lower == "regional") cfg = BiomeNoise::createRegionalConfig();
+    else if (lower == "local") cfg = BiomeNoise::createLocalConfig();
+    else if (lower == "compact") cfg = BiomeNoise::createCompactConfig();
+    else return;
+    setNoiseConfig(cfg);
 }
