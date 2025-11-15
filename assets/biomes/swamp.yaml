@@ -1,0 +1,49 @@
+# Swamp Biome
+# Wet, murky terrain with standing water and scattered trees
+
+# Required properties
+name: "Swamp"
+temperature: 65        # Moderate
+moisture: 85           # Very wet
+age: 90                # Very flat (water-logged terrain)
+activity: 40           # Moderate structure spawning
+
+# Vegetation
+trees_spawn: true
+tree_density: 35       # Scattered swamp trees
+vegetation_density: 80 # High vegetation (water plants, grass)
+
+# Spawning
+spawn_location: "AboveGround"
+lowest_y: 61           # Near sea level
+biome_rarity_weight: 35  # Uncommon
+river_compatible: true
+underwater_biome: false
+height_multiplier: 0.5   # Very flat terrain
+
+# Primary blocks
+primary_surface_block: 3   # Grass (swamp grass variant)
+primary_stone_block: 1     # Stone
+primary_log_block: 6       # Oak log (swamp tree variant)
+primary_leave_block: 7     # Oak leaves
+
+# Block requirements
+required_blocks: "5"       # Must have water
+blacklisted_blocks: "10,11,4" # No snow, ice, or sand
+
+# Structures
+required_structures: ""
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: true
+
+# Weather
+primary_weather: "rain"
+blacklisted_weather: "snow"  # Never snows in swamps
+
+# Atmosphere
+fog_color: "120,130,110"  # Murky green-grey fog
+
+# Ore distribution (reduced due to water)
+ore_spawn_rates: "coal:0.8,iron:0.7,gold:0.6"

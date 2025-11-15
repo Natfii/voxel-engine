@@ -1,0 +1,49 @@
+# Taiga Biome
+# Cold boreal forest with spruce trees and occasional snow
+
+# Required properties
+name: "Taiga"
+temperature: 20        # Cold
+moisture: 50           # Moderate
+age: 65                # Moderate terrain variation
+activity: 50           # Moderate structure spawning
+
+# Vegetation
+trees_spawn: true
+tree_density: 70       # Dense spruce forest
+vegetation_density: 45 # Moderate vegetation (less than temperate forest)
+
+# Spawning
+spawn_location: "AboveGround"
+lowest_y: 62
+biome_rarity_weight: 55  # Moderately common
+river_compatible: true
+underwater_biome: false
+height_multiplier: 1.1   # Slightly hilly
+
+# Primary blocks
+primary_surface_block: 3   # Grass (taiga grass)
+primary_stone_block: 1     # Stone
+primary_log_block: 8       # Spruce log
+primary_leave_block: 9     # Spruce leaves
+
+# Block requirements
+required_blocks: "8"       # Must have spruce logs
+blacklisted_blocks: "4"    # No sand
+
+# Structures
+required_structures: ""
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: true
+
+# Weather
+primary_weather: "clear"
+blacklisted_weather: ""    # Can have any weather
+
+# Atmosphere
+fog_color: "180,200,210"  # Cool, crisp air
+
+# Ore distribution (normal rates)
+ore_spawn_rates: "coal:1.1,iron:1.0,gold:0.9"

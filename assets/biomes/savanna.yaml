@@ -1,0 +1,49 @@
+# Savanna Biome
+# Hot, dry grassland with scattered acacia trees
+
+# Required properties
+name: "Savanna"
+temperature: 80        # Hot
+moisture: 30           # Low-moderate (dry season)
+age: 85                # Very flat plains
+activity: 40           # Moderate structure spawning
+
+# Vegetation
+trees_spawn: true
+tree_density: 12       # Very sparse trees (scattered acacias)
+vegetation_density: 50 # Moderate grass (dry grass)
+
+# Spawning
+spawn_location: "AboveGround"
+lowest_y: 63
+biome_rarity_weight: 50  # Moderately common
+river_compatible: true
+underwater_biome: false
+height_multiplier: 0.8   # Mostly flat with gentle hills
+
+# Primary blocks
+primary_surface_block: 3   # Grass (dry grass variant)
+primary_stone_block: 1     # Stone
+primary_log_block: 6       # Oak log (acacia wood)
+primary_leave_block: 7     # Oak leaves (acacia leaves)
+
+# Block requirements
+required_blocks: "3"       # Must have grass
+blacklisted_blocks: "10,11" # No snow or ice
+
+# Structures
+required_structures: ""
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: true
+
+# Weather
+primary_weather: "clear"
+blacklisted_weather: "snow"  # Never snows in savanna
+
+# Atmosphere
+fog_color: "220,190,140"  # Warm, dusty haze
+
+# Ore distribution (normal rates)
+ore_spawn_rates: "coal:1.0,iron:1.1,gold:1.0"

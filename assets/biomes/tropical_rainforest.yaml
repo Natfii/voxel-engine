@@ -1,0 +1,49 @@
+# Tropical Rainforest Biome
+# Hot, wet, dense jungle terrain with lots of vegetation
+
+# Required properties
+name: "Tropical Rainforest"
+temperature: 85        # Very hot
+moisture: 90           # Very wet
+age: 60                # Moderate terrain variation
+activity: 65           # High structure spawning (jungle temples, etc.)
+
+# Vegetation
+trees_spawn: true
+tree_density: 95       # Extremely dense trees
+vegetation_density: 100 # Maximum vegetation (jungle floor)
+
+# Spawning
+spawn_location: "AboveGround"
+lowest_y: 62
+biome_rarity_weight: 30  # Somewhat rare
+river_compatible: true
+underwater_biome: false
+height_multiplier: 1.2   # Slightly hilly
+
+# Primary blocks
+primary_surface_block: 3   # Grass (jungle grass variant)
+primary_stone_block: 1     # Stone
+primary_log_block: 6       # Oak log (jungle wood)
+primary_leave_block: 7     # Oak leaves (jungle leaves)
+
+# Block requirements
+required_blocks: "3"       # Must have grass
+blacklisted_blocks: "10,11" # No snow or ice
+
+# Structures
+required_structures: ""
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: true
+
+# Weather
+primary_weather: "rain"
+blacklisted_weather: "snow"  # Never snows in tropical rainforest
+
+# Atmosphere
+fog_color: "100,150,100"  # Greenish jungle fog
+
+# Ore distribution (normal rates)
+ore_spawn_rates: "coal:1.0,iron:1.0,gold:0.8"

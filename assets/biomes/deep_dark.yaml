@@ -1,0 +1,49 @@
+# Deep Dark Biome
+# Dangerous underground biome at extreme depths
+
+# Required properties
+name: "Deep Dark"
+temperature: 15        # Very cold deep underground
+moisture: 20           # Very dry
+age: 25                # Rough, unstable terrain
+activity: 90           # Very high structure spawning (ancient cities, sculk)
+
+# Vegetation
+trees_spawn: false
+tree_density: 0
+vegetation_density: 0  # No vegetation
+
+# Spawning
+spawn_location: "Underground"
+lowest_y: -200         # Extreme depth
+biome_rarity_weight: 8   # Very rare, dangerous biome
+river_compatible: false
+underwater_biome: false
+height_multiplier: 1.2
+
+# Primary blocks
+primary_surface_block: 1   # Stone (deep slate variant)
+primary_stone_block: 1     # Stone
+primary_log_block: -1      # No logs
+primary_leave_block: -1    # No leaves
+
+# Block requirements
+required_blocks: "1"       # Must have stone
+blacklisted_blocks: "2,3,4,7,10,11" # No dirt, grass, sand, leaves, snow, or ice
+
+# Structures
+required_structures: ""    # Ancient cities spawn here
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: true        # Very hostile (warden, sculk creatures)
+
+# Weather
+primary_weather: ""        # No weather underground
+blacklisted_weather: "rain,snow,clear"
+
+# Atmosphere
+fog_color: "10,15,20"      # Nearly black, oppressive darkness
+
+# Ore distribution (extremely rich but dangerous)
+ore_spawn_rates: "coal:1.5,iron:2.0,gold:4.0"
