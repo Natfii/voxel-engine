@@ -99,7 +99,23 @@ public:
     ~World();
 
     /**
+     * @brief Generates only chunks in a radius around a spawn point
+     *
+     * Optimized for fast startup - generates only the chunks needed around spawn.
+     * The WorldStreaming system handles the rest dynamically as the player moves.
+     *
+     * @param centerChunkX Center chunk X coordinate
+     * @param centerChunkY Center chunk Y coordinate
+     * @param centerChunkZ Center chunk Z coordinate
+     * @param radius Radius in chunks (e.g., 3 = 7x7x7 chunk cube = 343 chunks)
+     */
+    void generateSpawnChunks(int centerChunkX, int centerChunkY, int centerChunkZ, int radius = 3);
+
+    /**
      * @brief Generates terrain for all chunks using FastNoiseLite
+     *
+     * DEPRECATED: Too slow for large worlds (e.g., 320 height = 46,080 chunks)
+     * Use generateSpawnChunks() + WorldStreaming instead for better performance.
      *
      * Uses multi-threaded generation for improved performance. The number of threads
      * is automatically determined based on hardware concurrency.
