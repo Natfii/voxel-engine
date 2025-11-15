@@ -48,3 +48,13 @@ fog_color: "255,220,180"  # Warm, sandy haze
 
 # Ore distribution (slightly reduced due to sand)
 ore_spawn_rates: "coal:0.7,iron:0.8,gold:1.2"
+
+# === BIOME INFLUENCE FALLOFF CUSTOMIZATION (Agent 23) ===
+# Deserts have sharper transitions (distinct boundaries)
+falloff_use_custom: true
+falloff_type: "polynomial_3"      # Cubic falloff for distinct edges
+falloff_sharpness: 1.5             # Sharper transitions
+falloff_blend_distance: 12.0       # Narrower blend zone
+falloff_search_radius: 20.0        # Smaller influence radius
+falloff_influence_multiplier: 1.0  # Normal influence
+falloff_edge_softness: 0.8         # Sharper edges

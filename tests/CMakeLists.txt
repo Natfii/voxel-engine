@@ -184,13 +184,40 @@ set_tests_properties(MoistureBiomeSelection PROPERTIES
 )
 
 # ============================================================
+# Test 7: Biome Interpolation Utilities
+# ============================================================
+
+add_executable(test_biome_interpolation
+    test_biome_interpolation.cpp
+)
+
+target_include_directories(test_biome_interpolation PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+# Note: This test only needs GLM headers, not full engine lib
+# But we link it anyway for consistency
+target_link_libraries(test_biome_interpolation PRIVATE voxel-engine-lib)
+
+add_test(
+    NAME BiomeInterpolation
+    COMMAND $<TARGET_FILE:test_biome_interpolation>
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(BiomeInterpolation PROPERTIES
+    TIMEOUT 30
+    LABELS "fast;correctness;biome;interpolation"
+)
+
+# ============================================================
 # Custom test commands
 # ============================================================
 
 # Run only fast tests (correctness + basic performance)
 add_custom_target(test_fast
     COMMAND ${CMAKE_CTEST_COMMAND} -L fast -V
-    DEPENDS test_chunk_correctness test_performance test_moisture_biome_selection
+    DEPENDS test_chunk_correctness test_performance test_moisture_biome_selection test_biome_interpolation
     COMMENT "Running fast tests..."
 )
 

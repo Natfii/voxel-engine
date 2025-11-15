@@ -47,3 +47,13 @@ fog_color: "200,210,220"  # Slightly blue-grey mountain mist
 
 # Ore distribution (mountains have more ores!)
 ore_spawn_rates: "coal:1.5,iron:1.8,gold:2.0"
+
+# === BIOME INFLUENCE FALLOFF CUSTOMIZATION (Agent 23) ===
+# Mountains use wider, gentler transitions due to large scale
+falloff_use_custom: true
+falloff_type: "gaussian"          # Natural elevation-like falloff
+falloff_sharpness: 0.7             # Gentler transitions
+falloff_blend_distance: 25.0       # Wider blend zone
+falloff_search_radius: 40.0        # Wider influence
+falloff_influence_multiplier: 1.2  # Strong presence (mountains dominate)
+falloff_edge_softness: 1.5         # Very soft edges
