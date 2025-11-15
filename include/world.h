@@ -68,13 +68,21 @@ namespace std {
  * - World is centered at origin (0, 0, 0)
  * - Each chunk contains 32x32x32 blocks = 32x32x32 world units
  *
+ * World size limits:
+ * - Theoretical maximum: ±1,073,741,823 chunks per axis (limited by int32 range)
+ * - Maximum world dimensions: ~64 billion blocks per axis (2,147,483,647 / 32)
+ * - Practical limits: Memory usage = chunks loaded × 0.42 MB per chunk
+ * - Recommended: Use WorldStreaming for worlds > 1000×1000 chunks to avoid loading all at once
+ * - Coordinate overflow protection: Automatic validation prevents integer overflow
+ *
  * Performance features:
  * - Multi-threaded chunk generation
  * - Two-stage culling: distance-based + frustum culling
  * - Empty chunk skipping (chunks with no visible geometry)
+ * - Dynamic chunk streaming for infinite world support
  *
- * @note The world does not support dynamic chunk loading/unloading - all chunks
- *       are generated at initialization time.
+ * @note The world supports both fixed-size and streaming modes. For very large worlds,
+ *       use generateSpawnChunks() + WorldStreaming instead of generateWorld().
  */
 class World {
 public:
@@ -438,6 +446,25 @@ public:
     int getBlockAtUnsafe(float worldX, float worldY, float worldZ);
 
 private:
+    /**
+     * @brief Validates chunk coordinates to prevent integer overflow
+     *
+     * Ensures chunk coordinates are within safe int32 range considering world centering.
+     * Maximum safe coordinate is INT_MAX/2 to allow for coordinate arithmetic.
+     *
+     * @param chunkX Chunk X coordinate to validate
+     * @param chunkY Chunk Y coordinate to validate
+     * @param chunkZ Chunk Z coordinate to validate
+     * @return True if coordinates are safe, false if they would cause overflow
+     */
+    static bool isChunkCoordValid(int chunkX, int chunkY, int chunkZ) {
+        constexpr int MAX_SAFE_COORD = 1073741823; // INT_MAX / 2
+        constexpr int MIN_SAFE_COORD = -1073741823; // INT_MIN / 2
+        return chunkX >= MIN_SAFE_COORD && chunkX <= MAX_SAFE_COORD &&
+               chunkY >= MIN_SAFE_COORD && chunkY <= MAX_SAFE_COORD &&
+               chunkZ >= MIN_SAFE_COORD && chunkZ <= MAX_SAFE_COORD;
+    }
+
     /**
      * @brief Internal chunk lookup without locking (caller must hold lock)
      *

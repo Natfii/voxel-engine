@@ -55,10 +55,28 @@ World::World(int width, int height, int depth, int seed)
     int halfHeight = height / 2;  // CHANGED: Center Y axis too for deep caves
     int halfDepth = depth / 2;
 
+    // Validate world dimensions to prevent coordinate overflow
+    int minChunkX = -halfWidth;
+    int maxChunkX = width - halfWidth - 1;
+    int minChunkY = -halfHeight;
+    int maxChunkY = height - halfHeight - 1;
+    int minChunkZ = -halfDepth;
+    int maxChunkZ = depth - halfDepth - 1;
+
+    if (!isChunkCoordValid(minChunkX, minChunkY, minChunkZ) ||
+        !isChunkCoordValid(maxChunkX, maxChunkY, maxChunkZ)) {
+        throw std::runtime_error("World dimensions too large - would cause coordinate overflow. "
+                               "Maximum safe world size: ±1,073,741,823 chunks per axis.");
+    }
+
     Logger::info() << "Creating world with " << width << "x" << height << "x" << depth << " chunks (seed: " << seed << ")";
-    Logger::info() << "Chunk coordinates range: X[" << -halfWidth << " to " << (width - halfWidth - 1)
-                   << "], Y[" << -halfHeight << " to " << (height - halfHeight - 1)
-                   << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]";
+    Logger::info() << "Chunk coordinates range: X[" << minChunkX << " to " << maxChunkX
+                   << "], Y[" << minChunkY << " to " << maxChunkY
+                   << "], Z[" << minChunkZ << " to " << maxChunkZ << "]";
+    Logger::info() << "World size: " << (static_cast<int64_t>(width) * 32) << "x"
+                   << (static_cast<int64_t>(height) * 32) << "x"
+                   << (static_cast<int64_t>(depth) * 32) << " blocks";
+    Logger::info() << "Theoretical maximum: ±1,073,741,823 chunks per axis (±34 billion blocks)";
 
     // STREAMING OPTIMIZATION: Don't create all chunks at startup!
     // With 320 height, that's 12*320*12 = 46,080 chunks which takes forever to generate.
@@ -199,7 +217,47 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
         thread.join();
     }
 
-    Logger::info() << "Spawn chunks generated successfully";
+    Logger::info() << "Generating LOD meshes for " << chunksToGenerate.size() << " spawn chunks...";
+
+    // Step 3: Generate LOD1 meshes (medium detail)
+    threads.clear();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, chunksToGenerate.size());
+
+        if (startIdx >= chunksToGenerate.size()) break;
+
+        threads.emplace_back([this, &chunksToGenerate, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                chunksToGenerate[j]->generateLODMesh(this, 1);  // LOD level 1
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Step 4: Generate LOD2 meshes (low detail)
+    threads.clear();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, chunksToGenerate.size());
+
+        if (startIdx >= chunksToGenerate.size()) break;
+
+        threads.emplace_back([this, &chunksToGenerate, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                chunksToGenerate[j]->generateLODMesh(this, 2);  // LOD level 2
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    Logger::info() << "Spawn chunks generated successfully (with LOD)";
 }
 
 void World::generateWorld() {
@@ -260,6 +318,49 @@ void World::generateWorld() {
     for (auto& thread : threads) {
         thread.join();
     }
+
+    // Step 3: Generate LOD meshes (parallel)
+    Logger::info() << "Generating LOD meshes...";
+
+    // Generate LOD1 meshes
+    threads.clear();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, m_chunks.size());
+
+        if (startIdx >= m_chunks.size()) break;
+
+        threads.emplace_back([this, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                m_chunks[j]->generateLODMesh(this, 1);  // LOD level 1
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Generate LOD2 meshes
+    threads.clear();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, m_chunks.size());
+
+        if (startIdx >= m_chunks.size()) break;
+
+        threads.emplace_back([this, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                m_chunks[j]->generateLODMesh(this, 2);  // LOD level 2
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    Logger::info() << "World mesh generation complete (with LOD)";
 }
 
 void World::decorateWorld() {
@@ -516,6 +617,13 @@ void World::createBuffers(VulkanRenderer* renderer) {
             chunk->cleanupStagingBuffers(renderer);
         }
     }
+
+    // Create LOD buffers for all chunks (done separately, not batched for simplicity)
+    Logger::info() << "Creating LOD buffers for chunks...";
+    for (auto& chunk : m_chunks) {
+        chunk->createLODBuffers(renderer);
+    }
+    Logger::info() << "LOD buffer creation complete";
 }
 
 void World::cleanup(VulkanRenderer* renderer) {
