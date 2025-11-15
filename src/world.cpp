@@ -126,6 +126,16 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
                     int chunkY = centerChunkY + dy;
                     int chunkZ = centerChunkZ + dz;
 
+                    // Bounds check: Skip chunks outside world boundaries
+                    int halfWidth = m_width / 2;
+                    int halfHeight = m_height / 2;
+                    int halfDepth = m_depth / 2;
+                    if (chunkX < -halfWidth || chunkX >= halfWidth ||
+                        chunkY < -halfHeight || chunkY >= halfHeight ||
+                        chunkZ < -halfDepth || chunkZ >= halfDepth) {
+                        continue;  // Skip out-of-bounds chunk
+                    }
+
                     // Create chunk if it doesn't exist
                     ChunkCoord coord{chunkX, chunkY, chunkZ};
                     if (m_chunkMap.find(coord) == m_chunkMap.end()) {
@@ -476,7 +486,7 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     Frustum frustum = extractFrustum(viewProj);
 
     // Chunk culling: account for chunk size to prevent popping
-    // Chunks are 32x32x32 blocks = 16x16x16 world units
+    // Chunks are 32x32x32 blocks = 32x32x32 world units
     // Fragment shader discards at renderDistance * FRAGMENT_DISCARD_MARGIN (see shader.frag)
     // Render chunks if their farthest corner could be visible
     using namespace WorldConstants;
@@ -1086,7 +1096,7 @@ void World::updateLiquids(VulkanRenderer* renderer) {
 
                             // Calculate world position
                             float worldX = static_cast<float>(chunkX * Chunk::WIDTH + localX);
-                            float worldY = static_cast<float>(y * Chunk::HEIGHT + localY);
+                            float worldY = static_cast<float>(chunkY * Chunk::HEIGHT + localY);
                             float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + localZ);
 
                             // Get water level

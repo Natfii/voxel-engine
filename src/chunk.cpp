@@ -201,7 +201,7 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 float worldYf = static_cast<float>(worldY);
 
                 // BEDROCK LAYER: Y=0 to Y=1 is always bedrock (unbreakable bottom)
-                if (worldY <= 1) {
+                if (worldY >= 0 && worldY <= 1) {
                     m_blocks[x][y][z] = BLOCK_BEDROCK;
                     continue;
                 }
@@ -321,7 +321,7 @@ void Chunk::generate(BiomeMap* biomeMap) {
  * Coordinate Systems:
  * -------------------
  * - Local coords: (0-31, 0-31, 0-31) within chunk
- * - World coords: local * 0.5 (blocks are 0.5 world units)
+ * - World coords: local * 1.0 (blocks are 1.0 world units)
  * - Texture coords: UV mapped from texture atlas
  *
  * Texture Atlas Mapping:
@@ -339,7 +339,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
      * ========================================
      *
      * Each face is a quad defined by 4 vertices (counter-clockwise winding order).
-     * Blocks are 0.5 world units in size (1 block = 0.5 units).
+     * Blocks are 1.0 world units in size (1 block = 1.0 units).
      *
      * Vertex ordering per face (looking at face from outside):
      *   3 -------- 2

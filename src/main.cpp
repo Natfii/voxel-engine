@@ -522,12 +522,14 @@ int main() {
                     }
                 }
 
-                // Last resort: spawn at Y=64 even if not validated
+                // Last resort: spawn at safe Y calculated from world bounds
                 if (!foundFallback) {
-                    std::cout << "CRITICAL WARNING: No safe spawn found anywhere, using unvalidated Y=64 at (0, 0)" << std::endl;
+                    int emergencyY = (MAX_TERRAIN_HEIGHT + MIN_SEARCH_Y) / 2;  // Midpoint of search range
+                    std::cout << "CRITICAL WARNING: No safe spawn found anywhere, using unvalidated Y="
+                              << emergencyY << " at (0, 0)" << std::endl;
                     spawnX = 0.0f;
                     spawnZ = 0.0f;
-                    spawnGroundY = 64;
+                    spawnGroundY = emergencyY;
                 }
             }
         }

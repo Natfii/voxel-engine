@@ -64,9 +64,9 @@ namespace std {
  * - Block modification with automatic mesh regeneration for affected chunks
  *
  * World coordinates:
- * - Blocks are 0.5 world units in size
+ * - Blocks are 1.0 world units in size
  * - World is centered at origin (0, 0, 0)
- * - Each chunk contains 32x32x32 blocks = 16x16x16 world units
+ * - Each chunk contains 32x32x32 blocks = 32x32x32 world units
  *
  * Performance features:
  * - Multi-threaded chunk generation
