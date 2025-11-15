@@ -113,26 +113,33 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
 
     // Collect chunks to generate
     std::vector<Chunk*> chunksToGenerate;
-    for (int dx = -radius; dx <= radius; dx++) {
-        for (int dy = -radius; dy <= radius; dy++) {
-            for (int dz = -radius; dz <= radius; dz++) {
-                int chunkX = centerChunkX + dx;
-                int chunkY = centerChunkY + dy;
-                int chunkZ = centerChunkZ + dz;
 
-                // Create chunk if it doesn't exist
-                ChunkCoord coord{chunkX, chunkY, chunkZ};
-                if (m_chunkMap.find(coord) == m_chunkMap.end()) {
-                    auto chunk = std::make_unique<Chunk>(chunkX, chunkY, chunkZ);
-                    Chunk* chunkPtr = chunk.get();
-                    m_chunkMap[coord] = std::move(chunk);
-                    m_chunks.push_back(chunkPtr);
+    // THREAD SAFETY: Acquire unique lock for chunk creation
+    // Prevents race conditions with renderWorld() and other chunk operations
+    {
+        std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dy = -radius; dy <= radius; dy++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    int chunkX = centerChunkX + dx;
+                    int chunkY = centerChunkY + dy;
+                    int chunkZ = centerChunkZ + dz;
+
+                    // Create chunk if it doesn't exist
+                    ChunkCoord coord{chunkX, chunkY, chunkZ};
+                    if (m_chunkMap.find(coord) == m_chunkMap.end()) {
+                        auto chunk = std::make_unique<Chunk>(chunkX, chunkY, chunkZ);
+                        Chunk* chunkPtr = chunk.get();
+                        m_chunkMap[coord] = std::move(chunk);
+                        m_chunks.push_back(chunkPtr);
+                    }
+
+                    chunksToGenerate.push_back(m_chunkMap[coord].get());
                 }
-
-                chunksToGenerate.push_back(m_chunkMap[coord].get());
             }
         }
-    }
+    }  // Lock released here before terrain generation
 
     Logger::info() << "Generating terrain for " << chunksToGenerate.size() << " spawn chunks...";
 
@@ -486,6 +493,10 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
 
     // Store transparent chunks for second pass (sorted back-to-front)
     std::vector<std::pair<Chunk*, float>> transparentChunks;
+
+    // THREAD SAFETY: Acquire shared lock for reading m_chunks
+    // Prevents iterator invalidation while other threads modify the chunk list
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
     // ========== PASS 1: RENDER OPAQUE GEOMETRY ==========
     for (auto& chunk : m_chunks) {
@@ -863,7 +874,8 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
 
             for (const auto& neighborPos : neighbors) {
                 int neighborBlock = getBlockAtUnsafe(neighborPos.x, neighborPos.y, neighborPos.z);
-                if (neighborBlock != 0 && registry.get(neighborBlock).isLiquid) {
+                // Bounds check before registry access to prevent crash
+                if (neighborBlock != 0 && neighborBlock >= 0 && neighborBlock < registry.count() && registry.get(neighborBlock).isLiquid) {
                     uint8_t neighborLevel = getBlockMetadataAtUnsafe(neighborPos.x, neighborPos.y, neighborPos.z);
                     if (neighborLevel > 0) {  // It's flowing water
                         setBlockAtUnsafe(neighborPos.x, neighborPos.y, neighborPos.z, 0);
@@ -1063,6 +1075,9 @@ void World::updateLiquids(VulkanRenderer* renderer) {
                             int blockID = chunk->getBlock(localX, localY, localZ);
                             if (blockID == 0) continue;
 
+                            // Bounds check before registry access to prevent crash
+                            if (blockID < 0 || blockID >= registry.count()) continue;
+
                             const BlockDefinition& def = registry.get(blockID);
                             if (!def.isLiquid) continue;
 
@@ -1085,7 +1100,7 @@ void World::updateLiquids(VulkanRenderer* renderer) {
                                 chunksToUpdate.insert(getChunkAtWorldPos(worldX, belowY, worldZ));
                                 // Skip horizontal spread when falling (priority to vertical flow)
                                 continue;
-                            } else if (!registry.get(blockBelow).isLiquid) {
+                            } else if (blockBelow >= 0 && blockBelow < registry.count() && !registry.get(blockBelow).isLiquid) {
                                 // Solid block below - try horizontal spread
                                 // Only spread if we're a source or low-level flow (level < 7)
                                 if (waterLevel < 7) {
@@ -1110,7 +1125,7 @@ void World::updateLiquids(VulkanRenderer* renderer) {
                                             // Empty space - place water
                                             waterToAdd.push_back({nx, ny, nz, newLevel});
                                             chunksToUpdate.insert(getChunkAtWorldPos(nx, ny, nz));
-                                        } else if (registry.get(neighborBlock).isLiquid) {
+                                        } else if (neighborBlock >= 0 && neighborBlock < registry.count() && registry.get(neighborBlock).isLiquid) {
                                             // Existing water - update if we have lower level (stronger flow)
                                             uint8_t neighborLevel = getBlockMetadataAt(nx, ny, nz);
                                             if (newLevel < neighborLevel) {
@@ -1135,7 +1150,7 @@ void World::updateLiquids(VulkanRenderer* renderer) {
             // Only place if still empty
             setBlockAt(water.x, water.y, water.z, 5); // Water block ID
             setBlockMetadataAt(water.x, water.y, water.z, water.level);
-        } else if (registry.get(existing).isLiquid) {
+        } else if (existing >= 0 && existing < registry.count() && registry.get(existing).isLiquid) {
             // Update level if better (lower level = stronger flow)
             uint8_t existingLevel = getBlockMetadataAt(water.x, water.y, water.z);
             if (water.level < existingLevel) {
@@ -1149,7 +1164,7 @@ void World::updateLiquids(VulkanRenderer* renderer) {
     for (const auto& water : waterToAdd) {
         if (water.level >= 7) {  // Level 7 = edge water, evaporates
             int blockID = getBlockAt(water.x, water.y, water.z);
-            if (blockID != 0 && registry.get(blockID).isLiquid) {
+            if (blockID != 0 && blockID >= 0 && blockID < registry.count() && registry.get(blockID).isLiquid) {
                 uint8_t level = getBlockMetadataAt(water.x, water.y, water.z);
                 if (level >= 7) {  // Double-check it's actually level 7
                     blocksToEvaporate.push_back(glm::vec3(water.x, water.y, water.z));

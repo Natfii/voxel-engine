@@ -428,6 +428,9 @@ bool WaterSimulation::isBlockSolid(int x, int y, int z, World* world) const {
     if (blockID == 0) return false; // Air
 
     auto& registry = BlockRegistry::instance();
+    // Bounds check before registry access to prevent crash
+    if (blockID < 0 || blockID >= registry.count()) return false;
+
     const BlockDefinition& blockDef = registry.get(blockID);
 
     // Water/lava are not solid
@@ -448,6 +451,9 @@ bool WaterSimulation::isBlockLiquid(int x, int y, int z, World* world) const {
     if (blockID == 0) return false;
 
     auto& registry = BlockRegistry::instance();
+    // Bounds check before registry access to prevent crash
+    if (blockID < 0 || blockID >= registry.count()) return false;
+
     const BlockDefinition& blockDef = registry.get(blockID);
 
     return blockDef.isLiquid;

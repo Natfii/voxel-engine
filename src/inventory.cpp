@@ -206,6 +206,9 @@ void Inventory::renderBlocksGrid(VulkanRenderer* renderer) {
     for (int blockID : m_availableBlocks) {
         if (blockID == 0) continue; // Skip air block
 
+        // Bounds check before registry access to prevent crash
+        if (blockID < 0 || blockID >= registry.count()) continue;
+
         // Filter by search
         if (!isBlockVisible(blockID)) continue;
 
@@ -317,7 +320,8 @@ bool Inventory::isBlockVisible(int blockID) const {
     if (m_searchBuffer[0] == '\0') return true;
 
     auto& registry = BlockRegistry::instance();
-    if (blockID >= registry.count()) return false;
+    // Bounds check before registry access to prevent crash
+    if (blockID < 0 || blockID >= registry.count()) return false;
 
     const BlockDefinition& block = registry.get(blockID);
     std::string searchLower = m_searchBuffer;
