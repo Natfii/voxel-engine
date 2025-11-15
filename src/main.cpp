@@ -533,6 +533,24 @@ int main() {
         std::cout << "Spawn at (" << spawnX << ", " << spawnY << ", " << spawnZ
                   << ") - surface Y=" << spawnGroundY << std::endl;
 
+        // CRITICAL DEBUG: Verify blocks exist where we think they do
+        std::cout << "\n=== SPAWN VERIFICATION ===" << std::endl;
+        float feetY = spawnY - 1.6f;
+        std::cout << "Player feet will be at Y=" << feetY << std::endl;
+        int groundBlock = world.getBlockAt(spawnX, static_cast<float>(spawnGroundY), spawnZ);
+        int feetBlock = world.getBlockAt(spawnX, feetY, spawnZ);
+        int belowFeet = world.getBlockAt(spawnX, feetY - 0.1f, spawnZ);
+        std::cout << "Block at ground (" << spawnGroundY << "): " << groundBlock << std::endl;
+        std::cout << "Block at feet (" << feetY << "): " << feetBlock << std::endl;
+        std::cout << "Block 0.1 below feet: " << belowFeet << std::endl;
+        if (groundBlock == 0 || feetBlock != 0 || belowFeet == 0) {
+            std::cout << "ERROR: Spawn validation FAILED! Terrain doesn't match expectations!" << std::endl;
+            std::cout << "  Expected: ground=" << spawnGroundY << " should be solid (got " << groundBlock << ")" << std::endl;
+            std::cout << "  Expected: feet position should be air (got " << feetBlock << ")" << std::endl;
+            std::cout << "  Expected: below feet should be solid (got " << belowFeet << ")" << std::endl;
+        }
+        std::cout << "===========================\n" << std::endl;
+
         // Loading stage 10: Spawning player (95%)
         loadingProgress = 0.95f;
         loadingMessage = "Spawning player";
