@@ -188,11 +188,11 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
 void World::generateWorld() {
     // DEPRECATED: This generates ALL chunks which is too slow for large worlds
     // Use generateSpawnChunks() + WorldStreaming instead
-    Logger::warn() << "generateWorld() called - this is slow for large worlds!";
-    Logger::warn() << "Consider using generateSpawnChunks() + WorldStreaming for better performance";
+    Logger::warning() << "generateWorld() called - this is slow for large worlds!";
+    Logger::warning() << "Consider using generateSpawnChunks() + WorldStreaming for better performance";
 
     if (m_chunks.empty()) {
-        Logger::warn() << "No chunks to generate (world is empty - use streaming mode)";
+        Logger::warning() << "No chunks to generate (world is empty - use streaming mode)";
         return;
     }
 
