@@ -354,19 +354,28 @@ int main() {
         Chunk::initNoise(seed);
         World world(worldWidth, worldHeight, worldDepth, seed);
 
-        // Loading stage 6: Generate terrain (60%)
+        // Loading stage 6: Generate spawn area only (much faster than full world)
+        // With 320 chunk height, generating all 46,080 chunks takes forever
+        // Instead, generate just a small area around spawn and let streaming handle the rest
         loadingProgress = 0.35f;
-        loadingMessage = "Generating world";
+        loadingMessage = "Generating spawn area";
         renderLoadingScreen();
-        std::cout << "Generating world..." << std::endl;
-        world.generateWorld();
+        std::cout << "Generating spawn chunks (streaming will handle the rest)..." << std::endl;
 
-        // Loading stage 7: Decorate world (75%)
-        loadingProgress = 0.65f;
-        loadingMessage = "Growing trees and vegetation";
-        renderLoadingScreen();
-        std::cout << "Decorating world (trees, vegetation)..." << std::endl;
-        world.decorateWorld();
+        // We'll determine spawn chunk coordinates and generate them before finding exact spawn point
+        // Assume spawn will be somewhere near (0, 64, 0) in world space
+        // That's chunk (0, 2, 0) in chunk coordinates if spawn height is 64 blocks
+        // For centered world with 320 height: Y chunks from -160 to +159
+        // Spawn at Y=64 is chunk Y=2 (chunk 2 * 32 = 64-95 blocks)
+        int spawnChunkX = 0;
+        int spawnChunkY = 2;  // Y=64 surface is in chunk Y=2
+        int spawnChunkZ = 0;
+        int spawnRadius = 4;  // Generate 9x9x9 chunks = 729 chunks (reasonable startup time)
+
+        world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
+
+        // NOTE: decorateWorld() skipped - trees will be generated on-demand by streaming system
+        // This dramatically improves startup time for large worlds
 
         // Loading stage 8: Create GPU buffers (85%)
         loadingProgress = 0.80f;
@@ -387,12 +396,28 @@ int main() {
 
         std::cout << "Finding safe spawn location..." << std::endl;
 
-        const int MAX_WORLD_HEIGHT = worldHeight * 32;  // Convert chunks to blocks
+        // World is centered around Y=0 with both positive and negative chunks
+        const int halfHeight = worldHeight / 2;
+        const int MIN_WORLD_Y = -halfHeight * 32;  // Minimum Y coordinate (deep caves)
+        const int MAX_WORLD_Y = (worldHeight - halfHeight) * 32 - 1;  // Maximum Y coordinate (sky)
+
+        // Search for spawn on surface (typically around Y=64) down to minimum safe depth
+        const int MAX_TERRAIN_HEIGHT = std::min(180, MAX_WORLD_Y);  // Don't search above world bounds
+        const int MIN_SEARCH_Y = std::max(10, MIN_WORLD_Y + 20);  // Don't spawn too close to void
         const int SEARCH_RADIUS = 32;  // Search in 32 block radius
         const int MIN_SOLID_DEPTH = 5;  // Require at least 5 blocks of solid ground below
 
+        std::cout << "World Y range: " << MIN_WORLD_Y << " to " << MAX_WORLD_Y
+                  << " (" << (MAX_WORLD_Y - MIN_WORLD_Y + 1) << " blocks)" << std::endl;
+        std::cout << "Searching for spawn from Y=" << MAX_TERRAIN_HEIGHT << " down to Y=" << MIN_SEARCH_Y << std::endl;
+
         // Helper to check if a location is safe to spawn
-        auto isSafeSpawn = [&world, MIN_SOLID_DEPTH](float x, float z, int groundY) -> bool {
+        auto isSafeSpawn = [&world, MIN_SOLID_DEPTH, MAX_TERRAIN_HEIGHT](float x, float z, int groundY) -> bool {
+            // Bounds check
+            if (groundY < MIN_SOLID_DEPTH || groundY >= MAX_TERRAIN_HEIGHT - 4) {
+                return false;  // Too close to terrain boundaries
+            }
+
             // Check if there's solid ground below (no caves)
             for (int dy = 0; dy < MIN_SOLID_DEPTH; dy++) {
                 int blockID = world.getBlockAt(x, static_cast<float>(groundY - dy), z);
@@ -401,8 +426,9 @@ int main() {
                     return false;  // Cave or water underneath
                 }
             }
-            // Check if there's clear space above (2 blocks tall for player)
-            for (int dy = 1; dy <= 3; dy++) {
+            // Check if there's clear space above for player (2 blocks tall)
+            // Player feet will be at groundY+1, head at groundY+3 (1.8 blocks tall rounded up to 2)
+            for (int dy = 1; dy <= 4; dy++) {
                 int blockID = world.getBlockAt(x, static_cast<float>(groundY + dy), z);
                 if (blockID != 0) {
                     return false;  // Not enough headroom
@@ -506,21 +532,52 @@ int main() {
             }
         }
 
-        // Spawn 2 blocks above the surface (feet position)
-        float spawnY = static_cast<float>(spawnGroundY + 2);
+        // Calculate spawn Y position
+        // Player.Position represents EYE level (camera position), which is 1.6 blocks above feet
+        // We want feet slightly above groundY+1 (not exactly on block boundary to avoid collision bugs)
+        // So eyes should be at groundY+1.1+1.6 = groundY+2.7
+        float spawnY = static_cast<float>(spawnGroundY) + 2.7f;
 
-        // Debug: Check blocks around spawn
+        // Debug: Check blocks around spawn (extended range to detect caves)
         std::cout << "Blocks at spawn location:" << std::endl;
-        for (int dy = -2; dy <= 3; dy++) {
+        for (int dy = -10; dy <= 5; dy++) {
             int blockY = spawnGroundY + dy;
             int blockID = world.getBlockAt(spawnX, static_cast<float>(blockY), spawnZ);
-            std::cout << "  Block Y=" << blockY << " (world Y=" << static_cast<float>(blockY)
-                      << "): " << blockID << (dy == 0 ? " <- GROUND" : "")
-                      << (dy == 1 ? " <- FEET" : "") << std::endl;
+            const char* marker = "";
+            if (dy == 0) marker = " <- GROUND";
+            else if (dy == 1) marker = " <- FEET";
+            else if (dy == 2) marker = " <- HEAD";
+
+            std::cout << "  Y=" << blockY << ": blockID=" << blockID;
+            if (blockID == 0) std::cout << " (AIR)";
+            else if (blockID == 1) std::cout << " (STONE)";
+            else if (blockID == 2) std::cout << " (GRASS)";
+            else if (blockID == 3) std::cout << " (DIRT)";
+            else if (blockID == 5) std::cout << " (WATER)";
+            else if (blockID == 12) std::cout << " (BEDROCK)";
+            std::cout << marker << std::endl;
         }
 
         std::cout << "Spawn at (" << spawnX << ", " << spawnY << ", " << spawnZ
                   << ") - surface Y=" << spawnGroundY << std::endl;
+
+        // CRITICAL DEBUG: Verify blocks exist where we think they do
+        std::cout << "\n=== SPAWN VERIFICATION ===" << std::endl;
+        float feetY = spawnY - 1.6f;
+        std::cout << "Player feet will be at Y=" << feetY << std::endl;
+        int groundBlock = world.getBlockAt(spawnX, static_cast<float>(spawnGroundY), spawnZ);
+        int feetBlock = world.getBlockAt(spawnX, feetY, spawnZ);
+        int belowFeet = world.getBlockAt(spawnX, feetY - 0.1f, spawnZ);
+        std::cout << "Block at ground (" << spawnGroundY << "): " << groundBlock << std::endl;
+        std::cout << "Block at feet (" << feetY << "): " << feetBlock << std::endl;
+        std::cout << "Block 0.1 below feet: " << belowFeet << std::endl;
+        if (groundBlock == 0 || feetBlock != 0 || belowFeet == 0) {
+            std::cout << "ERROR: Spawn validation FAILED! Terrain doesn't match expectations!" << std::endl;
+            std::cout << "  Expected: ground=" << spawnGroundY << " should be solid (got " << groundBlock << ")" << std::endl;
+            std::cout << "  Expected: feet position should be air (got " << feetBlock << ")" << std::endl;
+            std::cout << "  Expected: below feet should be solid (got " << belowFeet << ")" << std::endl;
+        }
+        std::cout << "===========================\n" << std::endl;
 
         // Loading stage 10: Spawning player (95%)
         loadingProgress = 0.95f;
@@ -572,7 +629,7 @@ int main() {
         std::cout << "Entering main loop..." << std::endl;
 
         while (!glfwWindowShouldClose(window)) {
-            float currentFrame = glfwGetTime();
+            float currentFrame = static_cast<float>(glfwGetTime());
             deltaTime = currentFrame - lastFrame;
             lastFrame = currentFrame;
 
@@ -674,15 +731,18 @@ int main() {
             // Particles disabled for performance
             // world.getParticleSystem()->update(deltaTime);
 
-            // Simple liquid physics (existing system)
-            // Heavily optimized for performance
+            // DISABLED: Liquid physics causes catastrophic lag (scans 14 million blocks)
+            // TODO: Implement dirty list of changed water blocks instead of full world scan
+            // Current implementation scans ALL 432 chunks × 32,768 blocks = 14M blocks per update
+            /*
             static float liquidUpdateTimer = 0.0f;
             liquidUpdateTimer += deltaTime;
-            const float liquidUpdateInterval = 1.0f;  // Update liquids 1 time per second (very performant)
+            const float liquidUpdateInterval = 1.0f;
             if (liquidUpdateTimer >= liquidUpdateInterval) {
                 liquidUpdateTimer = 0.0f;
                 world.updateLiquids(&renderer);
             }
+            */
 
             // Check if console/inventory was closed (by clicking outside or ESC)
             // and we need to reset mouse for gameplay
