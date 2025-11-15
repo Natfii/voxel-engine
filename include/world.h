@@ -344,11 +344,14 @@ public:
      * @brief Updates water simulation and particles
      *
      * Should be called every frame to update water flow and particle effects.
+     * Only simulates water within render distance (chunk freezing optimization).
      *
      * @param deltaTime Time elapsed since last frame
      * @param renderer Vulkan renderer for buffer recreation
+     * @param playerPos Player's position in world coordinates
+     * @param renderDistance Maximum distance from player to simulate water
      */
-    void updateWaterSimulation(float deltaTime, VulkanRenderer* renderer);
+    void updateWaterSimulation(float deltaTime, VulkanRenderer* renderer, const glm::vec3& playerPos, float renderDistance);
 
     /**
      * @brief Gets the water simulation system

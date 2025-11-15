@@ -17,7 +17,7 @@ WaterSimulation::WaterSimulation()
 WaterSimulation::~WaterSimulation() {
 }
 
-void WaterSimulation::update(float deltaTime, World* world) {
+void WaterSimulation::update(float deltaTime, World* world, const glm::vec3& playerPos, float renderDistance) {
     // Update water sources first (marks sources as dirty)
     updateWaterSources(deltaTime);
 
@@ -29,12 +29,27 @@ void WaterSimulation::update(float deltaTime, World* world) {
     // After: Only update ~1000 dirty cells per frame (O(dirty_count))
     // Result: 100x+ speedup for water simulation
 
+    // CHUNK FREEZING: Only simulate water within render distance
+    // This prevents wasting CPU on water simulation far from player
+    const float renderDistanceSquared = renderDistance * renderDistance;
+
     std::vector<glm::ivec3> cellsToUpdate;
     cellsToUpdate.reserve(m_dirtyCells.size());
 
     // Copy dirty cells to vector (we'll modify m_dirtyCells during update)
+    // Filter by render distance - freeze chunks outside player's view
     for (const auto& pos : m_dirtyCells) {
-        cellsToUpdate.push_back(pos);
+        // Calculate distance from player to water cell
+        glm::vec3 cellWorldPos(static_cast<float>(pos.x), static_cast<float>(pos.y), static_cast<float>(pos.z));
+        glm::vec3 delta = cellWorldPos - playerPos;
+        float distanceSquared = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+
+        // Only update water cells within render distance
+        if (distanceSquared <= renderDistanceSquared) {
+            cellsToUpdate.push_back(pos);
+        }
+        // Note: Cells outside render distance stay in m_dirtyCells and will be
+        // processed when player gets closer (chunk "unfreezing")
     }
 
     // Clear dirty set - cells will re-mark themselves if still dirty

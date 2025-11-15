@@ -1206,12 +1206,12 @@ void World::updateLiquids(VulkanRenderer* renderer) {
     }
 }
 
-void World::updateWaterSimulation(float deltaTime, VulkanRenderer* renderer) {
+void World::updateWaterSimulation(float deltaTime, VulkanRenderer* renderer, const glm::vec3& playerPos, float renderDistance) {
     // Update particle system
     m_particleSystem->update(deltaTime);
 
-    // Update water simulation
-    m_waterSimulation->update(deltaTime, this);
+    // Update water simulation with chunk freezing (only simulate water near player)
+    m_waterSimulation->update(deltaTime, this, playerPos, renderDistance);
 
     // Check for water level changes and spawn splash particles
     // TODO: Track water level changes in simulation and spawn particles

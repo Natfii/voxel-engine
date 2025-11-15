@@ -67,7 +67,7 @@ public:
     ~WaterSimulation();
 
     // Main update loop
-    void update(float deltaTime, World* world);
+    void update(float deltaTime, World* world, const glm::vec3& playerPos, float renderDistance);
 
     // Water manipulation
     void setWaterLevel(int x, int y, int z, uint8_t level, uint8_t fluidType = 1);
