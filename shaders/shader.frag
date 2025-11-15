@@ -37,7 +37,7 @@ void main() {
 
         // Apply diagonal scrolling to local coordinates
         float scrollSpeed = 250.0;  // Fast, smooth flow
-        localUV.y += ubo.skyTimeData.x * scrollSpeed;        // Downward
+        localUV.y -= ubo.skyTimeData.x * scrollSpeed;        // Downward (subtract to flow down)
         localUV.x += ubo.skyTimeData.x * scrollSpeed * 0.5;  // Diagonal drift
 
         // Wrap within cell (seamless tiling)
