@@ -392,7 +392,12 @@ int main() {
         const int MIN_SOLID_DEPTH = 5;  // Require at least 5 blocks of solid ground below
 
         // Helper to check if a location is safe to spawn
-        auto isSafeSpawn = [&world, MIN_SOLID_DEPTH](float x, float z, int groundY) -> bool {
+        auto isSafeSpawn = [&world, MIN_SOLID_DEPTH, MAX_WORLD_HEIGHT](float x, float z, int groundY) -> bool {
+            // Bounds check
+            if (groundY < MIN_SOLID_DEPTH || groundY >= MAX_WORLD_HEIGHT - 4) {
+                return false;  // Too close to world boundaries
+            }
+
             // Check if there's solid ground below (no caves)
             for (int dy = 0; dy < MIN_SOLID_DEPTH; dy++) {
                 int blockID = world.getBlockAt(x, static_cast<float>(groundY - dy), z);
@@ -401,8 +406,9 @@ int main() {
                     return false;  // Cave or water underneath
                 }
             }
-            // Check if there's clear space above (2 blocks tall for player)
-            for (int dy = 1; dy <= 3; dy++) {
+            // Check if there's clear space above for player (2 blocks tall)
+            // Player feet will be at groundY+1, head at groundY+3 (1.8 blocks tall rounded up to 2)
+            for (int dy = 1; dy <= 4; dy++) {
                 int blockID = world.getBlockAt(x, static_cast<float>(groundY + dy), z);
                 if (blockID != 0) {
                     return false;  // Not enough headroom
@@ -424,8 +430,9 @@ int main() {
                     float testX = static_cast<float>(dx);
                     float testZ = static_cast<float>(dz);
 
-                    // Start search from Y=76 (top of terrain range) for efficiency
-                    for (int y = 76; y >= 10; y--) {  // Search from expected terrain height down
+                    // Search from max possible terrain height down to Y=10
+                    // Mountains can reach Y=151, so search from there
+                    for (int y = MAX_WORLD_HEIGHT - 10; y >= 10; y--) {
                         int currentBlock = world.getBlockAt(testX, static_cast<float>(y), testZ);
                         int aboveBlock = world.getBlockAt(testX, static_cast<float>(y + 1), testZ);
 
@@ -451,9 +458,9 @@ int main() {
         if (spawnGroundY < 0) {
             std::cout << "WARNING: No safe spawn found in initial search, validating fallback at (0, 0, 64)" << std::endl;
 
-            // Try to find ground at (0,0) by searching downward from Y=76
+            // Try to find ground at (0,0) by searching downward from max height
             bool foundFallback = false;
-            for (int y = 76; y >= 10; y--) {
+            for (int y = MAX_WORLD_HEIGHT - 10; y >= 10; y--) {
                 int currentBlock = world.getBlockAt(0.0f, static_cast<float>(y), 0.0f);
                 int aboveBlock = world.getBlockAt(0.0f, static_cast<float>(y + 1), 0.0f);
 
@@ -475,7 +482,7 @@ int main() {
                 for (int radius = 1; radius <= 64 && !foundFallback; radius += 4) {
                     for (int dx = -radius; dx <= radius && !foundFallback; dx += 4) {
                         for (int dz = -radius; dz <= radius && !foundFallback; dz += 4) {
-                            for (int y = 76; y >= 10; y--) {
+                            for (int y = MAX_WORLD_HEIGHT - 10; y >= 10; y--) {
                                 float testX = static_cast<float>(dx);
                                 float testZ = static_cast<float>(dz);
                                 int currentBlock = world.getBlockAt(testX, static_cast<float>(y), testZ);
@@ -506,8 +513,11 @@ int main() {
             }
         }
 
-        // Spawn 2 blocks above the surface (feet position)
-        float spawnY = static_cast<float>(spawnGroundY + 2);
+        // Calculate spawn Y position
+        // Player.Position represents EYE level (camera position), which is 1.6 blocks above feet
+        // We want feet at groundY+1 (one block above ground surface)
+        // So eyes should be at groundY+1+1.6 = groundY+2.6
+        float spawnY = static_cast<float>(spawnGroundY) + 2.6f;
 
         // Debug: Check blocks around spawn
         std::cout << "Blocks at spawn location:" << std::endl;
