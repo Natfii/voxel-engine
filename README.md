@@ -23,9 +23,10 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - Console commands for time control (`skytime`, `timespeed`)
 
 🌍 **Procedural World Generation**
-- Infinite terrain using FastNoise
+- Massive worlds: Up to ±1 billion chunks per axis (±34 billion blocks)
+- Dynamic chunk streaming for infinite exploration
 - Configurable world size and seed
-- Chunk-based rendering system
+- Chunk-based rendering system (32×32×32 blocks per chunk)
 
 🧱 **Advanced Block & Texture System**
 - **Cube map textures**: Different textures for each face of a block
@@ -100,17 +101,27 @@ For more details, see [docs/controls.md](docs/controls.md)
 
 Edit `config.ini` to customize:
 - World seed
-- World dimensions (width, height, depth)
-- Rendering settings
+- World dimensions (width, height, depth in chunks)
+- Rendering and streaming settings
 
 Example:
 ```ini
 [World]
 seed = 1124345
-world_width = 12
-world_height = 3
-world_depth = 12
+# Each dimension is in chunks (1 chunk = 32×32×32 blocks)
+# Example: 4096×64×4096 chunks = 131km × 2km × 131km world
+world_width = 4096
+world_height = 64
+world_depth = 4096
+render_distance = 256.0
+load_distance = 256.0
 ```
+
+**World Size Limits:**
+- Theoretical maximum: ±1,073,741,823 chunks per axis
+- Maximum world: ~64 billion blocks per axis
+- Practical limits depend on memory and streaming performance
+- Recommended: Use streaming for worlds > 1000×1000 chunks
 
 ## Project Structure
 

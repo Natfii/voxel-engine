@@ -298,13 +298,13 @@ int main() {
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
         // Get world configuration from config file (use seed from menu)
-        int worldWidth = config.getInt("World", "world_width", 12);
-        int worldDepth = config.getInt("World", "world_depth", 12);
+        int worldWidth = config.getInt("World", "world_width", 4096);
+        int worldDepth = config.getInt("World", "world_depth", 4096);
 
-        // World height: default 3 chunks (96 blocks) for fast startup
-        // Can be increased in config.ini for taller worlds
-        // Note: Streaming system can load additional chunks on-demand
-        int worldHeight = config.getInt("World", "world_height", 3);
+        // World height: default 64 chunks (2048 blocks) for expansive vertical worlds
+        // Can be changed in config.ini for taller or shorter worlds
+        // Note: Streaming system loads chunks on-demand, so large heights don't slow startup
+        int worldHeight = config.getInt("World", "world_height", 64);
 
         // Get render distances from config for biome showcase
         float renderDistance = config.getFloat("World", "render_distance", 80.0f);

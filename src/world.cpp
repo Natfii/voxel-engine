@@ -846,7 +846,13 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
     int chunkY = chunk->getChunkY();
     int chunkZ = chunk->getChunkZ();
 
-    // Bounds checking
+    // Validate coordinates to prevent overflow
+    if (!isChunkCoordValid(chunkX, chunkY, chunkZ)) {
+        Logger::warning() << "Attempted to add chunk with invalid coordinates (" << chunkX << ", " << chunkY << ", " << chunkZ << ") - would cause overflow";
+        return false;
+    }
+
+    // Bounds checking against configured world dimensions
     int halfWidth = m_width / 2;
     int halfHeight = m_height / 2;
     int halfDepth = m_depth / 2;
