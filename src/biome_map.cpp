@@ -356,18 +356,42 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
         const Biome* biome = influence.biome;
         if (!biome) continue;
 
-        // Calculate height variation for this biome
-        // Use biome's age to control terrain roughness
-        // Age 0 (young) = very rough, mountainous (high variation: 30 blocks)
-        // Age 100 (old) = very flat, plains-like (low variation: 5 blocks)
-        float ageNormalized = biome->age / 100.0f;  // 0.0 to 1.0
-        float heightVariation = 30.0f - (ageNormalized * 25.0f);  // 30 to 5
+        // === PER-BIOME HEIGHT VARIATION SYSTEM ===
+        // Use biome-specific noise frequency for different terrain types
+        float biomeNoise = m_terrainNoise->GetNoise(worldX * biome->height_noise_frequency,
+                                                      worldZ * biome->height_noise_frequency);
 
-        // Apply biome's height multiplier for special terrain (mountains, etc.)
+        // Calculate height variation using biome-specific min/max ranges
+        float heightVariation;
+        if (biomeNoise > 0.0f) {
+            heightVariation = biome->height_variation_min +
+                            (biomeNoise * (biome->height_variation_max - biome->height_variation_min));
+        } else {
+            heightVariation = biome->height_variation_min +
+                            (std::abs(biomeNoise) * (biome->height_variation_max - biome->height_variation_min));
+        }
+
+        // Apply height multiplier (backward compatibility)
         heightVariation *= biome->height_multiplier;
 
-        // Calculate this biome's contribution to height
-        float biomeHeight = BASE_HEIGHT + (noise * heightVariation);
+        // Add specialized terrain features (peaks and valleys)
+        float specialFeatures = 0.0f;
+
+        // Mountain peaks (positive noise regions)
+        if (biome->peak_height > 0 && biomeNoise > 0.3f) {
+            float peakStrength = (biomeNoise - 0.3f) / 0.7f;
+            specialFeatures += biome->peak_height * peakStrength;
+        }
+
+        // Deep valleys (negative noise regions)
+        if (biome->valley_depth < 0 && biomeNoise < -0.3f) {
+            float valleyStrength = (std::abs(biomeNoise) - 0.3f) / 0.7f;
+            specialFeatures += biome->valley_depth * valleyStrength;
+        }
+
+        // Calculate final biome height with all components
+        float biomeHeight = BASE_HEIGHT + biome->base_height_offset +
+                           (biomeNoise * heightVariation) + specialFeatures;
 
         // Add weighted contribution to blended height
         blendedHeight += biomeHeight * influence.weight;
