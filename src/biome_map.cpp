@@ -264,31 +264,48 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
         }
     }
 
-    // Not in cache - compute it
-    // Get biome at this location
-    const Biome* biome = getBiomeAt(worldX, worldZ);
-    if (!biome) {
+    // Not in cache - compute blended height from multiple biomes
+    // ==================== MULTI-BIOME HEIGHT BLENDING ====================
+    // Get all biome influences at this location for smooth transitions
+    std::vector<BiomeInfluence> influences = getBiomeInfluences(worldX, worldZ);
+
+    if (influences.empty()) {
+        // Fallback: no biomes found (should never happen)
         return BASE_HEIGHT;
     }
 
     // FastNoiseLite is thread-safe for reads - no mutex needed
     float noise = m_terrainNoise->GetNoise(worldX, worldZ);
 
-    // Use biome's age to control terrain roughness
-    // Age 0 (young) = very rough, mountainous (high variation)
-    // Age 100 (old) = very flat, plains-like (low variation)
+    // === BLEND HEIGHT CONTRIBUTIONS FROM EACH BIOME ===
+    // Each biome contributes to the final height based on its influence weight
+    // This creates smooth transitions without sudden cliffs at biome borders
+    float blendedHeight = 0.0f;
 
-    // Calculate height variation based on age
-    // Young terrain (age=0): variation = 30 blocks
-    // Old terrain (age=100): variation = 5 blocks
-    float ageNormalized = biome->age / 100.0f;  // 0.0 to 1.0
-    float heightVariation = 30.0f - (ageNormalized * 25.0f);  // 30 to 5
+    for (const auto& influence : influences) {
+        const Biome* biome = influence.biome;
+        if (!biome) continue;
 
-    // Apply biome's height multiplier for special terrain (mountains, etc.)
-    heightVariation *= biome->height_multiplier;
+        // Calculate height variation for this biome
+        // Use biome's age to control terrain roughness
+        // Age 0 (young) = very rough, mountainous (high variation: 30 blocks)
+        // Age 100 (old) = very flat, plains-like (low variation: 5 blocks)
+        float ageNormalized = biome->age / 100.0f;  // 0.0 to 1.0
+        float heightVariation = 30.0f - (ageNormalized * 25.0f);  // 30 to 5
 
-    // Calculate final height
-    int height = BASE_HEIGHT + static_cast<int>(noise * heightVariation);
+        // Apply biome's height multiplier for special terrain (mountains, etc.)
+        heightVariation *= biome->height_multiplier;
+
+        // Calculate this biome's contribution to height
+        float biomeHeight = BASE_HEIGHT + (noise * heightVariation);
+
+        // Add weighted contribution to blended height
+        blendedHeight += biomeHeight * influence.weight;
+    }
+
+    // Convert to integer height (use rounding for smooth transitions)
+    int height = static_cast<int>(std::round(blendedHeight));
+
 
     // Cache result (with size limit)
     {
@@ -517,7 +534,6 @@ float BiomeMap::calculateInfluenceWeight(float distance, float rarityWeight) con
     // Use the new configurable transition system
     return BiomeTransition::calculateTransitionWeight(distance, m_transitionProfile, rarityWeight);
 }
-}
 
 std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences(float worldX, float worldZ) {
     // Create a cache key (quantize to 8-block resolution for coarse caching)
@@ -549,7 +565,7 @@ std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences(float worldX, float wor
 
     // Find all biomes within search radius and calculate weights
     std::vector<BiomeInfluence> influences;
-    influences.reserve(MAX_BIOMES_PER_BLEND);  // Pre-allocate for performance
+    influences.reserve(m_transitionProfile.maxBiomes);  // Pre-allocate for performance
 
     float totalWeight = 0.0f;
 
@@ -563,12 +579,12 @@ std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences(float worldX, float wor
         float totalDist = std::sqrt(tempDist * tempDist + moistDist * moistDist);
 
         // Only consider biomes within search radius
-        if (totalDist <= BIOME_SEARCH_RADIUS) {
+        if (totalDist <= m_transitionProfile.searchRadius) {
             // Calculate influence weight using smooth falloff
             float weight = calculateInfluenceWeight(totalDist, static_cast<float>(biome->biome_rarity_weight));
 
             // Only include influences above minimum threshold
-            if (weight > MIN_INFLUENCE_WEIGHT) {
+            if (weight > m_transitionProfile.minInfluence) {
                 influences.emplace_back(biome, weight);
                 totalWeight += weight;
             }
@@ -619,11 +635,11 @@ std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences(float worldX, float wor
                   return a.weight > b.weight;
               });
 
-    // Limit to MAX_BIOMES_PER_BLEND for performance
+    // Limit to m_transitionProfile.maxBiomes for performance
     // Keep only the most influential biomes
-    if (influences.size() > MAX_BIOMES_PER_BLEND) {
+    if (influences.size() > m_transitionProfile.maxBiomes) {
         // Re-normalize after trimming
-        influences.resize(MAX_BIOMES_PER_BLEND);
+        influences.resize(m_transitionProfile.maxBiomes);
         totalWeight = 0.0f;
         for (const auto& influence : influences) {
             totalWeight += influence.weight;
