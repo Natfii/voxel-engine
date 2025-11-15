@@ -280,6 +280,7 @@ void World::decorateWorld() {
 
     // Calculate world bounds
     int halfWidth = m_width / 2;
+    int halfHeight = m_height / 2;
     int halfDepth = m_depth / 2;
     int maxWorldY = m_height * Chunk::HEIGHT;
 
