@@ -60,24 +60,11 @@ World::World(int width, int height, int depth, int seed)
                    << "], Y[" << -halfHeight << " to " << (height - halfHeight - 1)
                    << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]";
 
-    // Reserve space for chunks
-    m_chunks.reserve(width * height * depth);
-
-    for (int x = -halfWidth; x < width - halfWidth; ++x) {
-        for (int y = -halfHeight; y < height - halfHeight; ++y) {  // CHANGED: Support negative Y
-            for (int z = -halfDepth; z < depth - halfDepth; ++z) {
-                // Create chunk and store in hash map for O(1) lookup
-                auto chunk = std::make_unique<Chunk>(x, y, z);
-                Chunk* chunkPtr = chunk.get();
-                m_chunkMap[ChunkCoord{x, y, z}] = std::move(chunk);
-
-                // Also store raw pointer in vector for fast iteration
-                m_chunks.push_back(chunkPtr);
-            }
-        }
-    }
-
-    Logger::info() << "Total chunks created: " << m_chunks.size();
+    // STREAMING OPTIMIZATION: Don't create all chunks at startup!
+    // With 320 height, that's 12*320*12 = 46,080 chunks which takes forever to generate.
+    // Instead, we'll create chunks on-demand using the WorldStreaming system.
+    // The chunk map starts empty and chunks are added dynamically as the player explores.
+    Logger::info() << "World initialized for streaming (chunks will be generated on-demand)";
 
     // Validate that biomes are loaded before creating world
     if (BiomeRegistry::getInstance().getBiomeCount() == 0) {
@@ -115,7 +102,100 @@ World::~World() {
     std::cout.flush();
 }
 
+void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerChunkZ, int radius) {
+    /**
+     * Generate only the chunks needed for initial spawn (avoids generating entire world)
+     * This creates a small region around spawn so the player has something to stand on.
+     * The WorldStreaming system will handle the rest dynamically.
+     */
+    Logger::info() << "Generating spawn chunks in " << radius << " chunk radius around ("
+                   << centerChunkX << ", " << centerChunkY << ", " << centerChunkZ << ")";
+
+    // Collect chunks to generate
+    std::vector<Chunk*> chunksToGenerate;
+    for (int dx = -radius; dx <= radius; dx++) {
+        for (int dy = -radius; dy <= radius; dy++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                int chunkX = centerChunkX + dx;
+                int chunkY = centerChunkY + dy;
+                int chunkZ = centerChunkZ + dz;
+
+                // Create chunk if it doesn't exist
+                ChunkCoord coord{chunkX, chunkY, chunkZ};
+                if (m_chunkMap.find(coord) == m_chunkMap.end()) {
+                    auto chunk = std::make_unique<Chunk>(chunkX, chunkY, chunkZ);
+                    Chunk* chunkPtr = chunk.get();
+                    m_chunkMap[coord] = std::move(chunk);
+                    m_chunks.push_back(chunkPtr);
+                }
+
+                chunksToGenerate.push_back(m_chunkMap[coord].get());
+            }
+        }
+    }
+
+    Logger::info() << "Generating terrain for " << chunksToGenerate.size() << " spawn chunks...";
+
+    // Step 1: Generate terrain blocks in parallel
+    const unsigned int numThreads = std::thread::hardware_concurrency();
+    const size_t chunksPerThread = (chunksToGenerate.size() + numThreads - 1) / numThreads;
+
+    std::vector<std::thread> threads;
+    threads.reserve(numThreads);
+
+    BiomeMap* biomeMapPtr = m_biomeMap.get();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, chunksToGenerate.size());
+
+        if (startIdx >= chunksToGenerate.size()) break;
+
+        threads.emplace_back([&chunksToGenerate, biomeMapPtr, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                chunksToGenerate[j]->generate(biomeMapPtr);
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    Logger::info() << "Generating meshes for " << chunksToGenerate.size() << " spawn chunks...";
+
+    // Step 2: Generate meshes for all chunks
+    threads.clear();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, chunksToGenerate.size());
+
+        if (startIdx >= chunksToGenerate.size()) break;
+
+        threads.emplace_back([this, &chunksToGenerate, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                chunksToGenerate[j]->generateMesh(this);
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    Logger::info() << "Spawn chunks generated successfully";
+}
+
 void World::generateWorld() {
+    // DEPRECATED: This generates ALL chunks which is too slow for large worlds
+    // Use generateSpawnChunks() + WorldStreaming instead
+    Logger::warn() << "generateWorld() called - this is slow for large worlds!";
+    Logger::warn() << "Consider using generateSpawnChunks() + WorldStreaming for better performance";
+
+    if (m_chunks.empty()) {
+        Logger::warn() << "No chunks to generate (world is empty - use streaming mode)";
+        return;
+    }
+
     // Parallel chunk generation for better performance
     const unsigned int numThreads = std::thread::hardware_concurrency();
     const size_t chunksPerThread = (m_chunks.size() + numThreads - 1) / numThreads;

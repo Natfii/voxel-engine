@@ -354,19 +354,28 @@ int main() {
         Chunk::initNoise(seed);
         World world(worldWidth, worldHeight, worldDepth, seed);
 
-        // Loading stage 6: Generate terrain (60%)
+        // Loading stage 6: Generate spawn area only (much faster than full world)
+        // With 320 chunk height, generating all 46,080 chunks takes forever
+        // Instead, generate just a small area around spawn and let streaming handle the rest
         loadingProgress = 0.35f;
-        loadingMessage = "Generating world";
+        loadingMessage = "Generating spawn area";
         renderLoadingScreen();
-        std::cout << "Generating world..." << std::endl;
-        world.generateWorld();
+        std::cout << "Generating spawn chunks (streaming will handle the rest)..." << std::endl;
 
-        // Loading stage 7: Decorate world (75%)
-        loadingProgress = 0.65f;
-        loadingMessage = "Growing trees and vegetation";
-        renderLoadingScreen();
-        std::cout << "Decorating world (trees, vegetation)..." << std::endl;
-        world.decorateWorld();
+        // We'll determine spawn chunk coordinates and generate them before finding exact spawn point
+        // Assume spawn will be somewhere near (0, 64, 0) in world space
+        // That's chunk (0, 2, 0) in chunk coordinates if spawn height is 64 blocks
+        // For centered world with 320 height: Y chunks from -160 to +159
+        // Spawn at Y=64 is chunk Y=2 (chunk 2 * 32 = 64-95 blocks)
+        int spawnChunkX = 0;
+        int spawnChunkY = 2;  // Y=64 surface is in chunk Y=2
+        int spawnChunkZ = 0;
+        int spawnRadius = 4;  // Generate 9x9x9 chunks = 729 chunks (reasonable startup time)
+
+        world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
+
+        // NOTE: decorateWorld() skipped - trees will be generated on-demand by streaming system
+        // This dramatically improves startup time for large worlds
 
         // Loading stage 8: Create GPU buffers (85%)
         loadingProgress = 0.80f;
