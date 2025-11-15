@@ -444,6 +444,45 @@ void World::decorateWorld() {
                    << m_chunks.size() << " total chunks)";
 }
 
+void World::registerWaterBlocks() {
+    // Scan all generated chunks and register water blocks with simulation
+    // This initializes water flow physics for water placed during world generation
+    Logger::info() << "Registering water blocks with simulation system...";
+
+    int waterBlocksFound = 0;
+    auto& registry = BlockRegistry::instance();
+
+    // Iterate through all chunks
+    for (auto& chunk : m_chunks) {
+        int chunkX = chunk->getX();
+        int chunkY = chunk->getY();
+        int chunkZ = chunk->getZ();
+
+        // Scan all blocks in chunk
+        for (int localX = 0; localX < Chunk::WIDTH; localX++) {
+            for (int localY = 0; localY < Chunk::HEIGHT; localY++) {
+                for (int localZ = 0; localZ < Chunk::DEPTH; localZ++) {
+                    int blockID = chunk->getBlock(localX, localY, localZ);
+
+                    // Check if this is a liquid block
+                    if (blockID > 0 && blockID < registry.count() && registry.get(blockID).isLiquid) {
+                        // Calculate world coordinates
+                        int worldX = chunkX * Chunk::WIDTH + localX;
+                        int worldY = chunkY * Chunk::HEIGHT + localY;
+                        int worldZ = chunkZ * Chunk::DEPTH + localZ;
+
+                        // Register with simulation system
+                        m_waterSimulation->setWaterLevel(worldX, worldY, worldZ, 255, 1);
+                        waterBlocksFound++;
+                    }
+                }
+            }
+        }
+    }
+
+    Logger::info() << "Registered " << waterBlocksFound << " water blocks with simulation";
+}
+
 void World::createBuffers(VulkanRenderer* renderer) {
     // BATCHED BUFFER UPLOAD: Submit all buffer copies in one batch for 10-15x speedup
     // Old approach: Each chunk uploaded individually with separate GPU sync (16+ sync points per frame)
@@ -860,6 +899,15 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
         setBlockAtUnsafe(worldX, worldY, worldZ, 0);
         setBlockMetadataAtUnsafe(worldX, worldY, worldZ, 0);
 
+        // Unregister water from simulation
+        m_waterSimulation->setWaterLevel(
+            static_cast<int>(worldX),
+            static_cast<int>(worldY),
+            static_cast<int>(worldZ),
+            0,  // Zero level removes the water cell
+            0   // No fluid type
+        );
+
         // Flood fill to remove all connected flowing water (level > 0)
         std::vector<glm::vec3> toCheck;
         std::unordered_set<glm::ivec3> visited;
@@ -892,6 +940,16 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
                     if (neighborLevel > 0) {  // It's flowing water
                         setBlockAtUnsafe(neighborPos.x, neighborPos.y, neighborPos.z, 0);
                         setBlockMetadataAtUnsafe(neighborPos.x, neighborPos.y, neighborPos.z, 0);
+
+                        // Unregister from simulation
+                        m_waterSimulation->setWaterLevel(
+                            static_cast<int>(neighborPos.x),
+                            static_cast<int>(neighborPos.y),
+                            static_cast<int>(neighborPos.z),
+                            0,  // Zero level removes the water cell
+                            0   // No fluid type
+                        );
+
                         toCheck.push_back(neighborPos);
                     }
                 }
@@ -984,9 +1042,18 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
     // Place the block
     setBlockAtUnsafe(worldX, worldY, worldZ, blockID);
 
-    // If placing water, set metadata to 0 (source block)
+    // If placing water, set metadata to 0 (source block) and register with simulation
     if (registry.get(blockID).isLiquid) {
         setBlockMetadataAtUnsafe(worldX, worldY, worldZ, 0);  // Level 0 = source block
+
+        // Register water block with simulation system so it can flow
+        m_waterSimulation->setWaterLevel(
+            static_cast<int>(worldX),
+            static_cast<int>(worldY),
+            static_cast<int>(worldZ),
+            255,  // Full water level (source block)
+            1     // Fluid type: 1=water, 2=lava
+        );
     }
 
     // Update the affected chunk and all adjacent chunks

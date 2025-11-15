@@ -374,8 +374,14 @@ int main() {
 
         world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
 
-        // NOTE: decorateWorld() skipped - trees will be generated on-demand by streaming system
-        // This dramatically improves startup time for large worlds
+        // Decorate world with trees and features
+        // Only decorates spawn chunks for faster startup
+        std::cout << "Placing trees and features..." << std::endl;
+        world.decorateWorld();
+
+        // Register water blocks with simulation system
+        std::cout << "Initializing water physics..." << std::endl;
+        world.registerWaterBlocks();
 
         // Loading stage 8: Create GPU buffers (85%)
         loadingProgress = 0.80f;

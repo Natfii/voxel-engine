@@ -377,6 +377,12 @@ public:
      */
     void decorateWorld();
 
+    /**
+     * @brief Scans all generated chunks and registers water blocks with simulation
+     * Should be called after chunk generation to initialize water flow physics
+     */
+    void registerWaterBlocks();
+
     // ========== World Persistence ==========
 
     /**
