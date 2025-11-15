@@ -16,6 +16,7 @@
 #include "block_system.h"
 #include "terrain_constants.h"
 #include "mesh_buffer_pool.h"
+#include "biome_map.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
@@ -256,24 +257,71 @@ void Chunk::generate(BiomeMap* biomeMap) {
                         continue;
                     }
 
-                    // Solid terrain - determine block type
+                    // Solid terrain - determine block type with biome blending
                     int depthFromSurface = terrainHeight - worldY;
 
                     if (depthFromSurface == 1) {
-                        // Top layer - use biome's surface block
-                        m_blocks[x][y][z] = biome->primary_surface_block;
+                        // ==================== SURFACE BLOCK BLENDING ====================
+                        // Top layer - blend surface blocks from multiple biomes
+                        // Use weighted random selection based on biome influence
+
+                        // Generate position-based pseudo-random value for consistent block selection
+                        int seed = static_cast<int>(worldX * 73856093) ^
+                                   static_cast<int>(worldY * 19349663) ^
+                                   static_cast<int>(worldZ * 83492791);
+                        float random = static_cast<float>((seed & 0xFFFF)) / 65535.0f;
+
+                        // Weighted random selection based on biome influences
+                        float cumulativeWeight = 0.0f;
+                        int selectedBlock = dominantBiome->primary_surface_block;
+
+                        for (const auto& inf : influences) {
+                            cumulativeWeight += inf.weight;
+                            if (random <= cumulativeWeight) {
+                                selectedBlock = inf.biome->primary_surface_block;
+                                break;
+                            }
+                        }
+
+                        m_blocks[x][y][z] = selectedBlock;
+
+                    } else if (depthFromSurface == 2) {
+                        // ==================== SUBSURFACE TRANSITION LAYER ====================
+                        // Second layer below surface - transition between surface material and dirt
+                        // This creates natural blending (e.g., grass -> dirt, sand -> sand -> dirt)
+
+                        // Use dominant biome's surface block at higher blend strength
+                        // 70% chance of surface block, 30% chance of dirt for smooth transition
+                        int seed = static_cast<int>(worldX * 73856093) ^
+                                   static_cast<int>(worldY * 19349663) ^
+                                   static_cast<int>(worldZ * 83492791);
+                        float random = static_cast<float>((seed & 0xFFFF)) / 65535.0f;
+
+                        if (random < 0.7f && dominantBiome->primary_surface_block != BLOCK_GRASS) {
+                            // Continue surface material (for sand, snow, etc.)
+                            m_blocks[x][y][z] = dominantBiome->primary_surface_block;
+                        } else {
+                            // Transition to dirt
+                            m_blocks[x][y][z] = BLOCK_DIRT;
+                        }
+
                     } else if (depthFromSurface <= TOPSOIL_DEPTH) {
-                        // Topsoil layer - dirt
+                        // ==================== TOPSOIL LAYER ====================
+                        // Standard dirt layer (depth 3-4)
                         m_blocks[x][y][z] = BLOCK_DIRT;
+
                     } else {
-                        // Deep underground - use biome's stone block
-                        m_blocks[x][y][z] = biome->primary_stone_block;
+                        // ==================== DEEP UNDERGROUND BLENDING ====================
+                        // Deep underground - blend stone types from multiple biomes
+                        // Use dominant biome's stone block for consistency
+                        m_blocks[x][y][z] = dominantBiome->primary_stone_block;
                     }
 
                 } else if (worldY < WATER_LEVEL) {
+                    // ==================== WATER/ICE BLENDING ====================
                     // Above terrain but below water level
-                    // Use ice in cold biomes (temperature < 25), water otherwise
-                    if (biome->temperature < 25) {
+                    // Blend water/ice based on dominant biome temperature
+                    if (dominantBiome->temperature < 25) {
                         m_blocks[x][y][z] = BLOCK_ICE;
                         m_blockMetadata[x][y][z] = 0;
                     } else {
