@@ -998,34 +998,18 @@ void Chunk::generateLODMesh(World* world, int lodLevel, bool callerHoldsLock) {
     if (lodLevel == 1) {
         m_lod1VertexCount = static_cast<uint32_t>(verts.size());
         m_lod1IndexCount = static_cast<uint32_t>(indices.size());
-
-        // Create LOD1 buffers immediately (simplified - no batched version for LOD)
-        if (m_lod1VertexCount > 0) {
-            // We'll store the data in temporary vectors for buffer creation
-            std::vector<Vertex> lod1Verts = std::move(verts);
-            std::vector<uint32_t> lod1Indices = std::move(indices);
-
-            // Note: Buffer creation will be done separately
-            // For now, just release back to pool
-            pool.releaseVertexBuffer(std::move(lod1Verts));
-            pool.releaseIndexBuffer(std::move(lod1Indices));
-        }
+        m_lod1Vertices = std::move(verts);
+        m_lod1Indices = std::move(indices);
     } else if (lodLevel == 2) {
         m_lod2VertexCount = static_cast<uint32_t>(verts.size());
         m_lod2IndexCount = static_cast<uint32_t>(indices.size());
-
-        if (m_lod2VertexCount > 0) {
-            std::vector<Vertex> lod2Verts = std::move(verts);
-            std::vector<uint32_t> lod2Indices = std::move(indices);
-
-            pool.releaseVertexBuffer(std::move(lod2Verts));
-            pool.releaseIndexBuffer(std::move(lod2Indices));
-        }
+        m_lod2Vertices = std::move(verts);
+        m_lod2Indices = std::move(indices);
+    } else {
+        // Release buffers back to pool if invalid LOD level
+        if (!verts.empty()) pool.releaseVertexBuffer(std::move(verts));
+        if (!indices.empty()) pool.releaseIndexBuffer(std::move(indices));
     }
-
-    // Release unused buffers back to pool
-    if (!verts.empty()) pool.releaseVertexBuffer(std::move(verts));
-    if (!indices.empty()) pool.releaseIndexBuffer(std::move(indices));
 }
 
 void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
@@ -1234,6 +1218,146 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
         m_transparentIndices.clear();
         m_transparentIndices.shrink_to_fit();
     }  // End of transparent buffer creation
+}
+
+void Chunk::createLODBuffers(VulkanRenderer* renderer) {
+    VkDevice device = renderer->getDevice();
+
+    // ========== CREATE LOD1 BUFFERS ==========
+    if (m_lod1VertexCount > 0 && !m_lod1Vertices.empty()) {
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_lod1Vertices.size();
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
+
+        try {
+            renderer->createBuffer(vertexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  stagingBuffer, stagingBufferMemory);
+
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, vertexBufferSize, 0, &data);
+            memcpy(data, m_lod1Vertices.data(), (size_t)vertexBufferSize);
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            renderer->createBuffer(vertexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  m_lod1VertexBuffer, m_lod1VertexBufferMemory);
+
+            renderer->copyBuffer(stagingBuffer, m_lod1VertexBuffer, vertexBufferSize);
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        } catch (...) {
+            if (stagingBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, stagingBuffer, nullptr);
+            if (stagingBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, stagingBufferMemory, nullptr);
+            throw;
+        }
+
+        // Create LOD1 index buffer
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_lod1Indices.size();
+        stagingBuffer = VK_NULL_HANDLE;
+        stagingBufferMemory = VK_NULL_HANDLE;
+
+        try {
+            renderer->createBuffer(indexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  stagingBuffer, stagingBufferMemory);
+
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, indexBufferSize, 0, &data);
+            memcpy(data, m_lod1Indices.data(), (size_t)indexBufferSize);
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            renderer->createBuffer(indexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  m_lod1IndexBuffer, m_lod1IndexBufferMemory);
+
+            renderer->copyBuffer(stagingBuffer, m_lod1IndexBuffer, indexBufferSize);
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        } catch (...) {
+            if (stagingBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, stagingBuffer, nullptr);
+            if (stagingBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, stagingBufferMemory, nullptr);
+            throw;
+        }
+
+        // Free CPU-side LOD1 mesh data
+        m_lod1Vertices.clear();
+        m_lod1Vertices.shrink_to_fit();
+        m_lod1Indices.clear();
+        m_lod1Indices.shrink_to_fit();
+    }
+
+    // ========== CREATE LOD2 BUFFERS ==========
+    if (m_lod2VertexCount > 0 && !m_lod2Vertices.empty()) {
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_lod2Vertices.size();
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
+
+        try {
+            renderer->createBuffer(vertexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  stagingBuffer, stagingBufferMemory);
+
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, vertexBufferSize, 0, &data);
+            memcpy(data, m_lod2Vertices.data(), (size_t)vertexBufferSize);
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            renderer->createBuffer(vertexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  m_lod2VertexBuffer, m_lod2VertexBufferMemory);
+
+            renderer->copyBuffer(stagingBuffer, m_lod2VertexBuffer, vertexBufferSize);
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        } catch (...) {
+            if (stagingBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, stagingBuffer, nullptr);
+            if (stagingBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, stagingBufferMemory, nullptr);
+            throw;
+        }
+
+        // Create LOD2 index buffer
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_lod2Indices.size();
+        stagingBuffer = VK_NULL_HANDLE;
+        stagingBufferMemory = VK_NULL_HANDLE;
+
+        try {
+            renderer->createBuffer(indexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  stagingBuffer, stagingBufferMemory);
+
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, indexBufferSize, 0, &data);
+            memcpy(data, m_lod2Indices.data(), (size_t)indexBufferSize);
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            renderer->createBuffer(indexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  m_lod2IndexBuffer, m_lod2IndexBufferMemory);
+
+            renderer->copyBuffer(stagingBuffer, m_lod2IndexBuffer, indexBufferSize);
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        } catch (...) {
+            if (stagingBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, stagingBuffer, nullptr);
+            if (stagingBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, stagingBufferMemory, nullptr);
+            throw;
+        }
+
+        // Free CPU-side LOD2 mesh data
+        m_lod2Vertices.clear();
+        m_lod2Vertices.shrink_to_fit();
+        m_lod2Indices.clear();
+        m_lod2Indices.shrink_to_fit();
+    }
 }
 
 void Chunk::destroyBuffers(VulkanRenderer* renderer) {
@@ -1490,9 +1614,9 @@ void Chunk::cleanupStagingBuffers(VulkanRenderer* renderer) {
     }
 }
 
-void Chunk::render(VkCommandBuffer commandBuffer, bool transparent) {
+void Chunk::render(VkCommandBuffer commandBuffer, bool transparent, int lodLevel) {
     if (transparent) {
-        // Render transparent geometry
+        // Render transparent geometry (LOD not supported for transparency yet)
         if (m_transparentVertexCount == 0) {
             return;  // Nothing to render
         }
@@ -1508,21 +1632,41 @@ void Chunk::render(VkCommandBuffer commandBuffer, bool transparent) {
         // Draw indexed
         vkCmdDrawIndexed(commandBuffer, m_transparentIndexCount, 1, 0, 0, 0);
     } else {
-        // Render opaque geometry
-        if (m_vertexCount == 0) {
+        // Render opaque geometry with LOD support
+        VkBuffer vertexBuffer = VK_NULL_HANDLE;
+        VkBuffer indexBuffer = VK_NULL_HANDLE;
+        uint32_t indexCount = 0;
+
+        // Select appropriate buffers based on LOD level
+        if (lodLevel == 1 && m_lod1VertexCount > 0) {
+            vertexBuffer = m_lod1VertexBuffer;
+            indexBuffer = m_lod1IndexBuffer;
+            indexCount = m_lod1IndexCount;
+        } else if (lodLevel == 2 && m_lod2VertexCount > 0) {
+            vertexBuffer = m_lod2VertexBuffer;
+            indexBuffer = m_lod2IndexBuffer;
+            indexCount = m_lod2IndexCount;
+        } else {
+            // Default to LOD0 (full detail)
+            vertexBuffer = m_vertexBuffer;
+            indexBuffer = m_indexBuffer;
+            indexCount = m_indexCount;
+        }
+
+        if (indexCount == 0) {
             return;  // Nothing to render
         }
 
         // Bind vertex buffer
-        VkBuffer vertexBuffers[] = {m_vertexBuffer};
+        VkBuffer vertexBuffers[] = {vertexBuffer};
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
         // Bind index buffer
-        vkCmdBindIndexBuffer(commandBuffer, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
         // Draw indexed
-        vkCmdDrawIndexed(commandBuffer, m_indexCount, 1, 0, 0, 0);
+        vkCmdDrawIndexed(commandBuffer, indexCount, 1, 0, 0, 0);
     }
 }
 

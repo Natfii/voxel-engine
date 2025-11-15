@@ -193,6 +193,15 @@ public:
     void createVertexBuffer(VulkanRenderer* renderer);
 
     /**
+     * @brief Creates Vulkan buffers for LOD meshes
+     *
+     * Uploads LOD mesh data to GPU. Call after generateLODMesh().
+     *
+     * @param renderer Vulkan renderer for buffer creation
+     */
+    void createLODBuffers(VulkanRenderer* renderer);
+
+    /**
      * @brief Creates Vulkan vertex and index buffers in batched mode
      *
      * Like createVertexBuffer(), but uses batched buffer copying for better performance.
@@ -410,6 +419,10 @@ private:
     std::vector<uint32_t> m_indices;        ///< CPU-side index data (opaque)
     std::vector<Vertex> m_transparentVertices;   ///< CPU-side vertex data (transparent)
     std::vector<uint32_t> m_transparentIndices;  ///< CPU-side index data (transparent)
+    std::vector<Vertex> m_lod1Vertices;     ///< CPU-side vertex data (LOD1)
+    std::vector<uint32_t> m_lod1Indices;    ///< CPU-side index data (LOD1)
+    std::vector<Vertex> m_lod2Vertices;     ///< CPU-side vertex data (LOD2)
+    std::vector<uint32_t> m_lod2Indices;    ///< CPU-side index data (LOD2)
 
     // ========== Vulkan Buffers (Opaque) ==========
     VkBuffer m_vertexBuffer;                ///< GPU vertex buffer (opaque)

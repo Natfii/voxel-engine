@@ -546,9 +546,18 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     // Frustum margin: add extra padding to prevent edge-case popping
     const float frustumMargin = CHUNK_HALF_DIAGONAL + FRUSTUM_CULLING_PADDING;
 
+    // LOD distance thresholds (in world units, not squared)
+    const float LOD1_DISTANCE = 64.0f;  // Switch to LOD1 beyond this distance
+    const float LOD2_DISTANCE = 128.0f; // Switch to LOD2 beyond this distance
+    const float LOD1_DISTANCE_SQUARED = LOD1_DISTANCE * LOD1_DISTANCE;
+    const float LOD2_DISTANCE_SQUARED = LOD2_DISTANCE * LOD2_DISTANCE;
+
     int renderedCount = 0;
     int distanceCulled = 0;
     int frustumCulled = 0;
+    int lod0Count = 0;  // Full detail chunks
+    int lod1Count = 0;  // Medium detail chunks
+    int lod2Count = 0;  // Low detail chunks
 
     // Store transparent chunks for second pass (sorted back-to-front)
     std::vector<std::pair<Chunk*, float>> transparentChunks;
@@ -603,8 +612,23 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
             continue;
         }
 
-        // Chunk passed all culling tests - render opaque geometry
-        chunk->render(commandBuffer, false);  // false = opaque
+        // Chunk passed all culling tests - determine LOD level based on distance
+        int lodLevel = 0;  // Default: Full detail
+        float distance = std::sqrt(distanceSquared);
+
+        if (distance >= LOD2_DISTANCE) {
+            lodLevel = 2;  // Low detail for very far chunks
+            lod2Count++;
+        } else if (distance >= LOD1_DISTANCE) {
+            lodLevel = 1;  // Medium detail for medium distance chunks
+            lod1Count++;
+        } else {
+            lodLevel = 0;  // Full detail for close chunks
+            lod0Count++;
+        }
+
+        // Render opaque geometry with appropriate LOD level
+        chunk->render(commandBuffer, false, lodLevel);  // false = opaque
         renderedCount++;
 
         // If chunk has transparent geometry, add to transparent list
@@ -648,6 +672,9 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     if (DebugState::instance().debugWorld.getValue() &&
         frameCount++ % WorldConstants::DEBUG_OUTPUT_INTERVAL == 0) {
         Logger::debug() << "Rendered: " << renderedCount << " chunks | "
+                        << "LOD0: " << lod0Count << " | "
+                        << "LOD1: " << lod1Count << " | "
+                        << "LOD2: " << lod2Count << " | "
                         << "Distance culled: " << distanceCulled << " | "
                         << "Frustum culled: " << frustumCulled << " | "
                         << "Total: " << m_chunks.size() << " chunks";

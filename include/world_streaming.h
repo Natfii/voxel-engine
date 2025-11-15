@@ -38,6 +38,7 @@
 
 // Need full ChunkCoord definition for hash function in unordered_set
 #include "world.h"
+#include "chunk_pool.h"
 
 // Forward declarations
 class Chunk;
@@ -310,6 +311,9 @@ private:
     static constexpr int MIN_CHUNKS_PER_FRAME = 1;
     static constexpr int MAX_CHUNKS_PER_FRAME = 8;
     static constexpr float TARGET_FRAME_TIME_MS = 16.67f;  ///< Target 60 FPS
+
+    // === Chunk Object Pooling ===
+    ChunkPool m_chunkPool;                ///< Pool for reusing chunk allocations
 
     // === Statistics ===
     std::atomic<size_t> m_totalChunksLoaded;    ///< Total chunks loaded since start
