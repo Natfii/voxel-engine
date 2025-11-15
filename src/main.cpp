@@ -374,8 +374,14 @@ int main() {
 
         world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
 
-        // NOTE: decorateWorld() skipped - trees will be generated on-demand by streaming system
-        // This dramatically improves startup time for large worlds
+        // Decorate world with trees and features
+        // Only decorates spawn chunks for faster startup
+        std::cout << "Placing trees and features..." << std::endl;
+        world.decorateWorld();
+
+        // Register water blocks with simulation system
+        std::cout << "Initializing water physics..." << std::endl;
+        world.registerWaterBlocks();
 
         // Loading stage 8: Create GPU buffers (85%)
         loadingProgress = 0.80f;
@@ -450,8 +456,8 @@ int main() {
                     float testX = static_cast<float>(dx);
                     float testZ = static_cast<float>(dz);
 
-                    // Start search from Y=76 (top of terrain range) for efficiency
-                    for (int y = 76; y >= 10; y--) {  // Search from expected terrain height down
+                    // Start search from MAX_TERRAIN_HEIGHT down to MIN_SEARCH_Y
+                    for (int y = MAX_TERRAIN_HEIGHT; y >= MIN_SEARCH_Y; y--) {  // Search from top of terrain down
                         int currentBlock = world.getBlockAt(testX, static_cast<float>(y), testZ);
                         int aboveBlock = world.getBlockAt(testX, static_cast<float>(y + 1), testZ);
 
@@ -477,9 +483,9 @@ int main() {
         if (spawnGroundY < 0) {
             std::cout << "WARNING: No safe spawn found in initial search, validating fallback at (0, 0, 64)" << std::endl;
 
-            // Try to find ground at (0,0) by searching downward from Y=76
+            // Try to find ground at (0,0) by searching downward from MAX_TERRAIN_HEIGHT
             bool foundFallback = false;
-            for (int y = 76; y >= 10; y--) {
+            for (int y = MAX_TERRAIN_HEIGHT; y >= MIN_SEARCH_Y; y--) {
                 int currentBlock = world.getBlockAt(0.0f, static_cast<float>(y), 0.0f);
                 int aboveBlock = world.getBlockAt(0.0f, static_cast<float>(y + 1), 0.0f);
 
@@ -501,7 +507,7 @@ int main() {
                 for (int radius = 1; radius <= 64 && !foundFallback; radius += 4) {
                     for (int dx = -radius; dx <= radius && !foundFallback; dx += 4) {
                         for (int dz = -radius; dz <= radius && !foundFallback; dz += 4) {
-                            for (int y = 76; y >= 10; y--) {
+                            for (int y = MAX_TERRAIN_HEIGHT; y >= MIN_SEARCH_Y; y--) {
                                 float testX = static_cast<float>(dx);
                                 float testZ = static_cast<float>(dz);
                                 int currentBlock = world.getBlockAt(testX, static_cast<float>(y), testZ);
@@ -522,12 +528,14 @@ int main() {
                     }
                 }
 
-                // Last resort: spawn at Y=64 even if not validated
+                // Last resort: spawn at safe Y calculated from world bounds
                 if (!foundFallback) {
-                    std::cout << "CRITICAL WARNING: No safe spawn found anywhere, using unvalidated Y=64 at (0, 0)" << std::endl;
+                    int emergencyY = (MAX_TERRAIN_HEIGHT + MIN_SEARCH_Y) / 2;  // Midpoint of search range
+                    std::cout << "CRITICAL WARNING: No safe spawn found anywhere, using unvalidated Y="
+                              << emergencyY << " at (0, 0)" << std::endl;
                     spawnX = 0.0f;
                     spawnZ = 0.0f;
-                    spawnGroundY = 64;
+                    spawnGroundY = emergencyY;
                 }
             }
         }
@@ -848,7 +856,9 @@ int main() {
 
                     if (selectedItem.type == InventoryItemType::BLOCK) {
                         // Place block adjacent to the targeted block (using hit normal)
-                        if (selectedItem.blockID > 0) {
+                        // Bounds check to prevent crash from invalid block IDs
+                        auto& registry = BlockRegistry::instance();
+                        if (selectedItem.blockID > 0 && selectedItem.blockID < registry.count()) {
                             glm::vec3 placePosition = target.blockPosition + target.hitNormal;
                             world.placeBlock(placePosition, selectedItem.blockID, &renderer);
                         }
@@ -883,20 +893,17 @@ int main() {
                 rightMousePressed = false;
             }
 
-            // Update liquid physics periodically
-            // DISABLED: Causes severe lag (scans millions of blocks per update)
-            // TODO: Optimize by maintaining a dirty list of only water blocks that need updates
-            // Current implementation: O(chunks * 32^3) = O(millions) per update
-            // Needed: Only track changed water blocks in a queue/set for O(changed blocks) updates
-            /*
+            // Update water simulation (OPTIMIZED with dirty list + chunk freezing)
+            // Only updates water cells that changed (dirty list tracking)
+            // Only simulates water within render distance (chunk freezing)
+            // Performance: O(dirty_cells_in_range) instead of O(all_chunks)
             static float liquidUpdateTimer = 0.0f;
             liquidUpdateTimer += deltaTime;
             const float liquidUpdateInterval = 0.1f;  // Update liquids 10 times per second for smooth flow
             if (liquidUpdateTimer >= liquidUpdateInterval) {
                 liquidUpdateTimer = 0.0f;
-                world.updateLiquids(&renderer);
+                world.updateWaterSimulation(deltaTime, &renderer, player.Position, renderDistance);
             }
-            */
 
             // Begin rendering
             if (!renderer.beginFrame()) {

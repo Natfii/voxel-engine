@@ -18,9 +18,9 @@ namespace WorldConstants {
     constexpr float FRAGMENT_DISCARD_MARGIN = 1.05f;
 
     /// Half-diagonal distance of a chunk (world units)
-    /// Chunks are 32x32x32 blocks = 16x16x16 world units
-    /// Distance from center to farthest corner = sqrt(8² + 8² + 8²) ≈ 13.86
-    constexpr float CHUNK_HALF_DIAGONAL = 13.86f;
+    /// Chunks are 32x32x32 blocks = 32x32x32 world units
+    /// Distance from center to farthest corner = sqrt(16² + 16² + 16²) ≈ 27.71
+    constexpr float CHUNK_HALF_DIAGONAL = 27.71f;
 
     /// Additional frustum culling margin (world units)
     /// Padding to prevent edge-case chunk popping

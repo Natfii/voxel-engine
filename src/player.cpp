@@ -17,6 +17,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 
 Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     : Position(position), WorldUp(up), Yaw(yaw), Pitch(pitch),
@@ -146,22 +147,22 @@ void Player::updateNoclip(GLFWwindow* window, float deltaTime) {
  *
  * Physics Constants (from player.h):
  * -----------------------------------
- * - GRAVITY: 16.0 world units/sec² (32 blocks/sec²)
- * - JUMP_VELOCITY: 4.2 world units/sec (reaches ~1.1 blocks high)
- * - WALK_SPEED: 2.15 world units/sec (4.3 blocks/sec)
- * - SPRINT_MULTIPLIER: 1.5x (6.45 blocks/sec when sprinting)
- * - SWIM_SPEED: 1.5 world units/sec (3.0 blocks/sec)
- * - PLAYER_HEIGHT: 0.9 world units (1.8 blocks, same as Minecraft)
- * - PLAYER_WIDTH: 0.25 world units (0.5 blocks)
- * - PLAYER_EYE_HEIGHT: 0.8 world units (1.6 blocks, Position is at eye level)
+ * - GRAVITY: 16.0 world units/sec² (16 blocks/sec²)
+ * - JUMP_VELOCITY: 4.2 world units/sec (reaches ~0.55 blocks high)
+ * - WALK_SPEED: 2.15 world units/sec (2.15 blocks/sec)
+ * - SPRINT_MULTIPLIER: 1.5x (3.225 blocks/sec when sprinting)
+ * - SWIM_SPEED: 1.5 world units/sec (1.5 blocks/sec)
+ * - PLAYER_HEIGHT: 0.9 world units (0.9 blocks, reduced from Minecraft's 1.8)
+ * - PLAYER_WIDTH: 0.25 world units (0.25 blocks)
+ * - PLAYER_EYE_HEIGHT: 0.8 world units (0.8 blocks, Position is at eye level)
  *
  * Physics Math Example:
  * ---------------------
- * Jump height: h = v₀² / (2g) = 4.2² / (2*16) = 0.55125 world units ≈ 1.1 blocks
+ * Jump height: h = v₀² / (2g) = 4.2² / (2*16) = 0.55125 world units ≈ 0.55 blocks
  * Jump duration: t = 2v₀ / g = 2*4.2 / 16 = 0.525 seconds
- * Sprint speed: 2.15 * 1.5 = 3.225 world units/sec = 6.45 blocks/sec
+ * Sprint speed: 2.15 * 1.5 = 3.225 world units/sec = 3.225 blocks/sec
  *
- * Note: Blocks are 0.5 world units in size
+ * Note: Blocks are 1.0 world units in size
  *
  * @param window GLFW window for input
  * @param deltaTime Frame time in seconds (typically ~0.016 for 60 FPS)
@@ -374,6 +375,15 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
 
     // Apply final movement
     Position += movement;
+
+    // Void boundary protection: Prevent falling through the world
+    // With world_height=16, MIN_WORLD_Y is typically -256. Use -300 as safety threshold.
+    const float VOID_BOUNDARY = -300.0f;
+    if (Position.y < VOID_BOUNDARY) {
+        Position.y = 100.0f;  // Teleport to safe Y coordinate
+        m_velocity.y = 0.0f;  // Reset vertical velocity
+        std::cout << "WARNING: Player fell through void, teleporting to safety" << std::endl;
+    }
 
     // After movement, stabilize velocity based on ground state
     if (m_onGround) {

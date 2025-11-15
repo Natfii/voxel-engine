@@ -23,8 +23,9 @@ layout(location = 0) out vec4 outColor;
 void main() {
     vec2 texCoord = fragTexCoord;
 
-    // Parallax scrolling for water (constrained to atlas cell)
-    if (fragColor.a < 0.99) {  // Transparent blocks (water)
+    // Parallax scrolling ONLY for water (not ice or other transparent blocks)
+    // Water has transparency=0.25 (alpha=0.75), ice has transparency=0.4 (alpha=0.6)
+    if (fragColor.a > 0.7 && fragColor.a < 0.8) {  // Only water blocks
         // Water is in an atlas, need to wrap within cell boundaries
         const float atlasSize = 4.0;  // 4x4 atlas
         const float cellSize = 1.0 / atlasSize;
@@ -54,7 +55,7 @@ void main() {
     vec3 baseColor = texColor.rgb * fragColor.rgb;
 
     // Darken and tint water to reduce bright patches (not too dark)
-    if (fragColor.a < 0.99) {  // Transparent blocks (water)
+    if (fragColor.a > 0.7 && fragColor.a < 0.8) {  // Only liquid blocks (water/lava)
         baseColor *= 0.65;  // Darken by 35% (less aggressive)
         baseColor *= vec3(0.75, 0.9, 1.0);  // Subtle blue tint
     }

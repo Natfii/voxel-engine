@@ -201,7 +201,7 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 float worldYf = static_cast<float>(worldY);
 
                 // BEDROCK LAYER: Y=0 to Y=1 is always bedrock (unbreakable bottom)
-                if (worldY <= 1) {
+                if (worldY >= 0 && worldY <= 1) {
                     m_blocks[x][y][z] = BLOCK_BEDROCK;
                     continue;
                 }
@@ -213,12 +213,12 @@ void Chunk::generate(BiomeMap* biomeMap) {
                     continue;
                 }
 
-                // Check if this is inside a cave (only for Y > 15)
+                // Check if this is inside a cave (extended to deep underground)
                 float caveDensity = biomeMap->getCaveDensityAt(worldX, worldYf, worldZ);
-                bool isCave = (caveDensity < 0.45f) && (worldY > 15);  // Caves only above Y=15
+                bool isCave = (caveDensity < 0.45f) && (worldY > 10);  // Caves above solid foundation layer
 
-                // Check if inside underground biome chamber (only for Y > 15)
-                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ) && (worldY > 15);
+                // Check if inside underground biome chamber (extended to deep underground)
+                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ) && (worldY > 10);
 
                 // Determine block placement
                 if (worldY < terrainHeight) {
@@ -321,7 +321,7 @@ void Chunk::generate(BiomeMap* biomeMap) {
  * Coordinate Systems:
  * -------------------
  * - Local coords: (0-31, 0-31, 0-31) within chunk
- * - World coords: local * 0.5 (blocks are 0.5 world units)
+ * - World coords: local * 1.0 (blocks are 1.0 world units)
  * - Texture coords: UV mapped from texture atlas
  *
  * Texture Atlas Mapping:
@@ -333,13 +333,13 @@ void Chunk::generate(BiomeMap* biomeMap) {
  *
  * @param world World instance to query neighboring chunks
  */
-void Chunk::generateMesh(World* world) {
+void Chunk::generateMesh(World* world, bool callerHoldsLock) {
     /**
      * Cube Vertex Layout (indexed rendering):
      * ========================================
      *
      * Each face is a quad defined by 4 vertices (counter-clockwise winding order).
-     * Blocks are 0.5 world units in size (1 block = 0.5 units).
+     * Blocks are 1.0 world units in size (1 block = 1.0 units).
      *
      * Vertex ordering per face (looking at face from outside):
      *   3 -------- 2
@@ -450,7 +450,7 @@ void Chunk::generateMesh(World* world) {
 
     // Helper lambda to check if a block is solid (non-air)
     // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
-    auto isSolid = [this, world, &registry, &localToWorldPos](int x, int y, int z) -> bool {
+    auto isSolid = [this, world, &registry, &localToWorldPos, callerHoldsLock](int x, int y, int z) -> bool {
         int blockID;
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
             // Inside this chunk
@@ -458,7 +458,9 @@ void Chunk::generateMesh(World* world) {
         } else {
             // Out of bounds - check neighboring chunk via World
             glm::vec3 worldPos = localToWorldPos(x, y, z);
-            blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
+            // Use unsafe version if caller already holds lock (prevents deadlock)
+            blockID = callerHoldsLock ? world->getBlockAtUnsafe(worldPos.x, worldPos.y, worldPos.z)
+                                       : world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         }
         if (blockID == 0) return false;
         // Bounds check before registry access to prevent crash
@@ -467,14 +469,16 @@ void Chunk::generateMesh(World* world) {
     };
 
     // Helper lambda to check if a block is liquid
-    auto isLiquid = [this, world, &registry, &localToWorldPos](int x, int y, int z) -> bool {
+    auto isLiquid = [this, world, &registry, &localToWorldPos, callerHoldsLock](int x, int y, int z) -> bool {
         int blockID;
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
             blockID = m_blocks[x][y][z];
         } else {
             // Out of bounds - check world
             glm::vec3 worldPos = localToWorldPos(x, y, z);
-            blockID = world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
+            // Use unsafe version if caller already holds lock (prevents deadlock)
+            blockID = callerHoldsLock ? world->getBlockAtUnsafe(worldPos.x, worldPos.y, worldPos.z)
+                                       : world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
         }
         if (blockID == 0) return false;
         // Bounds check before registry access to prevent crash
@@ -488,6 +492,11 @@ void Chunk::generateMesh(World* world) {
             for(int Z = 0; Z < DEPTH;  ++Z) {
                 int id = m_blocks[X][Y][Z];
                 if (id == 0) continue; // Skip air
+
+                // Bounds check before registry access to prevent crash
+                if (id < 0 || id >= registry.count()) {
+                    continue; // Skip invalid block IDs
+                }
 
                 // Look up block definition by ID
                 const BlockDefinition& def = registry.get(id);

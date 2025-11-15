@@ -64,9 +64,9 @@ namespace std {
  * - Block modification with automatic mesh regeneration for affected chunks
  *
  * World coordinates:
- * - Blocks are 0.5 world units in size
+ * - Blocks are 1.0 world units in size
  * - World is centered at origin (0, 0, 0)
- * - Each chunk contains 32x32x32 blocks = 16x16x16 world units
+ * - Each chunk contains 32x32x32 blocks = 32x32x32 world units
  *
  * Performance features:
  * - Multi-threaded chunk generation
@@ -344,11 +344,14 @@ public:
      * @brief Updates water simulation and particles
      *
      * Should be called every frame to update water flow and particle effects.
+     * Only simulates water within render distance (chunk freezing optimization).
      *
      * @param deltaTime Time elapsed since last frame
      * @param renderer Vulkan renderer for buffer recreation
+     * @param playerPos Player's position in world coordinates
+     * @param renderDistance Maximum distance from player to simulate water
      */
-    void updateWaterSimulation(float deltaTime, VulkanRenderer* renderer);
+    void updateWaterSimulation(float deltaTime, VulkanRenderer* renderer, const glm::vec3& playerPos, float renderDistance);
 
     /**
      * @brief Gets the water simulation system
@@ -373,6 +376,12 @@ public:
      * Should be called after generateWorld() but before createBuffers()
      */
     void decorateWorld();
+
+    /**
+     * @brief Scans all generated chunks and registers water blocks with simulation
+     * Should be called after chunk generation to initialize water flow physics
+     */
+    void registerWaterBlocks();
 
     // ========== World Persistence ==========
 
@@ -412,6 +421,22 @@ public:
      */
     int getSeed() const { return m_seed; }
 
+    /**
+     * @brief Internal block getter without locking (caller must hold lock)
+     *
+     * THREAD SAFETY: This method does NOT acquire any locks. The caller MUST
+     * already hold m_chunkMapMutex before calling this method.
+     *
+     * Use this when you already hold the lock to prevent deadlock.
+     * For normal use, call getBlockAt() instead.
+     *
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @return Block ID, or 0 if out of bounds
+     */
+    int getBlockAtUnsafe(float worldX, float worldY, float worldZ);
+
 private:
     /**
      * @brief Internal chunk lookup without locking (caller must hold lock)
@@ -434,15 +459,6 @@ private:
      * @return Pointer to chunk, or nullptr if not found
      */
     Chunk* getChunkAtWorldPosUnsafe(float worldX, float worldY, float worldZ);
-
-    /**
-     * @brief Internal block getter without locking (caller must hold lock)
-     * @param worldX World X coordinate
-     * @param worldY World Y coordinate
-     * @param worldZ World Z coordinate
-     * @return Block ID, or 0 if out of bounds
-     */
-    int getBlockAtUnsafe(float worldX, float worldY, float worldZ);
 
     /**
      * @brief Internal block setter without locking (caller must hold lock)
