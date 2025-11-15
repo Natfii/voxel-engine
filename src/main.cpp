@@ -515,9 +515,9 @@ int main() {
 
         // Calculate spawn Y position
         // Player.Position represents EYE level (camera position), which is 1.6 blocks above feet
-        // We want feet at groundY+1 (one block above ground surface)
-        // So eyes should be at groundY+1+1.6 = groundY+2.6
-        float spawnY = static_cast<float>(spawnGroundY) + 2.6f;
+        // We want feet slightly above groundY+1 (not exactly on block boundary to avoid collision bugs)
+        // So eyes should be at groundY+1.1+1.6 = groundY+2.7
+        float spawnY = static_cast<float>(spawnGroundY) + 2.7f;
 
         // Debug: Check blocks around spawn
         std::cout << "Blocks at spawn location:" << std::endl;
