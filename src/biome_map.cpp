@@ -6,30 +6,91 @@
 #include <iostream>
 
 BiomeMap::BiomeMap(int seed) {
-    // Temperature noise - VERY large scale, creates modern Minecraft-style massive climate zones
-    // Lower frequency = wider biomes (0.001 = ~1000 block features, modern Minecraft 1.18+ scale)
+    // ==================== BIOME SELECTION NOISE SYSTEM ====================
+    // Multi-layer noise system for rich, varied biome selection
+    // Inspired by Minecraft 1.18+ terrain generation with multiple noise dimensions
+    //
+    // Design Philosophy:
+    // - Layer 1: Temperature & Moisture (primary climate axes)
+    // - Layer 2: Weirdness (creates unusual biome combinations and variety)
+    // - Layer 3: Erosion (influences terrain roughness and transitions)
+    // - Each layer has base noise (large-scale) + detail noise (local variation)
+    //
+    // Frequency Guide (UPDATED for wider biomes):
+    // - 0.0003-0.0005: EXTRA WIDE scale (2000-3333 blocks) - massive biome zones (4-8+ chunks)
+    // - 0.002-0.004: Large scale (250-500 blocks) - large variation within biomes
+    // - 0.005-0.015: Medium scale (70-200 blocks) - local variation within biomes
+    // - 0.02-0.05: Small scale (20-50 blocks) - fine detail and transitions
+
+    // === LAYER 1: TEMPERATURE (Primary Climate Axis) ===
+    // Temperature noise - EXTRA WIDE scale for biomes spanning 4-8+ chunks
+    // Lower frequency = wider biomes (0.0003 = ~3333 block features, 3x larger than before)
     m_temperatureNoise = std::make_unique<FastNoiseLite>(seed);
     m_temperatureNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_temperatureNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
-    m_temperatureNoise->SetFractalOctaves(4);
-    m_temperatureNoise->SetFrequency(0.001f);  // Modern Minecraft scale (1.18+ biomes: 800-1500 blocks)
+    m_temperatureNoise->SetFractalOctaves(5);  // Increased from 4 for more detail
+    m_temperatureNoise->SetFractalLacunarity(2.2f);  // Slightly more detail per octave
+    m_temperatureNoise->SetFractalGain(0.55f);  // Balanced detail contribution
+    m_temperatureNoise->SetFrequency(0.0003f);  // REDUCED 3x: Extra wide biomes (2000-3333 block features)
 
     // Temperature variation - adds local temperature changes within biomes
     m_temperatureVariation = std::make_unique<FastNoiseLite>(seed + 1000);
     m_temperatureVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    m_temperatureVariation->SetFrequency(0.012f);  // Medium features for variation
+    m_temperatureVariation->SetFractalType(FastNoiseLite::FractalType_FBm);
+    m_temperatureVariation->SetFractalOctaves(3);
+    m_temperatureVariation->SetFrequency(0.003f);  // REDUCED 4x: Larger variation features (~333 blocks)
 
-    // Moisture noise - VERY large scale, creates modern Minecraft-style massive wet/dry zones
+    // === LAYER 2: MOISTURE (Primary Climate Axis) ===
+    // Moisture noise - EXTRA WIDE scale for wide wet/dry zones spanning 4-8+ chunks
     m_moistureNoise = std::make_unique<FastNoiseLite>(seed + 100);
     m_moistureNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_moistureNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
-    m_moistureNoise->SetFractalOctaves(4);
-    m_moistureNoise->SetFrequency(0.0012f);  // Modern Minecraft scale (1.18+ biomes: 800-1500 blocks)
+    m_moistureNoise->SetFractalOctaves(5);  // Increased from 4 for more detail
+    m_moistureNoise->SetFractalLacunarity(2.2f);
+    m_moistureNoise->SetFractalGain(0.55f);
+    m_moistureNoise->SetFrequency(0.0004f);  // REDUCED ~3x: Slightly different from temperature for variety
 
     // Moisture variation - adds local moisture changes within biomes
     m_moistureVariation = std::make_unique<FastNoiseLite>(seed + 1100);
     m_moistureVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    m_moistureVariation->SetFrequency(0.015f);  // Medium features for variation
+    m_moistureVariation->SetFractalType(FastNoiseLite::FractalType_FBm);
+    m_moistureVariation->SetFractalOctaves(3);
+    m_moistureVariation->SetFrequency(0.0035f);  // REDUCED 4x: Larger variation features (~285 blocks)
+
+    // === LAYER 3: WEIRDNESS (Biome Variety & Unusual Combinations) ===
+    // Weirdness creates interesting biome variety and prevents monotonous patterns
+    // Similar to Minecraft 1.18+ "continentalness" or "weirdness" parameter
+    m_weirdnessNoise = std::make_unique<FastNoiseLite>(seed + 2000);
+    m_weirdnessNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_weirdnessNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
+    m_weirdnessNoise->SetFractalOctaves(4);
+    m_weirdnessNoise->SetFractalLacunarity(2.5f);  // More dramatic variation
+    m_weirdnessNoise->SetFractalGain(0.6f);
+    m_weirdnessNoise->SetFrequency(0.0008f);  // Very large scale for continental patterns
+
+    // Weirdness detail - local strange biome variations
+    m_weirdnessDetail = std::make_unique<FastNoiseLite>(seed + 2100);
+    m_weirdnessDetail->SetNoiseType(FastNoiseLite::NoiseType_Perlin);  // Perlin for smoother detail
+    m_weirdnessDetail->SetFractalType(FastNoiseLite::FractalType_FBm);
+    m_weirdnessDetail->SetFractalOctaves(2);
+    m_weirdnessDetail->SetFrequency(0.008f);  // Local weird patches
+
+    // === LAYER 4: EROSION (Terrain Roughness & Transitions) ===
+    // Erosion influences how rough or smooth terrain transitions are
+    m_erosionNoise = std::make_unique<FastNoiseLite>(seed + 3000);
+    m_erosionNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_erosionNoise->SetFractalType(FastNoiseLite::FractalType_Ridged);  // Ridged for erosion patterns
+    m_erosionNoise->SetFractalOctaves(4);
+    m_erosionNoise->SetFractalLacunarity(2.3f);
+    m_erosionNoise->SetFractalGain(0.5f);
+    m_erosionNoise->SetFrequency(0.0013f);  // Large scale erosion patterns
+
+    // Erosion detail - local terrain roughness
+    m_erosionDetail = std::make_unique<FastNoiseLite>(seed + 3100);
+    m_erosionDetail->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_erosionDetail->SetFractalType(FastNoiseLite::FractalType_FBm);
+    m_erosionDetail->SetFractalOctaves(3);
+    m_erosionDetail->SetFrequency(0.010f);  // Medium scale detail
 
     // Terrain height noise - controlled by biome age
     m_terrainNoise = std::make_unique<FastNoiseLite>(seed + 200);
@@ -62,6 +123,9 @@ BiomeMap::BiomeMap(int seed) {
     m_undergroundChamberNoise->SetCellularDistanceFunction(FastNoiseLite::CellularDistanceFunction_Euclidean);
     m_undergroundChamberNoise->SetCellularReturnType(FastNoiseLite::CellularReturnType_Distance2);
     m_undergroundChamberNoise->SetFrequency(0.006f);  // Contained chambers (3x smaller than surface biomes)
+
+    // Initialize RNG for feature blending
+    m_featureRng.seed(seed + 88888);
 }
 
 float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
@@ -97,6 +161,38 @@ float BiomeMap::getMoistureAt(float worldX, float worldZ) {
     return mapNoiseToRange(combined, 0.0f, 100.0f);
 }
 
+float BiomeMap::getWeirdnessAt(float worldX, float worldZ) {
+    // FastNoiseLite is thread-safe for reads - no mutex needed
+
+    // Base weirdness from large-scale continental patterns
+    float baseWeirdness = m_weirdnessNoise->GetNoise(worldX, worldZ);
+
+    // Add local weird variations
+    float detail = m_weirdnessDetail->GetNoise(worldX, worldZ);
+
+    // Combine: 65% base + 35% detail (more detail for interesting variety)
+    float combined = (baseWeirdness * 0.65f) + (detail * 0.35f);
+
+    // Map from [-1, 1] to [0, 100]
+    return mapNoiseToRange(combined, 0.0f, 100.0f);
+}
+
+float BiomeMap::getErosionAt(float worldX, float worldZ) {
+    // FastNoiseLite is thread-safe for reads - no mutex needed
+
+    // Base erosion from large-scale patterns (ridged for dramatic erosion)
+    float baseErosion = m_erosionNoise->GetNoise(worldX, worldZ);
+
+    // Add local erosion detail
+    float detail = m_erosionDetail->GetNoise(worldX, worldZ);
+
+    // Combine: 60% base + 40% detail
+    float combined = (baseErosion * 0.6f) + (detail * 0.4f);
+
+    // Map from [-1, 1] to [0, 100]
+    return mapNoiseToRange(combined, 0.0f, 100.0f);
+}
+
 const Biome* BiomeMap::getBiomeAt(float worldX, float worldZ) {
     // Create a cache key (quantize to reduce cache size)
     // We cache at 4-block resolution - close enough for smooth transitions
@@ -113,10 +209,14 @@ const Biome* BiomeMap::getBiomeAt(float worldX, float worldZ) {
         }
     }
 
-    // Not in cache - compute it
+    // Not in cache - compute all noise values for multi-dimensional biome selection
     float temperature = getTemperatureAt(worldX, worldZ);
     float moisture = getMoistureAt(worldX, worldZ);
-    const Biome* biome = selectBiome(temperature, moisture);
+    float weirdness = getWeirdnessAt(worldX, worldZ);
+    float erosion = getErosionAt(worldX, worldZ);
+
+    // Select biome based on all four noise dimensions
+    const Biome* biome = selectBiome(temperature, moisture, weirdness, erosion);
 
     // Cache it (exclusive lock for write)
     {
@@ -137,10 +237,11 @@ const Biome* BiomeMap::getBiomeAt(float worldX, float worldZ) {
             }
         }
 
-        m_biomeCache[key] = {biome, temperature, moisture};
+        m_biomeCache[key] = {biome, temperature, moisture, weirdness, erosion};
     }
 
     return biome;
+}
 }
 
 int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
@@ -286,7 +387,7 @@ uint64_t BiomeMap::coordsToKey3D(int x, int y, int z) const {
     return key;
 }
 
-const Biome* BiomeMap::selectBiome(float temperature, float moisture) {
+const Biome* BiomeMap::selectBiome(float temperature, float moisture, float weirdness, float erosion) {
     auto& biomeRegistry = BiomeRegistry::getInstance();
 
     if (biomeRegistry.getBiomeCount() == 0) {
@@ -294,8 +395,19 @@ const Biome* BiomeMap::selectBiome(float temperature, float moisture) {
         return nullptr;
     }
 
-    // Single-pass algorithm: find best matching biome in one iteration
-    const float TOLERANCE = 15.0f;
+    // ==================== ENHANCED MULTI-DIMENSIONAL BIOME SELECTION ====================
+    // Uses 4D noise space (temperature, moisture, weirdness, erosion) for rich biome variety
+    //
+    // Selection Strategy:
+    // 1. Primary Match: Temperature & Moisture (most important for climate)
+    // 2. Secondary Influence: Weirdness (creates variety, allows unusual biomes)
+    // 3. Tertiary Influence: Erosion (subtle terrain transition effects)
+    // 4. Weight by rarity to balance common vs. rare biomes
+
+    const float PRIMARY_TOLERANCE = 20.0f;    // Tolerance for temp/moisture matching
+    const float WEIRDNESS_INFLUENCE = 0.3f;   // How much weirdness affects selection (30%)
+    const float EROSION_INFLUENCE = 0.15f;    // How much erosion affects selection (15%)
+
     const Biome* bestBiome = nullptr;
     float bestWeight = -1.0f;
     const Biome* closestBiome = nullptr;
@@ -305,27 +417,56 @@ const Biome* BiomeMap::selectBiome(float temperature, float moisture) {
         const Biome* biome = biomeRegistry.getBiomeByIndex(i);
         if (!biome) continue;
 
-        // Calculate distance from biome's preferred temp/moisture
+        // === PRIMARY MATCHING: Temperature & Moisture ===
         float tempDist = std::abs(temperature - biome->temperature);
         float moistureDist = std::abs(moisture - biome->moisture);
-        float totalDist = tempDist + moistureDist;
+        float primaryDist = tempDist + moistureDist;
 
-        // Track closest biome for fallback
-        if (totalDist < closestDist) {
-            closestDist = totalDist;
+        // Track closest biome for fallback (based on primary dimensions only)
+        if (primaryDist < closestDist) {
+            closestDist = primaryDist;
             closestBiome = biome;
         }
 
-        // Early exit: perfect match (or very close)
-        if (tempDist <= 1.0f && moistureDist <= 1.0f) {
-            return biome;  // Found perfect match - no need to continue
+        // Early exit: near-perfect primary match
+        if (tempDist <= 2.0f && moistureDist <= 2.0f) {
+            return biome;  // Found excellent match - no need to continue
         }
 
-        // If within tolerance, calculate weight and track best
-        if (tempDist <= TOLERANCE && moistureDist <= TOLERANCE) {
-            float proximityWeight = 1.0f - (tempDist + moistureDist) / (TOLERANCE * 2.0f);
+        // === MULTI-DIMENSIONAL WEIGHTING ===
+        // Only consider biomes within primary tolerance
+        if (tempDist <= PRIMARY_TOLERANCE && moistureDist <= PRIMARY_TOLERANCE) {
+            // Base proximity weight from temperature & moisture
+            float proximityWeight = 1.0f - (primaryDist / (PRIMARY_TOLERANCE * 2.0f));
+
+            // Weirdness influence: allows "weird" biome placements
+            // High weirdness (>60) increases variety, low weirdness (<40) keeps it normal
+            float weirdnessFactor = 1.0f;
+            if (weirdness > 60.0f) {
+                // High weirdness: boost unusual biomes (low rarity weight)
+                weirdnessFactor = 1.0f + ((weirdness - 60.0f) / 40.0f) * WEIRDNESS_INFLUENCE;
+                if (biome->biome_rarity_weight < 30) {
+                    weirdnessFactor *= 1.5f;  // Extra boost for rare biomes in weird areas
+                }
+            } else if (weirdness < 40.0f) {
+                // Low weirdness: favor common biomes
+                weirdnessFactor = 1.0f + ((40.0f - weirdness) / 40.0f) * WEIRDNESS_INFLUENCE;
+                if (biome->biome_rarity_weight > 70) {
+                    weirdnessFactor *= 1.3f;  // Boost common biomes in normal areas
+                }
+            }
+
+            // Erosion influence: subtle effect on terrain-dependent biomes
+            // Use biome's age as a correlation with erosion
+            float erosionFactor = 1.0f;
+            float ageSimilarity = 1.0f - (std::abs(erosion - biome->age) / 100.0f);
+            erosionFactor = 1.0f + (ageSimilarity * EROSION_INFLUENCE);
+
+            // Rarity weight: balance common and rare biomes
             float rarityWeight = biome->biome_rarity_weight / 50.0f;
-            float totalWeight = proximityWeight * rarityWeight;
+
+            // Combine all factors
+            float totalWeight = proximityWeight * weirdnessFactor * erosionFactor * rarityWeight;
 
             if (totalWeight > bestWeight) {
                 bestWeight = totalWeight;
@@ -347,4 +488,271 @@ float BiomeMap::mapNoiseToRange(float noise, float min, float max) {
     // Map from [-1, 1] to [min, max]
     float normalized = (noise + 1.0f) * 0.5f;  // [0, 1]
     return min + (normalized * (max - min));
+}
+
+// ==================== Biome Blending System ====================
+
+float BiomeMap::calculateInfluenceWeight(float distance, float rarityWeight) const {
+    // Return 0 if beyond search radius
+    if (distance > BIOME_SEARCH_RADIUS) {
+        return 0.0f;
+    }
+
+    float weight;
+
+    if (distance <= BIOME_BLEND_DISTANCE) {
+        // Inner zone: linear falloff from 1.0 to blending
+        // At distance 0: weight = 1.0
+        // At distance BIOME_BLEND_DISTANCE: weight approaches 0.0
+        weight = 1.0f - (distance / BIOME_BLEND_DISTANCE);
+    } else {
+        // Outer zone: smooth exponential decay
+        // Creates smooth S-curve transition
+        float falloffDist = distance - BIOME_BLEND_DISTANCE;
+        float falloffRange = BIOME_SEARCH_RADIUS - BIOME_BLEND_DISTANCE;
+        float normalizedFalloff = falloffDist / falloffRange;
+
+        // Exponential decay: e^(-3x²) gives smooth falloff
+        // The coefficient -3.0 controls how quickly influence drops off
+        weight = std::exp(-3.0f * normalizedFalloff * normalizedFalloff);
+    }
+
+    // Apply biome rarity modifier
+    // Rarer biomes (lower rarity_weight) have less influence
+    // Common biomes (higher rarity_weight) have more influence
+    weight *= (rarityWeight / 50.0f);
+
+    return weight;
+}
+
+std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences(float worldX, float worldZ) {
+    // Create a cache key (quantize to 8-block resolution for coarse caching)
+    // This is coarser than biome cache (4 blocks) to reduce memory usage
+    // while still providing smooth blending
+    int quantizedX = static_cast<int>(worldX / 8.0f);
+    int quantizedZ = static_cast<int>(worldZ / 8.0f);
+    uint64_t key = coordsToKey(quantizedX, quantizedZ);
+
+    // Check cache first (shared lock - parallel reads)
+    {
+        std::shared_lock<std::shared_mutex> lock(m_influenceCacheMutex);
+        auto it = m_influenceCache.find(key);
+        if (it != m_influenceCache.end()) {
+            return it->second.influences;
+        }
+    }
+
+    // Not in cache - compute influences
+    float temperature = getTemperatureAt(worldX, worldZ);
+    float moisture = getMoistureAt(worldX, worldZ);
+
+    auto& biomeRegistry = BiomeRegistry::getInstance();
+
+    if (biomeRegistry.getBiomeCount() == 0) {
+        std::cerr << "Warning: getBiomeInfluences() called with no biomes loaded!" << std::endl;
+        return {};
+    }
+
+    // Find all biomes within search radius and calculate weights
+    std::vector<BiomeInfluence> influences;
+    influences.reserve(MAX_BIOMES_PER_BLEND);  // Pre-allocate for performance
+
+    float totalWeight = 0.0f;
+
+    for (int i = 0; i < biomeRegistry.getBiomeCount(); i++) {
+        const Biome* biome = biomeRegistry.getBiomeByIndex(i);
+        if (!biome) continue;
+
+        // Calculate Euclidean distance in temperature-moisture space
+        float tempDist = std::abs(temperature - biome->temperature);
+        float moistDist = std::abs(moisture - biome->moisture);
+        float totalDist = std::sqrt(tempDist * tempDist + moistDist * moistDist);
+
+        // Only consider biomes within search radius
+        if (totalDist <= BIOME_SEARCH_RADIUS) {
+            // Calculate influence weight using smooth falloff
+            float weight = calculateInfluenceWeight(totalDist, static_cast<float>(biome->biome_rarity_weight));
+
+            // Only include influences above minimum threshold
+            if (weight > MIN_INFLUENCE_WEIGHT) {
+                influences.emplace_back(biome, weight);
+                totalWeight += weight;
+            }
+        }
+    }
+
+    // Handle edge case: no biomes within range (should be rare)
+    if (influences.empty() || totalWeight < 0.0001f) {
+        // Fallback: find closest biome
+        const Biome* closestBiome = nullptr;
+        float closestDist = std::numeric_limits<float>::max();
+
+        for (int i = 0; i < biomeRegistry.getBiomeCount(); i++) {
+            const Biome* biome = biomeRegistry.getBiomeByIndex(i);
+            if (!biome) continue;
+
+            float tempDist = std::abs(temperature - biome->temperature);
+            float moistDist = std::abs(moisture - biome->moisture);
+            float totalDist = std::sqrt(tempDist * tempDist + moistDist * moistDist);
+
+            if (totalDist < closestDist) {
+                closestDist = totalDist;
+                closestBiome = biome;
+            }
+        }
+
+        if (closestBiome) {
+            influences.clear();
+            influences.emplace_back(closestBiome, 1.0f);
+            totalWeight = 1.0f;
+        } else {
+            // No biomes at all - this should never happen
+            std::cerr << "Error: No biomes found in getBiomeInfluences()!" << std::endl;
+            return {};
+        }
+    }
+
+    // Normalize weights to sum to 1.0
+    // This ensures that blended values (height, properties, etc.) are proper averages
+    for (auto& influence : influences) {
+        influence.weight /= totalWeight;
+    }
+
+    // Sort by weight (descending) for easier processing downstream
+    // Dominant biomes appear first in the list
+    std::sort(influences.begin(), influences.end(),
+              [](const BiomeInfluence& a, const BiomeInfluence& b) {
+                  return a.weight > b.weight;
+              });
+
+    // Limit to MAX_BIOMES_PER_BLEND for performance
+    // Keep only the most influential biomes
+    if (influences.size() > MAX_BIOMES_PER_BLEND) {
+        // Re-normalize after trimming
+        influences.resize(MAX_BIOMES_PER_BLEND);
+        totalWeight = 0.0f;
+        for (const auto& influence : influences) {
+            totalWeight += influence.weight;
+        }
+        for (auto& influence : influences) {
+            influence.weight /= totalWeight;
+        }
+    }
+
+    // Cache the result (exclusive lock for write)
+    {
+        std::unique_lock<std::shared_mutex> lock(m_influenceCacheMutex);
+
+        // Double-check: another thread may have cached it
+        auto it = m_influenceCache.find(key);
+        if (it != m_influenceCache.end()) {
+            return it->second.influences;
+        }
+
+        // LRU-style eviction when cache is full
+        if (m_influenceCache.size() >= MAX_CACHE_SIZE) {
+            size_t removeCount = MAX_CACHE_SIZE / 5;  // Remove 20%
+            auto removeIt = m_influenceCache.begin();
+            for (size_t i = 0; i < removeCount && removeIt != m_influenceCache.end(); ++i) {
+                removeIt = m_influenceCache.erase(removeIt);
+            }
+        }
+
+        m_influenceCache[key] = {influences};
+    }
+
+    return influences;
+}
+
+// ==================== Feature Blending Functions ====================
+
+float BiomeMap::getBlendedTreeDensity(float worldX, float worldZ) {
+    // Get all biome influences at this position
+    auto influences = getBiomeInfluences(worldX, worldZ);
+
+    if (influences.empty()) {
+        return 0.0f;  // No biomes, no trees
+    }
+
+    // Calculate weighted average of tree densities
+    float blendedDensity = 0.0f;
+    for (const auto& influence : influences) {
+        if (influence.biome && influence.biome->trees_spawn) {
+            blendedDensity += influence.biome->tree_density * influence.weight;
+        }
+    }
+
+    return blendedDensity;
+}
+
+const Biome* BiomeMap::selectTreeBiome(float worldX, float worldZ) {
+    // Get all biome influences at this position
+    auto influences = getBiomeInfluences(worldX, worldZ);
+
+    if (influences.empty()) {
+        return nullptr;
+    }
+
+    // Filter to only biomes that allow tree spawning
+    std::vector<BiomeInfluence> treeSpawningBiomes;
+    for (const auto& influence : influences) {
+        if (influence.biome && influence.biome->trees_spawn) {
+            treeSpawningBiomes.push_back(influence);
+        }
+    }
+
+    if (treeSpawningBiomes.empty()) {
+        return nullptr;  // No biomes allow trees
+    }
+
+    // Re-normalize weights to sum to 1.0 (after filtering)
+    float totalWeight = 0.0f;
+    for (const auto& influence : treeSpawningBiomes) {
+        totalWeight += influence.weight;
+    }
+
+    // Handle edge case
+    if (totalWeight < 0.0001f) {
+        return treeSpawningBiomes[0].biome;  // Fallback to first biome
+    }
+
+    // Normalize
+    for (auto& influence : treeSpawningBiomes) {
+        influence.weight /= totalWeight;
+    }
+
+    // Weighted random selection
+    // Thread-safe RNG access
+    float roll;
+    {
+        std::lock_guard<std::mutex> lock(m_rngMutex);
+        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+        roll = dist(m_featureRng);
+    }
+
+    // Select biome based on cumulative weights
+    float cumulative = 0.0f;
+    for (const auto& influence : treeSpawningBiomes) {
+        cumulative += influence.weight;
+        if (roll <= cumulative) {
+            return influence.biome;
+        }
+    }
+
+    // Fallback (should rarely happen due to floating point precision)
+    return treeSpawningBiomes.back().biome;
+}
+
+bool BiomeMap::canTreesSpawn(float worldX, float worldZ) {
+    // Get all biome influences at this position
+    auto influences = getBiomeInfluences(worldX, worldZ);
+
+    // Trees can spawn if ANY influencing biome allows them
+    for (const auto& influence : influences) {
+        if (influence.biome && influence.biome->trees_spawn) {
+            return true;
+        }
+    }
+
+    return false;
 }
