@@ -160,57 +160,218 @@ BiomeMap::BiomeMap(int seed) {
 
 float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
     // FastNoiseLite is thread-safe for reads - no mutex needed
-    // === BLEND HEIGHT CONTRIBUTIONS FROM EACH BIOME WITH PER-BIOME ROUGHNESS ===
+    // This was causing catastrophic mutex contention during parallel chunk generation
+
+    // Base temperature from large-scale noise
+    float baseTemp = m_temperatureNoise->GetNoise(worldX, worldZ);
+
+    // Add variation for more interesting temperature patterns
+    float variation = m_temperatureVariation->GetNoise(worldX, worldZ);
+
+    // Combine: 70% base + 30% variation
+    float combined = (baseTemp * 0.7f) + (variation * 0.3f);
+
+    // Map from [-1, 1] to [0, 100]
+    return mapNoiseToRange(combined, 0.0f, 100.0f);
+}
+
+float BiomeMap::getMoistureAt(float worldX, float worldZ) {
+    // FastNoiseLite is thread-safe for reads - no mutex needed
+
+    // Base moisture from large-scale noise
+    float baseMoisture = m_moistureNoise->GetNoise(worldX, worldZ);
+
+    // Add variation
+    float variation = m_moistureVariation->GetNoise(worldX, worldZ);
+
+    // Combine: 70% base + 30% variation
+    float combined = (baseMoisture * 0.7f) + (variation * 0.3f);
+
+    // Map from [-1, 1] to [0, 100]
+    return mapNoiseToRange(combined, 0.0f, 100.0f);
+}
+
+float BiomeMap::getWeirdnessAt(float worldX, float worldZ) {
+    // FastNoiseLite is thread-safe for reads - no mutex needed
+
+    // Base weirdness from large-scale continental patterns
+    float baseWeirdness = m_weirdnessNoise->GetNoise(worldX, worldZ);
+
+    // Add local weird variations
+    float detail = m_weirdnessDetail->GetNoise(worldX, worldZ);
+
+    // Combine: 65% base + 35% detail (more detail for interesting variety)
+    float combined = (baseWeirdness * 0.65f) + (detail * 0.35f);
+
+    // Map from [-1, 1] to [0, 100]
+    return mapNoiseToRange(combined, 0.0f, 100.0f);
+}
+
+float BiomeMap::getErosionAt(float worldX, float worldZ) {
+    // FastNoiseLite is thread-safe for reads - no mutex needed
+
+    // Base erosion from large-scale patterns (ridged for dramatic erosion)
+    float baseErosion = m_erosionNoise->GetNoise(worldX, worldZ);
+
+    // Add local erosion detail
+    float detail = m_erosionDetail->GetNoise(worldX, worldZ);
+
+    // Combine: 60% base + 40% detail
+    float combined = (baseErosion * 0.6f) + (detail * 0.4f);
+
+    // Map from [-1, 1] to [0, 100]
+    return mapNoiseToRange(combined, 0.0f, 100.0f);
+}
+
+const Biome* BiomeMap::getBiomeAt(float worldX, float worldZ) {
+    // Create a cache key (quantize to reduce cache size)
+    // We cache at 4-block resolution - close enough for smooth transitions
+    int quantizedX = static_cast<int>(worldX / 4.0f);
+    int quantizedZ = static_cast<int>(worldZ / 4.0f);
+    uint64_t key = coordsToKey(quantizedX, quantizedZ);
+
+    // Check cache first (shared lock - multiple threads can read simultaneously)
+    {
+        std::shared_lock<std::shared_mutex> lock(m_cacheMutex);
+        auto it = m_biomeCache.find(key);
+        if (it != m_biomeCache.end()) {
+            return it->second.biome;
+        }
+    }
+
+    // Not in cache - compute all noise values for multi-dimensional biome selection
+    float temperature = getTemperatureAt(worldX, worldZ);
+    float moisture = getMoistureAt(worldX, worldZ);
+    float weirdness = getWeirdnessAt(worldX, worldZ);
+    float erosion = getErosionAt(worldX, worldZ);
+
+    // Select biome based on all four noise dimensions
+    const Biome* biome = selectBiome(temperature, moisture, weirdness, erosion);
+
+    // Cache it (exclusive lock for write)
+    {
+        std::unique_lock<std::shared_mutex> lock(m_cacheMutex);
+
+        // Double-check: another thread may have cached it while we computed
+        auto it = m_biomeCache.find(key);
+        if (it != m_biomeCache.end()) {
+            return it->second.biome;  // Use existing cached value
+        }
+
+        // LRU-style eviction: remove oldest 20% when cache is full (better than clearing all)
+        if (m_biomeCache.size() >= MAX_CACHE_SIZE) {
+            size_t removeCount = MAX_CACHE_SIZE / 5;  // Remove 20% (~20K entries)
+            auto removeIt = m_biomeCache.begin();
+            for (size_t i = 0; i < removeCount && removeIt != m_biomeCache.end(); ++i) {
+                removeIt = m_biomeCache.erase(removeIt);
+            }
+        }
+
+        m_biomeCache[key] = {biome, temperature, moisture, weirdness, erosion};
+    }
+
+    return biome;
+}
+
+// ==================== Per-Biome Noise Generation ====================
+
+/**
+ * Generate noise with custom octaves, frequency, lacunarity, and gain
+ * This allows each biome to have unique terrain roughness characteristics
+ *
+ * @param x World X coordinate
+ * @param z World Z coordinate
+ * @param octaves Number of noise octaves (more = more detail)
+ * @param baseFrequency Base frequency multiplier
+ * @param lacunarity Frequency multiplier per octave
+ * @param gain Amplitude multiplier per octave
+ * @return Noise value in range [-1, 1]
+ */
+float BiomeMap::generatePerBiomeNoise(float x, float z, int octaves,
+                                      float baseFrequency, float lacunarity, float gain) const {
+    // Manual FBm (Fractional Brownian Motion) implementation
+    // This gives us full control over octaves/lacunarity/gain per-call
+    float amplitude = 1.0f;
+    float frequency = baseFrequency;
+    float total = 0.0f;
+    float maxValue = 0.0f;  // For normalization
+
+    for (int i = 0; i < octaves; i++) {
+        // Sample base terrain noise at this octave's frequency
+        // Thread-safe: FastNoiseLite is safe for concurrent reads
+        float noiseValue = m_terrainNoise->GetNoise(x * frequency, z * frequency);
+
+        total += noiseValue * amplitude;
+        maxValue += amplitude;
+
+        // Update for next octave
+        amplitude *= gain;
+        frequency *= lacunarity;
+    }
+
+    // Normalize to [-1, 1] range
+    if (maxValue > 0.0f) {
+        total /= maxValue;
+    }
+
+    return total;
+}
+
+int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
+    using namespace TerrainGeneration;
+
+    // WEEK 1 OPTIMIZATION: Cache terrain height (quantize to 2-block resolution)
+    int quantizedX = static_cast<int>(worldX / 2.0f);
+    int quantizedZ = static_cast<int>(worldZ / 2.0f);
+    uint64_t key = coordsToKey(quantizedX, quantizedZ);
+
+    // Check cache first
+    {
+        std::shared_lock<std::shared_mutex> lock(m_terrainCacheMutex);
+        auto it = m_terrainHeightCache.find(key);
+        if (it != m_terrainHeightCache.end()) {
+            return it->second;
+        }
+    }
+
+    // Not in cache - compute blended height from multiple biomes
+    // ==================== MULTI-BIOME HEIGHT BLENDING ====================
+    // Get all biome influences at this location for smooth transitions
+    std::vector<BiomeInfluence> influences = getBiomeInfluences(worldX, worldZ);
+
+    if (influences.empty()) {
+        // Fallback: no biomes found (should never happen)
+        return BASE_HEIGHT;
+    }
+
+    // FastNoiseLite is thread-safe for reads - no mutex needed
+    float noise = m_terrainNoise->GetNoise(worldX, worldZ);
+
+    // === BLEND HEIGHT CONTRIBUTIONS FROM EACH BIOME ===
     // Each biome contributes to the final height based on its influence weight
-    // NEW: Each biome can now have its own roughness parameters (octaves, lacunarity, gain)
+    // This creates smooth transitions without sudden cliffs at biome borders
     float blendedHeight = 0.0f;
 
     for (const auto& influence : influences) {
         const Biome* biome = influence.biome;
         if (!biome) continue;
 
-        // === GENERATE PER-BIOME NOISE WITH CUSTOM ROUGHNESS ===
-        float biomeNoise = generatePerBiomeNoise(
-            worldX, worldZ,
-            biome->terrain_octaves,
-            biome->height_noise_frequency,
-            biome->terrain_lacunarity,
-            biome->terrain_gain
-        );
+        // Calculate height variation for this biome
+        // Use biome's age to control terrain roughness
+        // Age 0 (young) = very rough, mountainous (high variation: 30 blocks)
+        // Age 100 (old) = very flat, plains-like (low variation: 5 blocks)
+        float ageNormalized = biome->age / 100.0f;  // 0.0 to 1.0
+        float heightVariation = 30.0f - (ageNormalized * 25.0f);  // 30 to 5
 
-        // === CALCULATE ROUGHNESS VALUE ===
-        float roughness;
-        if (biome->terrain_roughness >= 0) {
-            roughness = biome->terrain_roughness / 100.0f;
-        } else {
-            roughness = 1.0f - (biome->age / 100.0f);
-        }
-
-        // === CALCULATE HEIGHT VARIATION ===
-        float heightVariation;
-        if (biome->height_variation_min != 5.0f || biome->height_variation_max != 30.0f) {
-            heightVariation = biome->height_variation_min +
-                            (roughness * (biome->height_variation_max - biome->height_variation_min));
-        } else {
-            heightVariation = 5.0f + (roughness * 25.0f);
-        }
-
+        // Apply biome's height multiplier for special terrain (mountains, etc.)
         heightVariation *= biome->height_multiplier;
 
-        // === CALCULATE BIOME HEIGHT ===
-        float biomeHeight = BASE_HEIGHT + biome->base_height_offset + (biomeNoise * heightVariation);
+        // Calculate this biome's contribution to height
+        float biomeHeight = BASE_HEIGHT + (noise * heightVariation);
 
-        // Apply peak/valley modifiers
-        if (biomeNoise > 0.0f && biome->peak_height > 0) {
-            biomeHeight += biomeNoise * biome->peak_height;
-        }
-        if (biomeNoise < 0.0f && biome->valley_depth != 0) {
-            biomeHeight += biomeNoise * std::abs(biome->valley_depth);
-        }
-
+        // Add weighted contribution to blended height
         blendedHeight += biomeHeight * influence.weight;
     }
-
 
     // Convert to integer height (use rounding for smooth transitions)
     int height = static_cast<int>(std::round(blendedHeight));
