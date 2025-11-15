@@ -277,6 +277,33 @@ bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
             biome->ore_spawn_rates = parseOreSpawnRates(doc["ore_spawn_rates"].as<std::string>());
         }
 
+        // === BIOME INFLUENCE FALLOFF CUSTOMIZATION (Agent 23) ===
+        if (doc["falloff_use_custom"]) {
+            biome->falloffConfig.useCustomFalloff = doc["falloff_use_custom"].as<bool>();
+        }
+        if (doc["falloff_type"]) {
+            std::string typeStr = doc["falloff_type"].as<std::string>();
+            biome->falloffConfig.falloffType = BiomeFalloff::getFalloffTypeByName(typeStr);
+        }
+        if (doc["falloff_sharpness"]) {
+            biome->falloffConfig.customSharpness = doc["falloff_sharpness"].as<float>();
+        }
+        if (doc["falloff_blend_distance"]) {
+            biome->falloffConfig.customBlendDistance = doc["falloff_blend_distance"].as<float>();
+        }
+        if (doc["falloff_search_radius"]) {
+            biome->falloffConfig.customSearchRadius = doc["falloff_search_radius"].as<float>();
+        }
+        if (doc["falloff_exponential_factor"]) {
+            biome->falloffConfig.customExponentialFactor = doc["falloff_exponential_factor"].as<float>();
+        }
+        if (doc["falloff_influence_multiplier"]) {
+            biome->falloffConfig.influenceMultiplier = doc["falloff_influence_multiplier"].as<float>();
+        }
+        if (doc["falloff_edge_softness"]) {
+            biome->falloffConfig.edgeSoftness = doc["falloff_edge_softness"].as<float>();
+        }
+
         // Add to registry
         int index = static_cast<int>(m_biomes.size());
         m_biomeNameToIndex[biome->name] = index;

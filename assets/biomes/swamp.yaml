@@ -21,6 +21,14 @@ river_compatible: true
 underwater_biome: false
 height_multiplier: 0.5   # Very flat terrain
 
+# === PER-BIOME HEIGHT VARIATION (Agent 28) ===
+base_height_offset: -3       # Slightly below sea level (water-logged)
+height_variation_min: 1.0    # Extremely flat
+height_variation_max: 4.0    # Minimal variation
+height_noise_frequency: 0.006 # Very low frequency = super smooth terrain
+valley_depth: -5             # Create shallow depressions for standing water
+peak_height: 0               # No peaks in swamps
+
 # Primary blocks
 primary_surface_block: 3   # Grass (swamp grass variant)
 primary_stone_block: 1     # Stone

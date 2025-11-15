@@ -224,7 +224,7 @@ add_custom_target(test_fast
 # Run all tests with verbose output
 add_custom_target(test_all
     COMMAND ${CMAKE_CTEST_COMMAND} -V
-    DEPENDS test_chunk_correctness test_memory_leaks test_performance test_stress test_moisture_biome_selection
+    DEPENDS test_chunk_correctness test_memory_leaks test_performance test_stress test_moisture_biome_selection test_biome_interpolation
     COMMENT "Running all tests..."
 )
 

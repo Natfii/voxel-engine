@@ -21,6 +21,14 @@ river_compatible: true   # Rivers flow down mountains
 underwater_biome: false
 height_multiplier: 3.5   # 3.5x taller for dramatic mountains (reaches Y=110+)
 
+# === PER-BIOME HEIGHT VARIATION (Agent 28) ===
+base_height_offset: 20       # Mountains start 20 blocks higher than sea level
+height_variation_min: 15.0   # Minimum terrain roughness
+height_variation_max: 50.0   # Maximum terrain roughness (very jagged peaks)
+height_noise_frequency: 0.025 # High frequency = sharp, jagged terrain
+valley_depth: -10            # Create mountain valleys
+peak_height: 30              # Create towering peaks (+30 blocks at highest points)
+
 # Primary blocks
 primary_surface_block: 1   # Stone (exposed rock on peaks)
 primary_stone_block: 1     # Stone

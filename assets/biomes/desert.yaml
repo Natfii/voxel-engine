@@ -22,6 +22,14 @@ biome_rarity_weight: 45  # Moderately common
 river_compatible: true   # Rivers can create oases
 underwater_biome: false
 
+# === PER-BIOME HEIGHT VARIATION (Agent 28) ===
+base_height_offset: 2        # Slightly above sea level
+height_variation_min: 5.0    # Moderate flatness
+height_variation_max: 15.0   # Create rolling sand dunes
+height_noise_frequency: 0.012 # Medium frequency = gentle dunes
+valley_depth: -4             # Create shallow desert basins
+peak_height: 8               # Create modest dune peaks
+
 # Primary blocks
 primary_surface_block: 4   # Sand
 primary_stone_block: 1     # Stone (sandstone could be added later)

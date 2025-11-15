@@ -22,6 +22,14 @@ biome_rarity_weight: 70  # Common biome
 river_compatible: true
 underwater_biome: false
 
+# === PER-BIOME HEIGHT VARIATION (Agent 28) ===
+base_height_offset: 0        # At sea level
+height_variation_min: 2.0    # Very flat terrain
+height_variation_max: 8.0    # Gentle rolling hills
+height_noise_frequency: 0.008 # Low frequency = smooth, gentle terrain
+valley_depth: 0              # No deep valleys
+peak_height: 0               # No dramatic peaks (just gentle hills)
+
 # Primary blocks
 primary_surface_block: 3   # Grass
 primary_stone_block: 1     # Stone

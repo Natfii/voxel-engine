@@ -22,6 +22,14 @@ biome_rarity_weight: 60  # Common biome
 river_compatible: true
 underwater_biome: false
 
+# === PER-BIOME HEIGHT VARIATION (Agent 28) ===
+base_height_offset: 0        # At sea level
+height_variation_min: 6.0    # Moderate terrain variation
+height_variation_max: 20.0   # Rolling hills and small slopes
+height_noise_frequency: 0.015 # Standard frequency = natural varied terrain
+valley_depth: -3             # Create gentle valleys
+peak_height: 5               # Create modest hills
+
 # Primary blocks
 primary_surface_block: 3   # Grass
 primary_stone_block: 1     # Stone
