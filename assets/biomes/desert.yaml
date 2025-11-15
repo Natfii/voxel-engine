@@ -3,7 +3,9 @@
 
 # Required properties
 name: "Desert"
-temperature: 90        # Very hot
+temperature: 90        # Very hot (center point)
+temperature_min: 80    # Hot minimum
+temperature_max: 100   # Can spawn in hottest regions
 moisture: 5            # Very dry
 age: 75                # Relatively flat with dunes
 activity: 25           # Low structure spawning
@@ -19,6 +21,14 @@ lowest_y: 60
 biome_rarity_weight: 45  # Moderately common
 river_compatible: true   # Rivers can create oases
 underwater_biome: false
+
+# === PER-BIOME HEIGHT VARIATION (Agent 28) ===
+base_height_offset: 2        # Slightly above sea level
+height_variation_min: 5.0    # Moderate flatness
+height_variation_max: 15.0   # Create rolling sand dunes
+height_noise_frequency: 0.012 # Medium frequency = gentle dunes
+valley_depth: -4             # Create shallow desert basins
+peak_height: 8               # Create modest dune peaks
 
 # Primary blocks
 primary_surface_block: 4   # Sand
@@ -46,3 +56,19 @@ fog_color: "255,220,180"  # Warm, sandy haze
 
 # Ore distribution (slightly reduced due to sand)
 ore_spawn_rates: "coal:0.7,iron:0.8,gold:1.2"
+
+# === TERRAIN ROUGHNESS CONTROL (Agent 29) ===
+terrain_octaves: 4           # Moderate octaves for rolling sand dunes
+terrain_lacunarity: 2.2      # Moderate lacunarity for dune patterns
+terrain_gain: 0.5            # Standard gain for natural dune formations
+terrain_roughness: 40        # Moderate roughness: 40/100 = rolling dunes
+
+# === BIOME INFLUENCE FALLOFF CUSTOMIZATION (Agent 23) ===
+# Deserts have sharper transitions (distinct boundaries)
+falloff_use_custom: true
+falloff_type: "polynomial_3"      # Cubic falloff for distinct edges
+falloff_sharpness: 1.5             # Sharper transitions
+falloff_blend_distance: 12.0       # Narrower blend zone
+falloff_search_radius: 20.0        # Smaller influence radius
+falloff_influence_multiplier: 1.0  # Normal influence
+falloff_edge_softness: 0.8         # Sharper edges

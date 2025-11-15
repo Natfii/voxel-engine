@@ -1,0 +1,50 @@
+# Mushroom Cave Biome
+# Underground biome with giant mushrooms and unique flora
+
+# Required properties
+name: "Mushroom Cave"
+temperature: 45        # Cool underground
+moisture: 75           # Damp cave environment
+age: 50                # Moderate variation
+activity: 60           # High structure spawning (mushroom features)
+
+# Vegetation
+trees_spawn: false     # No regular trees, but mushrooms
+tree_density: 0
+vegetation_density: 80 # High (mushrooms and fungi)
+
+# Spawning
+spawn_location: "Underground"
+lowest_y: -100         # Deep underground
+biome_rarity_weight: 15  # Rare underground biome
+river_compatible: false
+underwater_biome: false
+height_multiplier: 1.0
+
+# Primary blocks
+primary_surface_block: 2   # Dirt (mushroom mycelium)
+primary_stone_block: 1     # Stone
+primary_log_block: -1      # No regular logs
+primary_leave_block: -1    # No regular leaves
+
+# Block requirements
+required_blocks: "2"       # Must have dirt/mycelium
+blacklisted_blocks: "3,4,10,11" # No grass, sand, snow, or ice
+
+# Structures
+required_structures: ""
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: false       # Peaceful mushroom cave (no hostiles)
+blacklisted_creatures: "zombie,skeleton,spider,creeper"
+
+# Weather
+primary_weather: ""        # No weather underground
+blacklisted_weather: "rain,snow,clear"
+
+# Atmosphere
+fog_color: "100,80,120"    # Purple-ish mushroom glow
+
+# Ore distribution (normal underground rates)
+ore_spawn_rates: "coal:1.2,iron:1.3,gold:1.1"

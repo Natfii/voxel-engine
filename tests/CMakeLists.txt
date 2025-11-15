@@ -159,20 +159,72 @@ set_tests_properties(MeshPooling PROPERTIES
 )
 
 # ============================================================
+# Test 6: Moisture-Based Biome Selection
+# ============================================================
+
+add_executable(test_moisture_biome_selection
+    test_moisture_biome_selection.cpp
+)
+
+target_include_directories(test_moisture_biome_selection PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_moisture_biome_selection PRIVATE voxel-engine-lib)
+
+add_test(
+    NAME MoistureBiomeSelection
+    COMMAND $<TARGET_FILE:test_moisture_biome_selection>
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(MoistureBiomeSelection PROPERTIES
+    TIMEOUT 30
+    LABELS "fast;correctness;biome"
+)
+
+# ============================================================
+# Test 7: Biome Interpolation Utilities
+# ============================================================
+
+add_executable(test_biome_interpolation
+    test_biome_interpolation.cpp
+)
+
+target_include_directories(test_biome_interpolation PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+# Note: This test only needs GLM headers, not full engine lib
+# But we link it anyway for consistency
+target_link_libraries(test_biome_interpolation PRIVATE voxel-engine-lib)
+
+add_test(
+    NAME BiomeInterpolation
+    COMMAND $<TARGET_FILE:test_biome_interpolation>
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(BiomeInterpolation PROPERTIES
+    TIMEOUT 30
+    LABELS "fast;correctness;biome;interpolation"
+)
+
+# ============================================================
 # Custom test commands
 # ============================================================
 
 # Run only fast tests (correctness + basic performance)
 add_custom_target(test_fast
     COMMAND ${CMAKE_CTEST_COMMAND} -L fast -V
-    DEPENDS test_chunk_correctness test_performance
+    DEPENDS test_chunk_correctness test_performance test_moisture_biome_selection test_biome_interpolation
     COMMENT "Running fast tests..."
 )
 
 # Run all tests with verbose output
 add_custom_target(test_all
     COMMAND ${CMAKE_CTEST_COMMAND} -V
-    DEPENDS test_chunk_correctness test_memory_leaks test_performance test_stress
+    DEPENDS test_chunk_correctness test_memory_leaks test_performance test_stress test_moisture_biome_selection test_biome_interpolation
     COMMENT "Running all tests..."
 )
 

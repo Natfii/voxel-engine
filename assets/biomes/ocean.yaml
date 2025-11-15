@@ -1,0 +1,59 @@
+# Ocean Biome
+# Deep water biome with underwater terrain
+
+# Required properties
+name: "Ocean"
+temperature: 55        # Cool
+moisture: 100          # Maximum (it's water!)
+age: 70                # Gentle underwater terrain
+activity: 20           # Low structure spawning (ocean monuments rare)
+
+# Vegetation
+trees_spawn: false     # No trees underwater
+tree_density: 0
+vegetation_density: 15 # Minimal (kelp, seagrass)
+
+# Spawning
+spawn_location: "AboveGround"
+lowest_y: 30           # Ocean floor is lower
+biome_rarity_weight: 65  # Common near coastlines
+river_compatible: false  # Rivers flow into ocean, not through
+underwater_biome: true   # This IS an underwater biome
+height_multiplier: 0.6   # Gentle underwater terrain
+
+# Primary blocks
+primary_surface_block: 4   # Sand (ocean floor)
+primary_stone_block: 1     # Stone
+primary_log_block: -1      # No logs
+primary_leave_block: -1    # No leaves
+
+# Block requirements
+required_blocks: "5"       # Must have water
+blacklisted_blocks: "10,11,3" # No snow, ice, or grass
+
+# Structures
+required_structures: ""
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: true        # Ocean creatures (guardians, drowned)
+
+# Weather
+primary_weather: "clear"
+blacklisted_weather: ""
+
+# Atmosphere
+fog_color: "60,80,120"     # Deep blue underwater
+
+# Ore distribution (reduced underwater)
+ore_spawn_rates: "coal:0.5,iron:0.6,gold:0.7"
+
+# === BIOME INFLUENCE FALLOFF CUSTOMIZATION (Agent 23) ===
+# Oceans have very smooth, wide transitions (water spreads gradually)
+falloff_use_custom: true
+falloff_type: "cosine"             # Wave-like, natural for water
+falloff_sharpness: 0.8             # Gentle transitions
+falloff_blend_distance: 30.0       # Very wide blend zone
+falloff_search_radius: 50.0        # Very wide influence (oceans are large)
+falloff_influence_multiplier: 1.3  # Strong presence
+falloff_edge_softness: 2.0         # Very soft edges

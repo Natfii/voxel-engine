@@ -55,10 +55,28 @@ World::World(int width, int height, int depth, int seed)
     int halfHeight = height / 2;  // CHANGED: Center Y axis too for deep caves
     int halfDepth = depth / 2;
 
+    // Validate world dimensions to prevent coordinate overflow
+    int minChunkX = -halfWidth;
+    int maxChunkX = width - halfWidth - 1;
+    int minChunkY = -halfHeight;
+    int maxChunkY = height - halfHeight - 1;
+    int minChunkZ = -halfDepth;
+    int maxChunkZ = depth - halfDepth - 1;
+
+    if (!isChunkCoordValid(minChunkX, minChunkY, minChunkZ) ||
+        !isChunkCoordValid(maxChunkX, maxChunkY, maxChunkZ)) {
+        throw std::runtime_error("World dimensions too large - would cause coordinate overflow. "
+                               "Maximum safe world size: ±1,073,741,823 chunks per axis.");
+    }
+
     Logger::info() << "Creating world with " << width << "x" << height << "x" << depth << " chunks (seed: " << seed << ")";
-    Logger::info() << "Chunk coordinates range: X[" << -halfWidth << " to " << (width - halfWidth - 1)
-                   << "], Y[" << -halfHeight << " to " << (height - halfHeight - 1)
-                   << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]";
+    Logger::info() << "Chunk coordinates range: X[" << minChunkX << " to " << maxChunkX
+                   << "], Y[" << minChunkY << " to " << maxChunkY
+                   << "], Z[" << minChunkZ << " to " << maxChunkZ << "]";
+    Logger::info() << "World size: " << (static_cast<int64_t>(width) * 32) << "x"
+                   << (static_cast<int64_t>(height) * 32) << "x"
+                   << (static_cast<int64_t>(depth) * 32) << " blocks";
+    Logger::info() << "Theoretical maximum: ±1,073,741,823 chunks per axis (±34 billion blocks)";
 
     // STREAMING OPTIMIZATION: Don't create all chunks at startup!
     // With 320 height, that's 12*320*12 = 46,080 chunks which takes forever to generate.
@@ -199,7 +217,47 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
         thread.join();
     }
 
-    Logger::info() << "Spawn chunks generated successfully";
+    Logger::info() << "Generating LOD meshes for " << chunksToGenerate.size() << " spawn chunks...";
+
+    // Step 3: Generate LOD1 meshes (medium detail)
+    threads.clear();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, chunksToGenerate.size());
+
+        if (startIdx >= chunksToGenerate.size()) break;
+
+        threads.emplace_back([this, &chunksToGenerate, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                chunksToGenerate[j]->generateLODMesh(this, 1);  // LOD level 1
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Step 4: Generate LOD2 meshes (low detail)
+    threads.clear();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, chunksToGenerate.size());
+
+        if (startIdx >= chunksToGenerate.size()) break;
+
+        threads.emplace_back([this, &chunksToGenerate, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                chunksToGenerate[j]->generateLODMesh(this, 2);  // LOD level 2
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    Logger::info() << "Spawn chunks generated successfully (with LOD)";
 }
 
 void World::generateWorld() {
@@ -260,6 +318,49 @@ void World::generateWorld() {
     for (auto& thread : threads) {
         thread.join();
     }
+
+    // Step 3: Generate LOD meshes (parallel)
+    Logger::info() << "Generating LOD meshes...";
+
+    // Generate LOD1 meshes
+    threads.clear();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, m_chunks.size());
+
+        if (startIdx >= m_chunks.size()) break;
+
+        threads.emplace_back([this, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                m_chunks[j]->generateLODMesh(this, 1);  // LOD level 1
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Generate LOD2 meshes
+    threads.clear();
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        size_t startIdx = i * chunksPerThread;
+        size_t endIdx = std::min(startIdx + chunksPerThread, m_chunks.size());
+
+        if (startIdx >= m_chunks.size()) break;
+
+        threads.emplace_back([this, startIdx, endIdx]() {
+            for (size_t j = startIdx; j < endIdx; ++j) {
+                m_chunks[j]->generateLODMesh(this, 2);  // LOD level 2
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    Logger::info() << "World mesh generation complete (with LOD)";
 }
 
 void World::decorateWorld() {
@@ -309,12 +410,19 @@ void World::decorateWorld() {
                     float worldX = static_cast<float>(chunkX * Chunk::WIDTH + sampleX);
                     float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + sampleZ);
 
-                // Get biome at this position
-                const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
-                if (!biome || !biome->trees_spawn) continue;
+                // Check if trees can spawn at this position (biome blending aware)
+                if (!m_biomeMap->canTreesSpawn(worldX, worldZ)) continue;
 
-                // Check tree density probability
-                if (densityDist(rng) > biome->tree_density) continue;
+                // Get blended tree density (weighted average from all influencing biomes)
+                float blendedDensity = m_biomeMap->getBlendedTreeDensity(worldX, worldZ);
+
+                // Check tree density probability using blended value
+                if (densityDist(rng) > blendedDensity) continue;
+
+                // Select which biome's trees to use (weighted random based on biome influences)
+                // This creates smooth transitions: oak -> mixed oak/birch -> birch in transition zones
+                const Biome* treeBiome = m_biomeMap->selectTreeBiome(worldX, worldZ);
+                if (!treeBiome) continue;
 
                 // Get terrain height directly from biome map (already calculated!)
                 // This is 200x faster than searching from sky downward
@@ -342,8 +450,10 @@ void World::decorateWorld() {
                 int blockX = static_cast<int>(blockXf);
                 int blockZ = static_cast<int>(blockZf);
 
-                // Place tree using biome's tree templates (each biome has unique trees)
-                if (m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ, biome)) {
+                // Place tree using selected biome's tree templates
+                // In transition zones, this probabilistically selects trees from different biomes
+                // creating smooth blending (e.g., oak -> oak/birch mix -> birch)
+                if (m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ, treeBiome)) {
                     treesPlaced++;
 
                     // Track affected chunks (tree + neighbors) for mesh regeneration
@@ -507,6 +617,13 @@ void World::createBuffers(VulkanRenderer* renderer) {
             chunk->cleanupStagingBuffers(renderer);
         }
     }
+
+    // Create LOD buffers for all chunks (done separately, not batched for simplicity)
+    Logger::info() << "Creating LOD buffers for chunks...";
+    for (auto& chunk : m_chunks) {
+        chunk->createLODBuffers(renderer);
+    }
+    Logger::info() << "LOD buffer creation complete";
 }
 
 void World::cleanup(VulkanRenderer* renderer) {
@@ -537,9 +654,18 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     // Frustum margin: add extra padding to prevent edge-case popping
     const float frustumMargin = CHUNK_HALF_DIAGONAL + FRUSTUM_CULLING_PADDING;
 
+    // LOD distance thresholds (in world units, not squared)
+    const float LOD1_DISTANCE = 64.0f;  // Switch to LOD1 beyond this distance
+    const float LOD2_DISTANCE = 128.0f; // Switch to LOD2 beyond this distance
+    const float LOD1_DISTANCE_SQUARED = LOD1_DISTANCE * LOD1_DISTANCE;
+    const float LOD2_DISTANCE_SQUARED = LOD2_DISTANCE * LOD2_DISTANCE;
+
     int renderedCount = 0;
     int distanceCulled = 0;
     int frustumCulled = 0;
+    int lod0Count = 0;  // Full detail chunks
+    int lod1Count = 0;  // Medium detail chunks
+    int lod2Count = 0;  // Low detail chunks
 
     // Store transparent chunks for second pass (sorted back-to-front)
     std::vector<std::pair<Chunk*, float>> transparentChunks;
@@ -594,8 +720,23 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
             continue;
         }
 
-        // Chunk passed all culling tests - render opaque geometry
-        chunk->render(commandBuffer, false);  // false = opaque
+        // Chunk passed all culling tests - determine LOD level based on distance
+        int lodLevel = 0;  // Default: Full detail
+        float distance = std::sqrt(distanceSquared);
+
+        if (distance >= LOD2_DISTANCE) {
+            lodLevel = 2;  // Low detail for very far chunks
+            lod2Count++;
+        } else if (distance >= LOD1_DISTANCE) {
+            lodLevel = 1;  // Medium detail for medium distance chunks
+            lod1Count++;
+        } else {
+            lodLevel = 0;  // Full detail for close chunks
+            lod0Count++;
+        }
+
+        // Render opaque geometry with appropriate LOD level
+        chunk->render(commandBuffer, false, lodLevel);  // false = opaque
         renderedCount++;
 
         // If chunk has transparent geometry, add to transparent list
@@ -639,6 +780,9 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     if (DebugState::instance().debugWorld.getValue() &&
         frameCount++ % WorldConstants::DEBUG_OUTPUT_INTERVAL == 0) {
         Logger::debug() << "Rendered: " << renderedCount << " chunks | "
+                        << "LOD0: " << lod0Count << " | "
+                        << "LOD1: " << lod1Count << " | "
+                        << "LOD2: " << lod2Count << " | "
                         << "Distance culled: " << distanceCulled << " | "
                         << "Frustum culled: " << frustumCulled << " | "
                         << "Total: " << m_chunks.size() << " chunks";
@@ -702,7 +846,13 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
     int chunkY = chunk->getChunkY();
     int chunkZ = chunk->getChunkZ();
 
-    // Bounds checking
+    // Validate coordinates to prevent overflow
+    if (!isChunkCoordValid(chunkX, chunkY, chunkZ)) {
+        Logger::warning() << "Attempted to add chunk with invalid coordinates (" << chunkX << ", " << chunkY << ", " << chunkZ << ") - would cause overflow";
+        return false;
+    }
+
+    // Bounds checking against configured world dimensions
     int halfWidth = m_width / 2;
     int halfHeight = m_height / 2;
     int halfDepth = m_depth / 2;

@@ -16,6 +16,7 @@
 #include "block_system.h"
 #include "terrain_constants.h"
 #include "mesh_buffer_pool.h"
+#include "biome_map.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
@@ -60,6 +61,18 @@ Chunk::Chunk(int x, int y, int z)
       m_transparentIndexBufferMemory(VK_NULL_HANDLE),
       m_transparentVertexCount(0),
       m_transparentIndexCount(0),
+      m_lod1VertexBuffer(VK_NULL_HANDLE),
+      m_lod1VertexBufferMemory(VK_NULL_HANDLE),
+      m_lod1IndexBuffer(VK_NULL_HANDLE),
+      m_lod1IndexBufferMemory(VK_NULL_HANDLE),
+      m_lod1VertexCount(0),
+      m_lod1IndexCount(0),
+      m_lod2VertexBuffer(VK_NULL_HANDLE),
+      m_lod2VertexBufferMemory(VK_NULL_HANDLE),
+      m_lod2IndexBuffer(VK_NULL_HANDLE),
+      m_lod2IndexBufferMemory(VK_NULL_HANDLE),
+      m_lod2VertexCount(0),
+      m_lod2IndexCount(0),
       m_vertexStagingBuffer(VK_NULL_HANDLE),
       m_vertexStagingBufferMemory(VK_NULL_HANDLE),
       m_indexStagingBuffer(VK_NULL_HANDLE),
@@ -163,9 +176,9 @@ void Chunk::generate(BiomeMap* biomeMap) {
             float worldX = static_cast<float>(static_cast<int64_t>(m_x) * WIDTH + x);
             float worldZ = static_cast<float>(static_cast<int64_t>(m_z) * DEPTH + z);
 
-            // Get biome at this position
-            const Biome* biome = biomeMap->getBiomeAt(worldX, worldZ);
-            if (!biome) {
+            // Get biome influences at this position for blending
+            std::vector<BiomeInfluence> influences = biomeMap->getBiomeInfluences(worldX, worldZ);
+            if (influences.empty()) {
                 // Fallback: Fill with stone underground, air above
                 int terrainHeight = biomeMap->getTerrainHeightAt(worldX, worldZ);
                 for (int y = 0; y < HEIGHT; y++) {
@@ -178,6 +191,9 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 }
                 continue;
             }
+
+            // Get dominant biome (highest weight) for reference
+            const Biome* dominantBiome = influences[0].biome;
 
             // Get terrain height from biome map
             int terrainHeight = biomeMap->getTerrainHeightAt(worldX, worldZ);
@@ -253,24 +269,71 @@ void Chunk::generate(BiomeMap* biomeMap) {
                         continue;
                     }
 
-                    // Solid terrain - determine block type
+                    // Solid terrain - determine block type with biome blending
                     int depthFromSurface = terrainHeight - worldY;
 
                     if (depthFromSurface == 1) {
-                        // Top layer - use biome's surface block
-                        m_blocks[x][y][z] = biome->primary_surface_block;
+                        // ==================== SURFACE BLOCK BLENDING ====================
+                        // Top layer - blend surface blocks from multiple biomes
+                        // Use weighted random selection based on biome influence
+
+                        // Generate position-based pseudo-random value for consistent block selection
+                        int seed = static_cast<int>(worldX * 73856093) ^
+                                   static_cast<int>(worldY * 19349663) ^
+                                   static_cast<int>(worldZ * 83492791);
+                        float random = static_cast<float>((seed & 0xFFFF)) / 65535.0f;
+
+                        // Weighted random selection based on biome influences
+                        float cumulativeWeight = 0.0f;
+                        int selectedBlock = dominantBiome->primary_surface_block;
+
+                        for (const auto& inf : influences) {
+                            cumulativeWeight += inf.weight;
+                            if (random <= cumulativeWeight) {
+                                selectedBlock = inf.biome->primary_surface_block;
+                                break;
+                            }
+                        }
+
+                        m_blocks[x][y][z] = selectedBlock;
+
+                    } else if (depthFromSurface == 2) {
+                        // ==================== SUBSURFACE TRANSITION LAYER ====================
+                        // Second layer below surface - transition between surface material and dirt
+                        // This creates natural blending (e.g., grass -> dirt, sand -> sand -> dirt)
+
+                        // Use dominant biome's surface block at higher blend strength
+                        // 70% chance of surface block, 30% chance of dirt for smooth transition
+                        int seed = static_cast<int>(worldX * 73856093) ^
+                                   static_cast<int>(worldY * 19349663) ^
+                                   static_cast<int>(worldZ * 83492791);
+                        float random = static_cast<float>((seed & 0xFFFF)) / 65535.0f;
+
+                        if (random < 0.7f && dominantBiome->primary_surface_block != BLOCK_GRASS) {
+                            // Continue surface material (for sand, snow, etc.)
+                            m_blocks[x][y][z] = dominantBiome->primary_surface_block;
+                        } else {
+                            // Transition to dirt
+                            m_blocks[x][y][z] = BLOCK_DIRT;
+                        }
+
                     } else if (depthFromSurface <= TOPSOIL_DEPTH) {
-                        // Topsoil layer - dirt
+                        // ==================== TOPSOIL LAYER ====================
+                        // Standard dirt layer (depth 3-4)
                         m_blocks[x][y][z] = BLOCK_DIRT;
+
                     } else {
-                        // Deep underground - use biome's stone block
-                        m_blocks[x][y][z] = biome->primary_stone_block;
+                        // ==================== DEEP UNDERGROUND BLENDING ====================
+                        // Deep underground - blend stone types from multiple biomes
+                        // Use dominant biome's stone block for consistency
+                        m_blocks[x][y][z] = dominantBiome->primary_stone_block;
                     }
 
                 } else if (worldY < WATER_LEVEL) {
+                    // ==================== WATER/ICE BLENDING ====================
                     // Above terrain but below water level
-                    // Use ice in cold biomes (temperature < 25), water otherwise
-                    if (biome->temperature < 25) {
+                    // Blend water/ice based on dominant biome temperature
+                    if (dominantBiome->temperature < 25) {
                         m_blocks[x][y][z] = BLOCK_ICE;
                         m_blockMetadata[x][y][z] = 0;
                     } else {
@@ -759,6 +822,196 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
     m_transparentIndices = std::move(transparentIndices);
 }
 
+/**
+ * @brief Generates simplified LOD mesh for distant rendering
+ *
+ * LOD Mesh Generation Algorithm:
+ * ==============================
+ *
+ * Reduces vertex count by sampling blocks at intervals instead of every block.
+ * This significantly improves performance for distant chunks with minimal visual impact.
+ *
+ * Sampling Strategy:
+ * - LOD 1: Sample every 2nd block (stride = 2) -> ~50% reduction
+ * - LOD 2: Sample every 4th block (stride = 4) -> ~75% reduction
+ *
+ * The algorithm is identical to generateMesh() but skips blocks based on stride.
+ * Face culling is still performed to maintain efficiency.
+ *
+ * Performance Impact:
+ * - LOD 1: ~2x fewer vertices than full detail
+ * - LOD 2: ~4x fewer vertices than full detail
+ *
+ * @param world World instance to query neighboring chunks
+ * @param lodLevel LOD level (1 or 2)
+ * @param callerHoldsLock If true, caller already holds world's chunk map lock
+ */
+void Chunk::generateLODMesh(World* world, int lodLevel, bool callerHoldsLock) {
+    // Determine sampling stride based on LOD level
+    int stride = (lodLevel == 1) ? 2 : 4;
+
+    // Reuse the cube geometry from full detail mesh
+    static constexpr std::array<float, 72> cube = {{
+        // Front face (z = 0, facing -Z)
+        0,0,0,  1.0f,0,0,  1.0f,1.0f,0,  0,1.0f,0,
+        // Back face (z = 1.0, facing +Z)
+        1.0f,0,1.0f,  0,0,1.0f,  0,1.0f,1.0f,  1.0f,1.0f,1.0f,
+        // Left face (x = 0, facing -X)
+        0,0,1.0f,  0,0,0,  0,1.0f,0,  0,1.0f,1.0f,
+        // Right face (x = 1.0, facing +X)
+        1.0f,0,0,  1.0f,0,1.0f,  1.0f,1.0f,1.0f,  1.0f,1.0f,0,
+        // Top face (y = 1.0, facing +Y)
+        0,1.0f,0,  1.0f,1.0f,0,  1.0f,1.0f,1.0f,  0,1.0f,1.0f,
+        // Bottom face (y = 0, facing -Y)
+        0,0,1.0f,  1.0f,0,1.0f,  1.0f,0,0,  0,0,0
+    }};
+
+    static constexpr std::array<float, 48> cubeUVs = {{
+        // Front, Back, Left, Right faces - V flipped
+        0,1,  1,1,  1,0,  0,0,
+        0,1,  1,1,  1,0,  0,0,
+        0,1,  1,1,  1,0,  0,0,
+        0,1,  1,1,  1,0,  0,0,
+        // Top, Bottom faces - Standard orientation
+        0,0,  1,0,  1,1,  0,1,
+        0,0,  1,0,  1,1,  0,1
+    }};
+
+    // Get mesh pool for efficient memory reuse
+    auto& pool = getThreadLocalMeshPool();
+
+    std::vector<Vertex> verts = pool.acquireVertexBuffer();
+    std::vector<uint32_t> indices = pool.acquireIndexBuffer();
+
+    verts.reserve(WIDTH * HEIGHT * DEPTH * 12 / (stride * stride * 10));
+    indices.reserve(WIDTH * HEIGHT * DEPTH * 18 / (stride * stride * 10));
+
+    // Get block registry
+    auto& registry = BlockRegistry::instance();
+    int atlasGridSize = registry.getAtlasGridSize();
+    float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
+
+    // Helper: Convert local chunk coordinates to world position
+    auto localToWorldPos = [this](int x, int y, int z) -> glm::vec3 {
+        int worldBlockX = m_x * WIDTH + x;
+        int worldBlockY = m_y * HEIGHT + y;
+        int worldBlockZ = m_z * DEPTH + z;
+        return glm::vec3(static_cast<float>(worldBlockX), static_cast<float>(worldBlockY), static_cast<float>(worldBlockZ));
+    };
+
+    // Helper lambda to check if a block is solid
+    auto isSolid = [this, world, &registry, &localToWorldPos, callerHoldsLock](int x, int y, int z) -> bool {
+        int blockID;
+        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
+            blockID = m_blocks[x][y][z];
+        } else {
+            glm::vec3 worldPos = localToWorldPos(x, y, z);
+            blockID = callerHoldsLock ? world->getBlockAtUnsafe(worldPos.x, worldPos.y, worldPos.z)
+                                       : world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
+        }
+        if (blockID == 0) return false;
+        if (blockID < 0 || blockID >= registry.count()) return false;
+        return !registry.get(blockID).isLiquid;
+    };
+
+    // Helper to render a face (simplified - no transparency or liquid support for LOD)
+    auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart,
+                          float bx, float by, float bz, float cr, float cg, float cb) {
+        float uMin = faceTexture.atlasX * uvScale;
+        float vMin = faceTexture.atlasY * uvScale;
+
+        uint32_t baseIndex = static_cast<uint32_t>(verts.size());
+
+        for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
+            Vertex v;
+            v.x = cube[i+0] + bx;
+            v.y = cube[i+1] + by;
+            v.z = cube[i+2] + bz;
+            v.r = cr; v.g = cg; v.b = cb; v.a = 1.0f;
+            v.u = uMin + cubeUVs[uv+0] * uvScale;
+            v.v = vMin + cubeUVs[uv+1] * uvScale;
+            verts.push_back(v);
+        }
+
+        indices.push_back(baseIndex + 0);
+        indices.push_back(baseIndex + 1);
+        indices.push_back(baseIndex + 2);
+        indices.push_back(baseIndex + 0);
+        indices.push_back(baseIndex + 2);
+        indices.push_back(baseIndex + 3);
+    };
+
+    // Iterate with stride (sample blocks at intervals)
+    for(int X = 0; X < WIDTH; X += stride) {
+        for(int Y = 0; Y < HEIGHT; Y += stride) {
+            for(int Z = 0; Z < DEPTH; Z += stride) {
+                int id = m_blocks[X][Y][Z];
+                if (id == 0) continue;
+
+                if (id < 0 || id >= registry.count()) continue;
+
+                const BlockDefinition& def = registry.get(id);
+
+                // Skip transparent blocks in LOD (simplification)
+                if (def.transparency > 0.0f || def.isLiquid) continue;
+
+                float cr = def.hasColor ? def.color.r : 1.0f;
+                float cg = def.hasColor ? def.color.g : 1.0f;
+                float cb = def.hasColor ? def.color.b : 1.0f;
+
+                float bx = float(m_x * WIDTH + X);
+                float by = float(m_y * HEIGHT + Y);
+                float bz = float(m_z * DEPTH + Z);
+
+                // Get face textures
+                const BlockDefinition::FaceTexture& frontTex = def.useCubeMap ? def.front : def.all;
+                const BlockDefinition::FaceTexture& backTex = def.useCubeMap ? def.back : def.all;
+                const BlockDefinition::FaceTexture& leftTex = def.useCubeMap ? def.left : def.all;
+                const BlockDefinition::FaceTexture& rightTex = def.useCubeMap ? def.right : def.all;
+                const BlockDefinition::FaceTexture& topTex = def.useCubeMap ? def.top : def.all;
+                const BlockDefinition::FaceTexture& bottomTex = def.useCubeMap ? def.bottom : def.all;
+
+                // Face culling (simplified - only check solid blocks)
+                if (!isSolid(X, Y, Z - 1)) {
+                    renderFace(frontTex, 0, 0, bx, by, bz, cr, cg, cb);
+                }
+                if (!isSolid(X, Y, Z + 1)) {
+                    renderFace(backTex, 12, 8, bx, by, bz, cr, cg, cb);
+                }
+                if (!isSolid(X - 1, Y, Z)) {
+                    renderFace(leftTex, 24, 16, bx, by, bz, cr, cg, cb);
+                }
+                if (!isSolid(X + 1, Y, Z)) {
+                    renderFace(rightTex, 36, 24, bx, by, bz, cr, cg, cb);
+                }
+                if (!isSolid(X, Y + 1, Z)) {
+                    renderFace(topTex, 48, 32, bx, by, bz, cr, cg, cb);
+                }
+                if (!isSolid(X, Y - 1, Z)) {
+                    renderFace(bottomTex, 60, 40, bx, by, bz, cr, cg, cb);
+                }
+            }
+        }
+    }
+
+    // Store LOD mesh based on level
+    if (lodLevel == 1) {
+        m_lod1VertexCount = static_cast<uint32_t>(verts.size());
+        m_lod1IndexCount = static_cast<uint32_t>(indices.size());
+        m_lod1Vertices = std::move(verts);
+        m_lod1Indices = std::move(indices);
+    } else if (lodLevel == 2) {
+        m_lod2VertexCount = static_cast<uint32_t>(verts.size());
+        m_lod2IndexCount = static_cast<uint32_t>(indices.size());
+        m_lod2Vertices = std::move(verts);
+        m_lod2Indices = std::move(indices);
+    } else {
+        // Release buffers back to pool if invalid LOD level
+        if (!verts.empty()) pool.releaseVertexBuffer(std::move(verts));
+        if (!indices.empty()) pool.releaseIndexBuffer(std::move(indices));
+    }
+}
+
 void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
     if (m_vertexCount == 0 && m_transparentVertexCount == 0) {
         return;  // No vertices to upload
@@ -967,6 +1220,146 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
     }  // End of transparent buffer creation
 }
 
+void Chunk::createLODBuffers(VulkanRenderer* renderer) {
+    VkDevice device = renderer->getDevice();
+
+    // ========== CREATE LOD1 BUFFERS ==========
+    if (m_lod1VertexCount > 0 && !m_lod1Vertices.empty()) {
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_lod1Vertices.size();
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
+
+        try {
+            renderer->createBuffer(vertexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  stagingBuffer, stagingBufferMemory);
+
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, vertexBufferSize, 0, &data);
+            memcpy(data, m_lod1Vertices.data(), (size_t)vertexBufferSize);
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            renderer->createBuffer(vertexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  m_lod1VertexBuffer, m_lod1VertexBufferMemory);
+
+            renderer->copyBuffer(stagingBuffer, m_lod1VertexBuffer, vertexBufferSize);
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        } catch (...) {
+            if (stagingBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, stagingBuffer, nullptr);
+            if (stagingBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, stagingBufferMemory, nullptr);
+            throw;
+        }
+
+        // Create LOD1 index buffer
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_lod1Indices.size();
+        stagingBuffer = VK_NULL_HANDLE;
+        stagingBufferMemory = VK_NULL_HANDLE;
+
+        try {
+            renderer->createBuffer(indexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  stagingBuffer, stagingBufferMemory);
+
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, indexBufferSize, 0, &data);
+            memcpy(data, m_lod1Indices.data(), (size_t)indexBufferSize);
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            renderer->createBuffer(indexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  m_lod1IndexBuffer, m_lod1IndexBufferMemory);
+
+            renderer->copyBuffer(stagingBuffer, m_lod1IndexBuffer, indexBufferSize);
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        } catch (...) {
+            if (stagingBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, stagingBuffer, nullptr);
+            if (stagingBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, stagingBufferMemory, nullptr);
+            throw;
+        }
+
+        // Free CPU-side LOD1 mesh data
+        m_lod1Vertices.clear();
+        m_lod1Vertices.shrink_to_fit();
+        m_lod1Indices.clear();
+        m_lod1Indices.shrink_to_fit();
+    }
+
+    // ========== CREATE LOD2 BUFFERS ==========
+    if (m_lod2VertexCount > 0 && !m_lod2Vertices.empty()) {
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_lod2Vertices.size();
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
+
+        try {
+            renderer->createBuffer(vertexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  stagingBuffer, stagingBufferMemory);
+
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, vertexBufferSize, 0, &data);
+            memcpy(data, m_lod2Vertices.data(), (size_t)vertexBufferSize);
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            renderer->createBuffer(vertexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  m_lod2VertexBuffer, m_lod2VertexBufferMemory);
+
+            renderer->copyBuffer(stagingBuffer, m_lod2VertexBuffer, vertexBufferSize);
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        } catch (...) {
+            if (stagingBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, stagingBuffer, nullptr);
+            if (stagingBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, stagingBufferMemory, nullptr);
+            throw;
+        }
+
+        // Create LOD2 index buffer
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_lod2Indices.size();
+        stagingBuffer = VK_NULL_HANDLE;
+        stagingBufferMemory = VK_NULL_HANDLE;
+
+        try {
+            renderer->createBuffer(indexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  stagingBuffer, stagingBufferMemory);
+
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, indexBufferSize, 0, &data);
+            memcpy(data, m_lod2Indices.data(), (size_t)indexBufferSize);
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            renderer->createBuffer(indexBufferSize,
+                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  m_lod2IndexBuffer, m_lod2IndexBufferMemory);
+
+            renderer->copyBuffer(stagingBuffer, m_lod2IndexBuffer, indexBufferSize);
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        } catch (...) {
+            if (stagingBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, stagingBuffer, nullptr);
+            if (stagingBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, stagingBufferMemory, nullptr);
+            throw;
+        }
+
+        // Free CPU-side LOD2 mesh data
+        m_lod2Vertices.clear();
+        m_lod2Vertices.shrink_to_fit();
+        m_lod2Indices.clear();
+        m_lod2Indices.shrink_to_fit();
+    }
+}
+
 void Chunk::destroyBuffers(VulkanRenderer* renderer) {
     VkDevice device = renderer->getDevice();
 
@@ -1013,6 +1406,42 @@ void Chunk::destroyBuffers(VulkanRenderer* renderer) {
     if (m_transparentIndexBufferMemory != VK_NULL_HANDLE) {
         vkFreeMemory(device, m_transparentIndexBufferMemory, nullptr);
         m_transparentIndexBufferMemory = VK_NULL_HANDLE;
+    }
+
+    // Destroy LOD1 buffers
+    if (m_lod1VertexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, m_lod1VertexBuffer, nullptr);
+        m_lod1VertexBuffer = VK_NULL_HANDLE;
+    }
+    if (m_lod1VertexBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, m_lod1VertexBufferMemory, nullptr);
+        m_lod1VertexBufferMemory = VK_NULL_HANDLE;
+    }
+    if (m_lod1IndexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, m_lod1IndexBuffer, nullptr);
+        m_lod1IndexBuffer = VK_NULL_HANDLE;
+    }
+    if (m_lod1IndexBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, m_lod1IndexBufferMemory, nullptr);
+        m_lod1IndexBufferMemory = VK_NULL_HANDLE;
+    }
+
+    // Destroy LOD2 buffers
+    if (m_lod2VertexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, m_lod2VertexBuffer, nullptr);
+        m_lod2VertexBuffer = VK_NULL_HANDLE;
+    }
+    if (m_lod2VertexBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, m_lod2VertexBufferMemory, nullptr);
+        m_lod2VertexBufferMemory = VK_NULL_HANDLE;
+    }
+    if (m_lod2IndexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, m_lod2IndexBuffer, nullptr);
+        m_lod2IndexBuffer = VK_NULL_HANDLE;
+    }
+    if (m_lod2IndexBufferMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, m_lod2IndexBufferMemory, nullptr);
+        m_lod2IndexBufferMemory = VK_NULL_HANDLE;
     }
 }
 
@@ -1185,9 +1614,9 @@ void Chunk::cleanupStagingBuffers(VulkanRenderer* renderer) {
     }
 }
 
-void Chunk::render(VkCommandBuffer commandBuffer, bool transparent) {
+void Chunk::render(VkCommandBuffer commandBuffer, bool transparent, int lodLevel) {
     if (transparent) {
-        // Render transparent geometry
+        // Render transparent geometry (LOD not supported for transparency yet)
         if (m_transparentVertexCount == 0) {
             return;  // Nothing to render
         }
@@ -1203,21 +1632,41 @@ void Chunk::render(VkCommandBuffer commandBuffer, bool transparent) {
         // Draw indexed
         vkCmdDrawIndexed(commandBuffer, m_transparentIndexCount, 1, 0, 0, 0);
     } else {
-        // Render opaque geometry
-        if (m_vertexCount == 0) {
+        // Render opaque geometry with LOD support
+        VkBuffer vertexBuffer = VK_NULL_HANDLE;
+        VkBuffer indexBuffer = VK_NULL_HANDLE;
+        uint32_t indexCount = 0;
+
+        // Select appropriate buffers based on LOD level
+        if (lodLevel == 1 && m_lod1VertexCount > 0) {
+            vertexBuffer = m_lod1VertexBuffer;
+            indexBuffer = m_lod1IndexBuffer;
+            indexCount = m_lod1IndexCount;
+        } else if (lodLevel == 2 && m_lod2VertexCount > 0) {
+            vertexBuffer = m_lod2VertexBuffer;
+            indexBuffer = m_lod2IndexBuffer;
+            indexCount = m_lod2IndexCount;
+        } else {
+            // Default to LOD0 (full detail)
+            vertexBuffer = m_vertexBuffer;
+            indexBuffer = m_indexBuffer;
+            indexCount = m_indexCount;
+        }
+
+        if (indexCount == 0) {
             return;  // Nothing to render
         }
 
         // Bind vertex buffer
-        VkBuffer vertexBuffers[] = {m_vertexBuffer};
+        VkBuffer vertexBuffers[] = {vertexBuffer};
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
         // Bind index buffer
-        vkCmdBindIndexBuffer(commandBuffer, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
         // Draw indexed
-        vkCmdDrawIndexed(commandBuffer, m_indexCount, 1, 0, 0, 0);
+        vkCmdDrawIndexed(commandBuffer, indexCount, 1, 0, 0, 0);
     }
 }
 

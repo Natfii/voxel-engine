@@ -21,6 +21,20 @@ river_compatible: true   # Rivers flow down mountains
 underwater_biome: false
 height_multiplier: 3.5   # 3.5x taller for dramatic mountains (reaches Y=110+)
 
+# === PER-BIOME HEIGHT VARIATION (Agent 28) ===
+base_height_offset: 20       # Mountains start 20 blocks higher than sea level
+height_variation_min: 15.0   # Minimum terrain roughness
+height_variation_max: 50.0   # Maximum terrain roughness (very jagged peaks)
+height_noise_frequency: 0.025 # High frequency = sharp, jagged terrain
+valley_depth: -10            # Create mountain valleys
+peak_height: 30              # Create towering peaks (+30 blocks at highest points)
+
+# === TERRAIN ROUGHNESS CONTROL (Agent 29) ===
+terrain_octaves: 7           # More octaves = more detail (rough, jagged peaks)
+terrain_lacunarity: 2.5      # Higher lacunarity = sharper features
+terrain_gain: 0.6            # Higher gain = persistent detail across octaves
+terrain_roughness: 90        # Explicit roughness: 90/100 = very rough terrain
+
 # Primary blocks
 primary_surface_block: 1   # Stone (exposed rock on peaks)
 primary_stone_block: 1     # Stone
@@ -47,3 +61,13 @@ fog_color: "200,210,220"  # Slightly blue-grey mountain mist
 
 # Ore distribution (mountains have more ores!)
 ore_spawn_rates: "coal:1.5,iron:1.8,gold:2.0"
+
+# === BIOME INFLUENCE FALLOFF CUSTOMIZATION (Agent 23) ===
+# Mountains use wider, gentler transitions due to large scale
+falloff_use_custom: true
+falloff_type: "gaussian"          # Natural elevation-like falloff
+falloff_sharpness: 0.7             # Gentler transitions
+falloff_blend_distance: 25.0       # Wider blend zone
+falloff_search_radius: 40.0        # Wider influence
+falloff_influence_multiplier: 1.2  # Strong presence (mountains dominate)
+falloff_edge_softness: 1.5         # Very soft edges

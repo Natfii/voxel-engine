@@ -3,7 +3,9 @@
 
 # Required properties
 name: "Winter Forest"
-temperature: 15         # Cold
+temperature: 15         # Cold (center point)
+temperature_min: 10     # Cold minimum (above ice tundra)
+temperature_max: 25     # Can spawn in cold but not freezing zones
 moisture: 65            # Moderate-high moisture (snow)
 age: 50                 # Moderate terrain roughness
 activity: 45            # Moderate structure spawning

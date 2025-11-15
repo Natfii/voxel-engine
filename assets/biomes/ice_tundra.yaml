@@ -3,7 +3,9 @@
 
 # Required properties
 name: "Ice Tundra"
-temperature: 5          # Super cold
+temperature: 5          # Super cold (center point)
+temperature_min: 0      # Arctic minimum
+temperature_max: 15     # Can spawn in coldest regions
 moisture: 50            # Moderate moisture (snow)
 age: 80                 # Very flat, ancient terrain
 activity: 15            # Very low structure spawning

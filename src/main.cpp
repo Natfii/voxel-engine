@@ -298,13 +298,18 @@ int main() {
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
         // Get world configuration from config file (use seed from menu)
-        int worldWidth = config.getInt("World", "world_width", 12);
-        int worldDepth = config.getInt("World", "world_depth", 12);
+        int worldWidth = config.getInt("World", "world_width", 4096);
+        int worldDepth = config.getInt("World", "world_depth", 4096);
 
-        // World height: default 3 chunks (96 blocks) for fast startup
-        // Can be increased in config.ini for taller worlds
-        // Note: Streaming system can load additional chunks on-demand
-        int worldHeight = config.getInt("World", "world_height", 3);
+        // World height: default 64 chunks (2048 blocks) for expansive vertical worlds
+        // Can be changed in config.ini for taller or shorter worlds
+        // Note: Streaming system loads chunks on-demand, so large heights don't slow startup
+        int worldHeight = config.getInt("World", "world_height", 64);
+
+        // Get render distances from config for biome showcase
+        float renderDistance = config.getFloat("World", "render_distance", 80.0f);
+        float loadDistance = config.getFloat("World", "load_distance", 64.0f);
+        float unloadDistance = config.getFloat("World", "unload_distance", 96.0f);
 
         // Loading stage 1: Block registry (10%)
         loadingProgress = 0.05f;
@@ -778,7 +783,9 @@ int main() {
             glfwGetFramebufferSize(window, &width, &height);
             float aspect = float(width) / float(height);
             // Near plane at 0.01 allows getting very close to blocks without clipping
-            glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.01f, 300.0f);
+            // Far plane increased to 1200.0f to support wider world view (128x32x128 chunks)
+            // FOV increased to 70 degrees for better peripheral vision in expanded world
+            glm::mat4 projection = glm::perspective(glm::radians(70.0f), aspect, 0.01f, 1200.0f);
             // Flip Y axis for Vulkan (Vulkan's Y axis points down in NDC, OpenGL's points up)
             projection[1][1] *= -1;
 
@@ -786,7 +793,7 @@ int main() {
             glm::mat4 viewProj = projection * view;
 
             // Update uniform buffer with camera position and render distance for fog
-            const float renderDistance = 80.0f;
+            // (renderDistance loaded from config earlier in main)
 
             // Detect if camera is specifically underwater (not just feet in water)
             bool underwater = player.isCameraUnderwater();
@@ -923,7 +930,7 @@ int main() {
             vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipeline);
             vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
-            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, 80.0f, &renderer);
+            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, renderDistance, &renderer);
 
             // Render block outline with line pipeline
             if (target.hasTarget) {

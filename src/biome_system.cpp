@@ -99,9 +99,32 @@ bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
         }
         biome->activity = doc["activity"].as<int>();
 
+        // === TEMPERATURE RANGE (OPTIONAL - enhances biome selection) ===
+        // If not specified, defaults to temperature ± 10
+        if (doc["temperature_min"]) {
+            biome->temperature_min = doc["temperature_min"].as<int>();
+        }
+        if (doc["temperature_max"]) {
+            biome->temperature_max = doc["temperature_max"].as<int>();
+        }
+
         // Validate ranges
         if (biome->temperature < 0 || biome->temperature > 100) {
             std::cerr << "Temperature must be 0-100 in: " << filepath << std::endl;
+            return false;
+        }
+        // Validate temperature range if specified
+        if (biome->temperature_min >= 0 && (biome->temperature_min < 0 || biome->temperature_min > 100)) {
+            std::cerr << "temperature_min must be 0-100 in: " << filepath << std::endl;
+            return false;
+        }
+        if (biome->temperature_max >= 0 && (biome->temperature_max < 0 || biome->temperature_max > 100)) {
+            std::cerr << "temperature_max must be 0-100 in: " << filepath << std::endl;
+            return false;
+        }
+        if (biome->temperature_min >= 0 && biome->temperature_max >= 0 &&
+            biome->temperature_min > biome->temperature_max) {
+            std::cerr << "temperature_min must be <= temperature_max in: " << filepath << std::endl;
             return false;
         }
         if (biome->moisture < 0 || biome->moisture > 100) {
@@ -142,6 +165,46 @@ bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
         }
         if (doc["height_multiplier"]) {
             biome->height_multiplier = doc["height_multiplier"].as<float>();
+        }
+
+        // Per-biome height variation parameters
+        if (doc["base_height_offset"]) {
+            biome->base_height_offset = doc["base_height_offset"].as<int>();
+        }
+        if (doc["height_variation_min"]) {
+            biome->height_variation_min = doc["height_variation_min"].as<float>();
+        }
+        if (doc["height_variation_max"]) {
+            biome->height_variation_max = doc["height_variation_max"].as<float>();
+        }
+        if (doc["height_noise_frequency"]) {
+            biome->height_noise_frequency = doc["height_noise_frequency"].as<float>();
+        }
+        if (doc["valley_depth"]) {
+            biome->valley_depth = doc["valley_depth"].as<int>();
+        }
+        if (doc["peak_height"]) {
+            biome->peak_height = doc["peak_height"].as<int>();
+        }
+
+        // Terrain roughness control (noise detail parameters)
+        if (doc["terrain_octaves"]) {
+            biome->terrain_octaves = doc["terrain_octaves"].as<int>();
+            // Validate range
+            if (biome->terrain_octaves < 1) biome->terrain_octaves = 1;
+            if (biome->terrain_octaves > 10) biome->terrain_octaves = 10;
+        }
+        if (doc["terrain_lacunarity"]) {
+            biome->terrain_lacunarity = doc["terrain_lacunarity"].as<float>();
+        }
+        if (doc["terrain_gain"]) {
+            biome->terrain_gain = doc["terrain_gain"].as<float>();
+        }
+        if (doc["terrain_roughness"]) {
+            biome->terrain_roughness = doc["terrain_roughness"].as<int>();
+            // Validate range
+            if (biome->terrain_roughness < -1) biome->terrain_roughness = -1;
+            if (biome->terrain_roughness > 100) biome->terrain_roughness = 100;
         }
 
         // Vegetation
@@ -212,6 +275,33 @@ bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
         // Ore Distribution
         if (doc["ore_spawn_rates"]) {
             biome->ore_spawn_rates = parseOreSpawnRates(doc["ore_spawn_rates"].as<std::string>());
+        }
+
+        // === BIOME INFLUENCE FALLOFF CUSTOMIZATION (Agent 23) ===
+        if (doc["falloff_use_custom"]) {
+            biome->falloffConfig.useCustomFalloff = doc["falloff_use_custom"].as<bool>();
+        }
+        if (doc["falloff_type"]) {
+            std::string typeStr = doc["falloff_type"].as<std::string>();
+            biome->falloffConfig.falloffType = BiomeFalloff::getFalloffTypeByName(typeStr);
+        }
+        if (doc["falloff_sharpness"]) {
+            biome->falloffConfig.customSharpness = doc["falloff_sharpness"].as<float>();
+        }
+        if (doc["falloff_blend_distance"]) {
+            biome->falloffConfig.customBlendDistance = doc["falloff_blend_distance"].as<float>();
+        }
+        if (doc["falloff_search_radius"]) {
+            biome->falloffConfig.customSearchRadius = doc["falloff_search_radius"].as<float>();
+        }
+        if (doc["falloff_exponential_factor"]) {
+            biome->falloffConfig.customExponentialFactor = doc["falloff_exponential_factor"].as<float>();
+        }
+        if (doc["falloff_influence_multiplier"]) {
+            biome->falloffConfig.influenceMultiplier = doc["falloff_influence_multiplier"].as<float>();
+        }
+        if (doc["falloff_edge_softness"]) {
+            biome->falloffConfig.edgeSoftness = doc["falloff_edge_softness"].as<float>();
         }
 
         // Add to registry

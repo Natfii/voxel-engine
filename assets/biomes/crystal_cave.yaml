@@ -1,0 +1,50 @@
+# Crystal Cave Biome
+# Underground biome with glowing crystals and unique geology
+
+# Required properties
+name: "Crystal Cave"
+temperature: 30        # Cold underground
+moisture: 40           # Dry cave
+age: 35                # Rough, crystalline terrain
+activity: 70           # High structure spawning (crystal formations)
+
+# Vegetation
+trees_spawn: false
+tree_density: 0
+vegetation_density: 5  # Minimal vegetation
+
+# Spawning
+spawn_location: "Underground"
+lowest_y: -150         # Very deep underground
+biome_rarity_weight: 10  # Very rare underground biome
+river_compatible: false
+underwater_biome: false
+height_multiplier: 1.5   # Dramatic crystal formations
+
+# Primary blocks
+primary_surface_block: 1   # Stone (crystal-embedded stone)
+primary_stone_block: 1     # Stone
+primary_log_block: -1      # No logs
+primary_leave_block: -1    # No leaves
+
+# Block requirements
+required_blocks: "1"       # Must have stone
+blacklisted_blocks: "2,3,4,10,11" # No dirt, grass, sand, snow, or ice
+
+# Structures
+required_structures: ""
+blacklisted_structures: ""
+
+# Creatures
+hostile_spawn: true        # Dangerous deep cave creatures
+
+# Weather
+primary_weather: ""        # No weather underground
+blacklisted_weather: "rain,snow,clear"
+
+# Atmosphere
+fog_color: "150,200,255"   # Blue crystal glow
+has_custom_fog: true
+
+# Ore distribution (very rich in ores!)
+ore_spawn_rates: "coal:2.0,iron:2.5,gold:3.0"
