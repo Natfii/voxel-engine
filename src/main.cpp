@@ -684,15 +684,18 @@ int main() {
             // Particles disabled for performance
             // world.getParticleSystem()->update(deltaTime);
 
-            // Simple liquid physics (existing system)
-            // Heavily optimized for performance
+            // DISABLED: Liquid physics causes catastrophic lag (scans 14 million blocks)
+            // TODO: Implement dirty list of changed water blocks instead of full world scan
+            // Current implementation scans ALL 432 chunks × 32,768 blocks = 14M blocks per update
+            /*
             static float liquidUpdateTimer = 0.0f;
             liquidUpdateTimer += deltaTime;
-            const float liquidUpdateInterval = 1.0f;  // Update liquids 1 time per second (very performant)
+            const float liquidUpdateInterval = 1.0f;
             if (liquidUpdateTimer >= liquidUpdateInterval) {
                 liquidUpdateTimer = 0.0f;
                 world.updateLiquids(&renderer);
             }
+            */
 
             // Check if console/inventory was closed (by clicking outside or ESC)
             // and we need to reset mouse for gameplay
