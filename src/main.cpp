@@ -887,20 +887,17 @@ int main() {
                 rightMousePressed = false;
             }
 
-            // Update liquid physics periodically
-            // DISABLED: Causes severe lag (scans millions of blocks per update)
-            // TODO: Optimize by maintaining a dirty list of only water blocks that need updates
-            // Current implementation: O(chunks * 32^3) = O(millions) per update
-            // Needed: Only track changed water blocks in a queue/set for O(changed blocks) updates
-            /*
+            // Update water simulation (OPTIMIZED with dirty list + chunk freezing)
+            // Only updates water cells that changed (dirty list tracking)
+            // Only simulates water within render distance (chunk freezing)
+            // Performance: O(dirty_cells_in_range) instead of O(all_chunks)
             static float liquidUpdateTimer = 0.0f;
             liquidUpdateTimer += deltaTime;
             const float liquidUpdateInterval = 0.1f;  // Update liquids 10 times per second for smooth flow
             if (liquidUpdateTimer >= liquidUpdateInterval) {
                 liquidUpdateTimer = 0.0f;
-                world.updateLiquids(&renderer);
+                world.updateWaterSimulation(deltaTime, &renderer, player.Position, renderDistance);
             }
-            */
 
             // Begin rendering
             if (!renderer.beginFrame()) {
