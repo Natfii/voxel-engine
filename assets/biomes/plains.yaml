@@ -3,7 +3,9 @@
 
 # Required properties
 name: "Plains"
-temperature: 60        # Temperate
+temperature: 60        # Temperate (center point)
+temperature_min: 50    # Temperate minimum
+temperature_max: 70    # Temperate maximum
 moisture: 50           # Moderate
 age: 80                # Flat, old terrain
 activity: 45           # Moderate structure spawning

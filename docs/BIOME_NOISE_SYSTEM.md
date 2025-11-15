@@ -34,13 +34,13 @@ Each dimension has:
 - Octaves: 5
 - Lacunarity: 2.2
 - Gain: 0.55
-- Frequency: 0.0009 (~1111 block features)
+- Frequency: 0.0003 (~3333 block features - EXTRA WIDE)
 
 **Temperature Variation:**
 - Type: OpenSimplex2
 - Fractal: FBm
 - Octaves: 3
-- Frequency: 0.012 (~83 block features)
+- Frequency: 0.003 (~333 block features)
 
 **Combination**: 70% base + 30% variation
 
@@ -53,13 +53,13 @@ Each dimension has:
 - Octaves: 5
 - Lacunarity: 2.2
 - Gain: 0.55
-- Frequency: 0.0011 (~909 block features)
+- Frequency: 0.0004 (~2500 block features - EXTRA WIDE)
 
 **Moisture Variation:**
 - Type: OpenSimplex2
 - Fractal: FBm
 - Octaves: 3
-- Frequency: 0.014 (~71 block features)
+- Frequency: 0.0035 (~285 block features)
 
 **Combination**: 70% base + 30% variation
 
@@ -72,13 +72,13 @@ Each dimension has:
 - Octaves: 4
 - Lacunarity: 2.5 (more dramatic variation)
 - Gain: 0.6
-- Frequency: 0.0008 (~1250 block features)
+- Frequency: 0.0003 (~3333 block features - EXTRA WIDE)
 
 **Weirdness Detail:**
 - Type: Perlin (smoother detail)
 - Fractal: FBm
 - Octaves: 2
-- Frequency: 0.008 (~125 block features)
+- Frequency: 0.002 (~500 block features)
 
 **Combination**: 65% base + 35% detail
 
@@ -95,13 +95,13 @@ Each dimension has:
 - Octaves: 4
 - Lacunarity: 2.3
 - Gain: 0.5
-- Frequency: 0.0013 (~769 block features)
+- Frequency: 0.0004 (~2500 block features - EXTRA WIDE)
 
 **Erosion Detail:**
 - Type: OpenSimplex2
 - Fractal: FBm
 - Octaves: 3
-- Frequency: 0.010 (~100 block features)
+- Frequency: 0.0025 (~400 block features)
 
 **Combination**: 60% base + 40% detail
 
@@ -154,15 +154,16 @@ Handles negative coordinates correctly using memcpy.
 ## Biome Scale
 
 ### Feature Sizes
-- **Continental zones**: 800-1500 blocks (temperature, moisture, weirdness)
-- **Local variation**: 70-200 blocks (detail noise)
+- **Continental zones**: 2000-3333 blocks (temperature, moisture, weirdness, erosion)
+- **Local variation**: 285-500 blocks (detail noise)
 - **Cache resolution**: 4 blocks (smooth enough for transitions)
 
 ### Chunk Spanning
-With frequency 0.0009-0.0013:
-- A single biome typically spans **50-100+ chunks**
+With frequency 0.0003-0.0004 (EXTRA WIDE):
+- A single biome typically spans **125-200+ chunks** (2000-3200 blocks)
 - Smooth gradual transitions across hundreds of blocks
 - No sudden chunk-boundary changes
+- Continental-scale climate patterns
 
 ## Testing the System
 

@@ -3,7 +3,9 @@
 
 # Required properties
 name: "Tropical Rainforest"
-temperature: 85        # Very hot
+temperature: 85        # Very hot (center point)
+temperature_min: 75    # Warm minimum (tropical)
+temperature_max: 95    # Can spawn in very hot humid zones
 moisture: 90           # Very wet
 age: 60                # Moderate terrain variation
 activity: 65           # High structure spawning (jungle temples, etc.)

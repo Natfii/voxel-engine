@@ -3,7 +3,9 @@
 
 # Required properties
 name: "Savanna"
-temperature: 80        # Hot
+temperature: 80        # Hot (center point)
+temperature_min: 70    # Warm minimum
+temperature_max: 90    # Can spawn in hot zones (but not as hot as desert)
 moisture: 30           # Low-moderate (dry season)
 age: 85                # Very flat plains
 activity: 40           # Moderate structure spawning

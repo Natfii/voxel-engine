@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <glm/glm.hpp>
+#include "biome_falloff.h"
 
 // Forward declarations
 class VulkanRenderer;
@@ -34,10 +35,14 @@ struct OreSpawnRate {
 struct Biome {
     // === REQUIRED PROPERTIES ===
     std::string name;           // Biome name (lowercase, spaces as '_')
-    int temperature;            // 0 (coldest) to 100 (warmest)
+    int temperature;            // 0 (coldest) to 100 (warmest) - center point for backward compatibility
     int moisture;               // 0 (driest) to 100 (wettest)
     int age;                    // 0 (rough terrain) to 100 (flat/plains)
     int activity;               // 0-100: spawn rate for structures/dens/towns
+
+    // Temperature range for biome selection (preferred over single temperature value)
+    int temperature_min;        // Minimum temperature where biome can spawn (-1 = use temperature-10)
+    int temperature_max;        // Maximum temperature where biome can spawn (-1 = use temperature+10)
 
     // === OPTIONAL PROPERTIES ===
 
@@ -49,6 +54,20 @@ struct Biome {
     int biome_rarity_weight = 50;        // 1-100: how common the biome is (higher = more common)
     std::string parent_biome;            // Parent biome name (for variants based on age/activity)
     float height_multiplier = 1.0f;      // Terrain height multiplier (1.0 = normal, 2.0 = double height)
+
+    // === PER-BIOME HEIGHT VARIATION PARAMETERS ===
+    int base_height_offset = 0;          // Vertical offset for entire biome (-50 to +50 blocks)
+    float height_variation_min = 5.0f;   // Minimum terrain variation in blocks
+    float height_variation_max = 30.0f;  // Maximum terrain variation in blocks
+    float height_noise_frequency = 0.015f; // Noise frequency for height (higher = rougher terrain)
+    int valley_depth = 0;                // Extra depth for valleys (negative values create deep valleys)
+    int peak_height = 0;                 // Extra height for peaks (positive values create tall mountains)
+
+    // === TERRAIN ROUGHNESS CONTROL (Noise Detail Parameters) ===
+    int terrain_octaves = 5;             // Number of noise octaves (more = more detail, 3-8 recommended)
+    float terrain_lacunarity = 2.0f;     // Lacunarity for noise (spacing between octaves, 2.0 = standard)
+    float terrain_gain = 0.5f;           // Gain/persistence for noise (amplitude decay per octave, 0.5 = standard)
+    int terrain_roughness = -1;          // 0-100: Overall roughness override (0=smooth, 100=very rough, -1=use age)
 
     // Vegetation
     bool trees_spawn = true;             // Can trees spawn in this biome
@@ -85,8 +104,21 @@ struct Biome {
     // Tree Generation (per-biome tree templates for unique tree styles)
     std::vector<TreeTemplate> tree_templates;  // 10 unique tree templates for this biome
 
+    // === BIOME INFLUENCE FALLOFF CUSTOMIZATION (Agent 23) ===
+    // Per-biome falloff configuration for fine-grained blending control
+    // Allows individual biomes to have custom transition behavior
+    BiomeFalloff::BiomeFalloffConfig falloffConfig;
+
     // Constructor
-    Biome() = default;
+    Biome() : temperature_min(-1), temperature_max(-1) {}
+
+    // Helper function to get effective temperature range
+    int getEffectiveMinTemp() const {
+        return (temperature_min >= 0) ? temperature_min : std::max(0, temperature - 10);
+    }
+    int getEffectiveMaxTemp() const {
+        return (temperature_max >= 0) ? temperature_max : std::min(100, temperature + 10);
+    }
 };
 
 /**

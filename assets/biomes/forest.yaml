@@ -3,7 +3,9 @@
 
 # Required properties
 name: "Forest"
-temperature: 55        # Cool-temperate
+temperature: 55        # Cool-temperate (center point)
+temperature_min: 45    # Can spawn in cooler temperate zones
+temperature_max: 65    # Can spawn in warmer temperate zones
 moisture: 70           # Moist
 age: 60                # Moderate terrain roughness
 activity: 55           # Good structure spawning

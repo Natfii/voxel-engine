@@ -124,12 +124,38 @@ BiomeMap::BiomeMap(int seed) {
     m_undergroundChamberNoise->SetCellularReturnType(FastNoiseLite::CellularReturnType_Distance2);
     m_undergroundChamberNoise->SetFrequency(0.006f);  // Contained chambers (3x smaller than surface biomes)
 
+    // === 3D BIOME INFLUENCE SYSTEM: Altitude-based Noise ===
+    // Altitude variation - adds natural variation to altitude-based transitions
+    // Prevents uniform horizontal lines at biome transition heights
+    m_altitudeVariation = std::make_unique<FastNoiseLite>(seed + 5000);
+    m_altitudeVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_altitudeVariation->SetFractalType(FastNoiseLite::FractalType_FBm);
+    m_altitudeVariation->SetFractalOctaves(3);
+    m_altitudeVariation->SetFrequency(0.02f);  // Medium-scale variation (50-block features)
+
+    // Snow line variation - creates natural, irregular snow coverage
+    // Higher frequency creates more varied, realistic mountain peaks
+    m_snowLineNoise = std::make_unique<FastNoiseLite>(seed + 5100);
+    m_snowLineNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_snowLineNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
+    m_snowLineNoise->SetFractalOctaves(4);
+    m_snowLineNoise->SetFrequency(0.03f);  // Creates natural snow patches
+
+    // === VORONOI CENTER SYSTEM (NEW: Agent 24) ===
+    // Initialize the Voronoi-based biome clustering system
+    // This provides an alternative to noise-based biome selection
+    // Disabled by default - can be enabled with setVoronoiMode(true)
+    m_seed = seed;
+    m_voronoi = std::make_unique<BiomeVoronoi>(seed);
+    m_useVoronoiMode = false;  // Start with traditional noise-based selection
+
     // Initialize RNG for feature blending
     m_featureRng.seed(seed + 88888);
     // Initialize with balanced transition profile (default)
     m_transitionProfile = BiomeTransition::PROFILE_BALANCED;
 
     std::cout << "BiomeMap initialized with transition profile: " << m_transitionProfile.name << std::endl;
+    std::cout << "Voronoi center system initialized (disabled by default)" << std::endl;
 }
 
 float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
@@ -245,6 +271,50 @@ const Biome* BiomeMap::getBiomeAt(float worldX, float worldZ) {
     }
 
     return biome;
+}
+
+// ==================== Per-Biome Noise Generation ====================
+
+/**
+ * Generate noise with custom octaves, frequency, lacunarity, and gain
+ * This allows each biome to have unique terrain roughness characteristics
+ *
+ * @param x World X coordinate
+ * @param z World Z coordinate
+ * @param octaves Number of noise octaves (more = more detail)
+ * @param baseFrequency Base frequency multiplier
+ * @param lacunarity Frequency multiplier per octave
+ * @param gain Amplitude multiplier per octave
+ * @return Noise value in range [-1, 1]
+ */
+float BiomeMap::generatePerBiomeNoise(float x, float z, int octaves,
+                                      float baseFrequency, float lacunarity, float gain) const {
+    // Manual FBm (Fractional Brownian Motion) implementation
+    // This gives us full control over octaves/lacunarity/gain per-call
+    float amplitude = 1.0f;
+    float frequency = baseFrequency;
+    float total = 0.0f;
+    float maxValue = 0.0f;  // For normalization
+
+    for (int i = 0; i < octaves; i++) {
+        // Sample base terrain noise at this octave's frequency
+        // Thread-safe: FastNoiseLite is safe for concurrent reads
+        float noiseValue = m_terrainNoise->GetNoise(x * frequency, z * frequency);
+
+        total += noiseValue * amplitude;
+        maxValue += amplitude;
+
+        // Update for next octave
+        amplitude *= gain;
+        frequency *= lacunarity;
+    }
+
+    // Normalize to [-1, 1] range
+    if (maxValue > 0.0f) {
+        total /= maxValue;
+    }
+
+    return total;
 }
 
 int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
@@ -419,7 +489,9 @@ const Biome* BiomeMap::selectBiome(float temperature, float moisture, float weir
     // Uses 4D noise space (temperature, moisture, weirdness, erosion) for rich biome variety
     //
     // Selection Strategy:
-    // 1. Primary Match: Temperature & Moisture (most important for climate)
+    // 1. Primary Match: Temperature RANGE & Moisture (most important for climate)
+    //    - Now uses temperature RANGES for more natural biome distribution
+    //    - Biomes have preferred temperature ranges where they spawn optimally
     // 2. Secondary Influence: Weirdness (creates variety, allows unusual biomes)
     // 3. Tertiary Influence: Erosion (subtle terrain transition effects)
     // 4. Weight by rarity to balance common vs. rare biomes
@@ -437,8 +509,23 @@ const Biome* BiomeMap::selectBiome(float temperature, float moisture, float weir
         const Biome* biome = biomeRegistry.getBiomeByIndex(i);
         if (!biome) continue;
 
-        // === PRIMARY MATCHING: Temperature & Moisture ===
-        float tempDist = std::abs(temperature - biome->temperature);
+        // === PRIMARY MATCHING: Temperature Range & Moisture ===
+        // Temperature matching now uses range-based system
+        int tempMin = biome->getEffectiveMinTemp();
+        int tempMax = biome->getEffectiveMaxTemp();
+
+        float tempDist;
+        if (temperature >= tempMin && temperature <= tempMax) {
+            // Inside temperature range - no distance penalty, optimal for this biome
+            tempDist = 0.0f;
+        } else if (temperature < tempMin) {
+            // Below minimum - distance from min
+            tempDist = tempMin - temperature;
+        } else {
+            // Above maximum - distance from max
+            tempDist = temperature - tempMax;
+        }
+
         float moistureDist = std::abs(moisture - biome->moisture);
         float primaryDist = tempDist + moistureDist;
 
@@ -448,9 +535,9 @@ const Biome* BiomeMap::selectBiome(float temperature, float moisture, float weir
             closestBiome = biome;
         }
 
-        // Early exit: near-perfect primary match
-        if (tempDist <= 2.0f && moistureDist <= 2.0f) {
-            return biome;  // Found excellent match - no need to continue
+        // Early exit: perfect temperature match (within range) and near-perfect moisture
+        if (tempDist == 0.0f && moistureDist <= 2.0f) {
+            return biome;  // Found excellent match within ideal temperature range
         }
 
         // === MULTI-DIMENSIONAL WEIGHTING ===
@@ -553,6 +640,58 @@ std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences(float worldX, float wor
     }
 
     // Not in cache - compute influences
+
+    // ==================== VORONOI CENTER MODE (NEW: Agent 24) ====================
+    // If Voronoi mode is enabled, use center-based biome clustering
+    if (m_useVoronoiMode && m_voronoi) {
+        // Find nearest biome centers using Voronoi system
+        auto centerDistances = m_voronoi->findNearestCenters(worldX, worldZ, m_transitionProfile.maxBiomes);
+
+        if (centerDistances.empty()) {
+            std::cerr << "Warning: No Voronoi centers found!" << std::endl;
+            return {};
+        }
+
+        // Calculate influences based on distance to centers
+        std::vector<BiomeInfluence> influences;
+        influences.reserve(centerDistances.size());
+
+        float minDistance = centerDistances[0].second;  // Distance to closest center
+        float blendRadius = m_voronoi->getBlendRadius();
+        float totalWeight = 0.0f;
+
+        for (const auto& [center, distance] : centerDistances) {
+            if (!center.biome) continue;
+
+            // Calculate Voronoi weight with smooth falloff
+            float weight = m_voronoi->calculateVoronoiWeight(distance, minDistance, blendRadius);
+
+            if (weight > m_transitionProfile.minInfluence) {
+                influences.emplace_back(center.biome, weight);
+                totalWeight += weight;
+            }
+        }
+
+        // Normalize weights to sum to 1.0
+        if (totalWeight > 0.0001f) {
+            for (auto& influence : influences) {
+                influence.weight /= totalWeight;
+            }
+        }
+
+        // Cache and return
+        {
+            std::unique_lock<std::shared_mutex> lock(m_influenceCacheMutex);
+            if (m_influenceCache.size() < MAX_CACHE_SIZE) {
+                m_influenceCache[key] = {influences};
+            }
+        }
+
+        return influences;
+    }
+
+    // ==================== TRADITIONAL NOISE-BASED MODE ====================
+    // Original noise-based biome selection (used when Voronoi mode is disabled)
     float temperature = getTemperatureAt(worldX, worldZ);
     float moisture = getMoistureAt(worldX, worldZ);
 
@@ -573,18 +712,51 @@ std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences(float worldX, float wor
         const Biome* biome = biomeRegistry.getBiomeByIndex(i);
         if (!biome) continue;
 
-        // Calculate Euclidean distance in temperature-moisture space
-        float tempDist = std::abs(temperature - biome->temperature);
+        // Calculate distance in temperature-moisture space
+        // Temperature now uses range-based distance calculation
+        int tempMin = biome->getEffectiveMinTemp();
+        int tempMax = biome->getEffectiveMaxTemp();
+
+        float tempDist;
+        if (temperature >= tempMin && temperature <= tempMax) {
+            // Inside temperature range - use distance from center for smooth blending
+            float tempCenter = (tempMin + tempMax) / 2.0f;
+            tempDist = std::abs(temperature - tempCenter) * 0.5f;  // Reduced penalty inside range
+        } else if (temperature < tempMin) {
+            // Below minimum - full distance from min
+            tempDist = tempMin - temperature;
+        } else {
+            // Above maximum - full distance from max
+            tempDist = temperature - tempMax;
+        }
+
         float moistDist = std::abs(moisture - biome->moisture);
         float totalDist = std::sqrt(tempDist * tempDist + moistDist * moistDist);
 
+        // Determine search radius (per-biome or global)
+        float searchRadius = biome->falloffConfig.useCustomFalloff ?
+                             biome->falloffConfig.customSearchRadius :
+                             m_transitionProfile.searchRadius;
+
         // Only consider biomes within search radius
-        if (totalDist <= m_transitionProfile.searchRadius) {
-            // Calculate influence weight using smooth falloff
-            float weight = calculateInfluenceWeight(totalDist, static_cast<float>(biome->biome_rarity_weight));
+        if (totalDist <= searchRadius) {
+            // Calculate influence weight using per-biome falloff if enabled
+            float weight;
+            if (biome->falloffConfig.useCustomFalloff) {
+                // Use per-biome custom falloff configuration (Agent 23 enhancement)
+                weight = BiomeFalloff::calculateBiomeFalloff(totalDist, biome->falloffConfig,
+                                                             static_cast<float>(biome->biome_rarity_weight));
+            } else {
+                // Use global transition profile falloff
+                weight = calculateInfluenceWeight(totalDist, static_cast<float>(biome->biome_rarity_weight));
+            }
 
             // Only include influences above minimum threshold
-            if (weight > m_transitionProfile.minInfluence) {
+            float minInfluence = biome->falloffConfig.useCustomFalloff ?
+                                0.001f : // Custom falloffs use their own weight system
+                                m_transitionProfile.minInfluence;
+
+            if (weight > minInfluence) {
                 influences.emplace_back(biome, weight);
                 totalWeight += weight;
             }
@@ -593,7 +765,7 @@ std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences(float worldX, float wor
 
     // Handle edge case: no biomes within range (should be rare)
     if (influences.empty() || totalWeight < 0.0001f) {
-        // Fallback: find closest biome
+        // Fallback: find closest biome (using temperature ranges)
         const Biome* closestBiome = nullptr;
         float closestDist = std::numeric_limits<float>::max();
 
@@ -601,7 +773,20 @@ std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences(float worldX, float wor
             const Biome* biome = biomeRegistry.getBiomeByIndex(i);
             if (!biome) continue;
 
-            float tempDist = std::abs(temperature - biome->temperature);
+            // Use same temperature range logic as above for consistency
+            int tempMin = biome->getEffectiveMinTemp();
+            int tempMax = biome->getEffectiveMaxTemp();
+
+            float tempDist;
+            if (temperature >= tempMin && temperature <= tempMax) {
+                float tempCenter = (tempMin + tempMax) / 2.0f;
+                tempDist = std::abs(temperature - tempCenter) * 0.5f;
+            } else if (temperature < tempMin) {
+                tempDist = tempMin - temperature;
+            } else {
+                tempDist = temperature - tempMax;
+            }
+
             float moistDist = std::abs(moisture - biome->moisture);
             float totalDist = std::sqrt(tempDist * tempDist + moistDist * moistDist);
 
@@ -765,4 +950,452 @@ bool BiomeMap::canTreesSpawn(float worldX, float worldZ) {
     }
 
     return false;
+}
+
+// ==================== Additional Property Blending Functions ====================
+
+float BiomeMap::getBlendedVegetationDensity(float worldX, float worldZ) {
+    // Get all biome influences at this position
+    auto influences = getBiomeInfluences(worldX, worldZ);
+
+    if (influences.empty()) {
+        return 0.0f;  // No biomes, no vegetation
+    }
+
+    // Calculate weighted average of vegetation densities
+    float blendedDensity = 0.0f;
+    for (const auto& influence : influences) {
+        if (influence.biome) {
+            blendedDensity += influence.biome->vegetation_density * influence.weight;
+        }
+    }
+
+    return blendedDensity;
+}
+
+glm::vec3 BiomeMap::getBlendedFogColor(float worldX, float worldZ) {
+    // Get all biome influences at this position
+    auto influences = getBiomeInfluences(worldX, worldZ);
+
+    if (influences.empty()) {
+        // Default fog color (light blue sky)
+        return glm::vec3(0.5f, 0.7f, 0.9f);
+    }
+
+    // Calculate weighted average of fog colors
+    // Only use custom fog colors from biomes that have them enabled
+    glm::vec3 blendedColor(0.0f, 0.0f, 0.0f);
+    float totalWeight = 0.0f;
+
+    for (const auto& influence : influences) {
+        if (influence.biome) {
+            if (influence.biome->has_custom_fog) {
+                // Use custom fog color
+                blendedColor += influence.biome->fog_color * influence.weight;
+                totalWeight += influence.weight;
+            }
+        }
+    }
+
+    // If no biomes have custom fog colors, use default
+    if (totalWeight < 0.0001f) {
+        return glm::vec3(0.5f, 0.7f, 0.9f);
+    }
+
+    // Normalize by the total weight of biomes with custom fog
+    // (Biomes without custom fog don't contribute)
+    blendedColor /= totalWeight;
+
+    return blendedColor;
+}
+
+int BiomeMap::selectSurfaceBlock(float worldX, float worldZ) {
+    // Get all biome influences at this position
+    auto influences = getBiomeInfluences(worldX, worldZ);
+
+    if (influences.empty()) {
+        return 3;  // Fallback: grass block
+    }
+
+    // Weighted random selection based on biome influences
+    // Uses deterministic RNG seeded by world coordinates for reproducibility
+
+    // Create deterministic seed from world coordinates
+    uint64_t seed = static_cast<uint64_t>(worldX * 73856093) ^ static_cast<uint64_t>(worldZ * 19349663);
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+    float roll = dist(rng);
+
+    // Select block based on cumulative weights
+    float cumulative = 0.0f;
+    for (const auto& influence : influences) {
+        if (influence.biome) {
+            cumulative += influence.weight;
+            if (roll <= cumulative) {
+                return influence.biome->primary_surface_block;
+            }
+        }
+    }
+
+    // Fallback (should rarely happen due to floating point precision)
+    return influences[0].biome->primary_surface_block;
+}
+
+int BiomeMap::selectStoneBlock(float worldX, float worldZ) {
+    // Get all biome influences at this position
+    auto influences = getBiomeInfluences(worldX, worldZ);
+
+    if (influences.empty()) {
+        return 1;  // Fallback: stone block
+    }
+
+    // Weighted random selection based on biome influences
+    // Uses deterministic RNG seeded by world coordinates (different seed than surface)
+
+    // Create deterministic seed from world coordinates (offset to differ from surface)
+    uint64_t seed = static_cast<uint64_t>(worldX * 83492791) ^ static_cast<uint64_t>(worldZ * 28411687);
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+    float roll = dist(rng);
+
+    // Select block based on cumulative weights
+    float cumulative = 0.0f;
+    for (const auto& influence : influences) {
+        if (influence.biome) {
+            cumulative += influence.weight;
+            if (roll <= cumulative) {
+                return influence.biome->primary_stone_block;
+            }
+        }
+    }
+
+    // Fallback (should rarely happen due to floating point precision)
+    return influences[0].biome->primary_stone_block;
+}
+
+float BiomeMap::getBlendedTemperature(float worldX, float worldZ) {
+    // Get all biome influences at this position
+    auto influences = getBiomeInfluences(worldX, worldZ);
+
+    if (influences.empty()) {
+        return 50.0f;  // Fallback: temperate
+    }
+
+    // Calculate weighted average of temperatures
+    float blendedTemp = 0.0f;
+    for (const auto& influence : influences) {
+        if (influence.biome) {
+            blendedTemp += influence.biome->temperature * influence.weight;
+        }
+    }
+
+    return blendedTemp;
+}
+
+float BiomeMap::getBlendedMoisture(float worldX, float worldZ) {
+    // Get all biome influences at this position
+    auto influences = getBiomeInfluences(worldX, worldZ);
+
+    if (influences.empty()) {
+        return 50.0f;  // Fallback: moderate moisture
+    }
+
+    // Calculate weighted average of moisture levels
+    float blendedMoisture = 0.0f;
+    for (const auto& influence : influences) {
+        if (influence.biome) {
+            blendedMoisture += influence.biome->moisture * influence.weight;
+        }
+    }
+
+    return blendedMoisture;
+}
+
+// ==================== 3D BIOME INFLUENCE SYSTEM ====================
+
+float BiomeMap::getAltitudeTemperatureModifier(float worldY) {
+    /**
+     * Realistic temperature lapse rate: ~6.5°C per 1000m (6.5 blocks in our scale)
+     * We use a simplified version: temperature drops with altitude
+     *
+     * Altitude zones:
+     * - Below 64 (sea level): No modifier (0)
+     * - 64-100: Gradual cooling (-0 to -20)
+     * - 100-150: Significant cooling (-20 to -40)
+     * - 150+: Extreme cold (-40 to -60)
+     */
+
+    // No cooling below sea level
+    if (worldY <= 64.0f) {
+        return 0.0f;
+    }
+
+    // Temperature drops linearly with altitude above sea level
+    // Every 10 blocks of elevation = -5 temperature units
+    float altitudeAboveSeaLevel = worldY - 64.0f;
+    float temperatureDrop = (altitudeAboveSeaLevel / 10.0f) * 5.0f;
+
+    // Cap maximum cooling at -60 (extremely cold peaks)
+    return std::min(60.0f, temperatureDrop);
+}
+
+float BiomeMap::getAltitudeInfluence(float worldY, int terrainHeight) {
+    /**
+     * Calculate how strongly altitude should influence biome selection
+     *
+     * Returns 0.0-1.0 where:
+     * - 0.0 = at or below terrain height (no altitude effect)
+     * - 1.0 = significantly above terrain (full altitude effect)
+     *
+     * Creates smooth vertical transitions
+     */
+
+    float heightAboveTerrain = worldY - static_cast<float>(terrainHeight);
+
+    // Below terrain or at surface - no altitude influence
+    if (heightAboveTerrain <= 0.0f) {
+        return 0.0f;
+    }
+
+    // Add noise-based variation to prevent uniform transition lines
+    float variation = m_altitudeVariation->GetNoise(worldY * 0.1f, worldY);
+    float variationOffset = variation * 3.0f;  // ±3 blocks of variation
+
+    float adjustedHeight = heightAboveTerrain + variationOffset;
+
+    // Gradual influence increase over 20 blocks above terrain
+    // This creates smooth transitions instead of sharp cutoffs
+    float influence = adjustedHeight / 20.0f;
+
+    // Clamp to [0.0, 1.0]
+    return std::max(0.0f, std::min(1.0f, influence));
+}
+
+bool BiomeMap::shouldApplySnowCover(float worldX, float worldY, float worldZ) {
+    /**
+     * Determines if snow should cover this position
+     * Considers:
+     * 1. Altitude (higher = more likely)
+     * 2. Base temperature from biome
+     * 3. Altitude-adjusted temperature
+     * 4. Noise variation for natural snow patterns
+     */
+
+    // Get base temperature from 2D biome
+    float baseTemperature = getTemperatureAt(worldX, worldZ);
+
+    // Apply altitude cooling
+    float temperatureDrop = getAltitudeTemperatureModifier(worldY);
+    float adjustedTemperature = baseTemperature - temperatureDrop;
+
+    // Add snow line variation noise for natural, irregular coverage
+    float snowNoise = m_snowLineNoise->GetNoise(worldX, worldZ);
+    float snowLineAdjustment = snowNoise * 10.0f;  // ±10 temperature units
+
+    float finalTemperature = adjustedTemperature + snowLineAdjustment;
+
+    // Snow appears when temperature < 20 (cold/freezing threshold)
+    // But with gradual probability for more natural appearance
+    if (finalTemperature < 10.0f) {
+        return true;  // Always snow when very cold
+    } else if (finalTemperature < 25.0f) {
+        // Gradual transition zone - probability based on temperature
+        // Use position-based pseudo-random for consistency
+        int seed = static_cast<int>(worldX * 73856093) ^
+                   static_cast<int>(worldY * 19349663) ^
+                   static_cast<int>(worldZ * 83492791);
+        float random = static_cast<float>((seed & 0xFFFF)) / 65535.0f;
+
+        // Probability decreases linearly from temp 10 to 25
+        float snowProbability = 1.0f - ((finalTemperature - 10.0f) / 15.0f);
+        return random < snowProbability;
+    }
+
+    return false;  // Too warm for snow
+}
+
+int BiomeMap::getAltitudeModifiedBlock(float worldX, float worldY, float worldZ, int baseSurfaceBlock) {
+    /**
+     * Apply altitude-based block modifications
+     * Creates vertical biome transitions:
+     * - Low altitude: Use base biome surface block
+     * - Mid altitude: Transition to stone
+     * - High altitude: Snow and ice coverage
+     */
+
+    int terrainHeight = getTerrainHeightAt(worldX, worldZ);
+    float heightAboveTerrain = worldY - static_cast<float>(terrainHeight);
+
+    // Below terrain - use base block (this handles subsurface layers)
+    if (heightAboveTerrain < 0.0f) {
+        return baseSurfaceBlock;
+    }
+
+    // Get altitude influence factor
+    float altitudeInfluence = getAltitudeInfluence(worldY, terrainHeight);
+
+    // === ALTITUDE ZONE 1: Surface level (heightAboveTerrain 0-2) ===
+    if (heightAboveTerrain <= 2.0f) {
+        // Check for snow cover at surface
+        if (shouldApplySnowCover(worldX, worldY, worldZ)) {
+            // Snow block for surface coverage
+            return 8;  // BLOCK_SNOW (assuming block ID 8)
+        }
+        return baseSurfaceBlock;
+    }
+
+    // === ALTITUDE ZONE 2: Elevated terrain (heightAboveTerrain 2-15) ===
+    // Gradual transition from surface block to stone
+    if (heightAboveTerrain <= 15.0f && altitudeInfluence > 0.3f) {
+        // Add position-based randomness for natural transition
+        int seed = static_cast<int>(worldX * 73856093) ^
+                   static_cast<int>(worldY * 19349663) ^
+                   static_cast<int>(worldZ * 83492791);
+        float random = static_cast<float>((seed & 0xFFFF)) / 65535.0f;
+
+        // Probability of stone increases with altitude influence
+        if (random < altitudeInfluence) {
+            // Check if this high altitude area should have snow
+            if (shouldApplySnowCover(worldX, worldY, worldZ)) {
+                return 8;  // BLOCK_SNOW
+            }
+            return 1;  // BLOCK_STONE - exposed rock at elevation
+        }
+    }
+
+    // === ALTITUDE ZONE 3: High elevation (heightAboveTerrain 15+) ===
+    // Mountain peaks - primarily stone with snow coverage
+    if (heightAboveTerrain > 15.0f) {
+        if (shouldApplySnowCover(worldX, worldY, worldZ)) {
+            return 8;  // BLOCK_SNOW - mountain peaks
+        }
+        return 1;  // BLOCK_STONE - exposed mountain rock
+    }
+
+    // Default fallback
+    return baseSurfaceBlock;
+}
+
+std::vector<BiomeInfluence> BiomeMap::getBiomeInfluences3D(float worldX, float worldY, float worldZ) {
+    /**
+     * 3D Biome Influence System
+     * Extends 2D biome blending with altitude-based modifications
+     *
+     * Strategy:
+     * 1. Get base 2D biome influences
+     * 2. Apply altitude modifiers based on height
+     * 3. Adjust biome weights for vertical transitions
+     * 4. Cache results for performance
+     */
+
+    // Create cache key (quantize to 8-block resolution for 3D)
+    // Coarser than 2D cache to manage memory with extra dimension
+    int quantizedX = static_cast<int>(worldX / 8.0f);
+    int quantizedY = static_cast<int>(worldY / 8.0f);
+    int quantizedZ = static_cast<int>(worldZ / 8.0f);
+    uint64_t key = coordsToKey3D(quantizedX, quantizedY, quantizedZ);
+
+    // Check cache first
+    {
+        std::shared_lock<std::shared_mutex> lock(m_influenceCache3DMutex);
+        auto it = m_influenceCache3D.find(key);
+        if (it != m_influenceCache3D.end()) {
+            return it->second.influences;
+        }
+    }
+
+    // Not in cache - compute 3D influences
+
+    // Step 1: Get base 2D biome influences (horizontal blending)
+    std::vector<BiomeInfluence> baseInfluences = getBiomeInfluences(worldX, worldZ);
+
+    if (baseInfluences.empty()) {
+        return {};  // No biomes found
+    }
+
+    // Step 2: Calculate altitude influence factor
+    int terrainHeight = getTerrainHeightAt(worldX, worldZ);
+    float altitudeInfluence = getAltitudeInfluence(worldY, terrainHeight);
+
+    // Step 3: Apply altitude-based weight modifications
+    // At high altitudes, cold biomes get boosted, warm biomes get reduced
+    float temperatureDrop = getAltitudeTemperatureModifier(worldY);
+
+    std::vector<BiomeInfluence> modifiedInfluences;
+    modifiedInfluences.reserve(baseInfluences.size());
+
+    float totalWeight = 0.0f;
+
+    for (const auto& influence : baseInfluences) {
+        if (!influence.biome) continue;
+
+        // Calculate altitude-adjusted temperature for this biome
+        float biomeTemp = static_cast<float>(influence.biome->temperature);
+        float adjustedTemp = biomeTemp - temperatureDrop;
+
+        // Modify weight based on altitude suitability
+        float weightModifier = 1.0f;
+
+        if (altitudeInfluence > 0.2f) {
+            // At altitude: favor cold biomes, penalize warm biomes
+            if (adjustedTemp < 30.0f) {
+                // Cold biome - boost weight at altitude
+                weightModifier = 1.0f + (altitudeInfluence * 0.5f);  // Up to +50% weight
+            } else if (adjustedTemp > 60.0f) {
+                // Warm biome - reduce weight at altitude
+                weightModifier = 1.0f - (altitudeInfluence * 0.6f);  // Up to -60% weight
+            }
+        }
+
+        float modifiedWeight = influence.weight * weightModifier;
+
+        // Only include if weight is still significant
+        if (modifiedWeight > 0.01f) {
+            modifiedInfluences.emplace_back(influence.biome, modifiedWeight);
+            totalWeight += modifiedWeight;
+        }
+    }
+
+    // Handle edge case: all weights filtered out
+    if (modifiedInfluences.empty() || totalWeight < 0.0001f) {
+        // Fallback to dominant base biome
+        modifiedInfluences.clear();
+        modifiedInfluences.push_back(baseInfluences[0]);
+        totalWeight = 1.0f;
+    }
+
+    // Step 4: Re-normalize weights to sum to 1.0
+    for (auto& influence : modifiedInfluences) {
+        influence.weight /= totalWeight;
+    }
+
+    // Step 5: Sort by weight (descending)
+    std::sort(modifiedInfluences.begin(), modifiedInfluences.end(),
+              [](const BiomeInfluence& a, const BiomeInfluence& b) {
+                  return a.weight > b.weight;
+              });
+
+    // Step 6: Cache result (exclusive lock for write)
+    {
+        std::unique_lock<std::shared_mutex> lock(m_influenceCache3DMutex);
+
+        // Double-check cache
+        auto it = m_influenceCache3D.find(key);
+        if (it != m_influenceCache3D.end()) {
+            return it->second.influences;
+        }
+
+        // LRU-style eviction when cache is full
+        if (m_influenceCache3D.size() >= MAX_CACHE_SIZE) {
+            size_t removeCount = MAX_CACHE_SIZE / 5;  // Remove 20%
+            auto removeIt = m_influenceCache3D.begin();
+            for (size_t i = 0; i < removeCount && removeIt != m_influenceCache3D.end(); ++i) {
+                removeIt = m_influenceCache3D.erase(removeIt);
+            }
+        }
+
+        m_influenceCache3D[key] = {modifiedInfluences, altitudeInfluence};
+    }
+
+    return modifiedInfluences;
 }

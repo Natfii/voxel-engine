@@ -159,20 +159,45 @@ set_tests_properties(MeshPooling PROPERTIES
 )
 
 # ============================================================
+# Test 6: Moisture-Based Biome Selection
+# ============================================================
+
+add_executable(test_moisture_biome_selection
+    test_moisture_biome_selection.cpp
+)
+
+target_include_directories(test_moisture_biome_selection PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_moisture_biome_selection PRIVATE voxel-engine-lib)
+
+add_test(
+    NAME MoistureBiomeSelection
+    COMMAND $<TARGET_FILE:test_moisture_biome_selection>
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(MoistureBiomeSelection PROPERTIES
+    TIMEOUT 30
+    LABELS "fast;correctness;biome"
+)
+
+# ============================================================
 # Custom test commands
 # ============================================================
 
 # Run only fast tests (correctness + basic performance)
 add_custom_target(test_fast
     COMMAND ${CMAKE_CTEST_COMMAND} -L fast -V
-    DEPENDS test_chunk_correctness test_performance
+    DEPENDS test_chunk_correctness test_performance test_moisture_biome_selection
     COMMENT "Running fast tests..."
 )
 
 # Run all tests with verbose output
 add_custom_target(test_all
     COMMAND ${CMAKE_CTEST_COMMAND} -V
-    DEPENDS test_chunk_correctness test_memory_leaks test_performance test_stress
+    DEPENDS test_chunk_correctness test_memory_leaks test_performance test_stress test_moisture_biome_selection
     COMMENT "Running all tests..."
 )
 

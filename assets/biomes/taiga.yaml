@@ -3,7 +3,9 @@
 
 # Required properties
 name: "Taiga"
-temperature: 20        # Cold
+temperature: 20        # Cold (center point)
+temperature_min: 15    # Cold minimum (transition from winter forest)
+temperature_max: 30    # Can reach cool temperate zones
 moisture: 50           # Moderate
 age: 65                # Moderate terrain variation
 activity: 50           # Moderate structure spawning

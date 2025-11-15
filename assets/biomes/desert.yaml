@@ -3,7 +3,9 @@
 
 # Required properties
 name: "Desert"
-temperature: 90        # Very hot
+temperature: 90        # Very hot (center point)
+temperature_min: 80    # Hot minimum
+temperature_max: 100   # Can spawn in hottest regions
 moisture: 5            # Very dry
 age: 75                # Relatively flat with dunes
 activity: 25           # Low structure spawning
