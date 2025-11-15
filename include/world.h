@@ -412,6 +412,22 @@ public:
      */
     int getSeed() const { return m_seed; }
 
+    /**
+     * @brief Internal block getter without locking (caller must hold lock)
+     *
+     * THREAD SAFETY: This method does NOT acquire any locks. The caller MUST
+     * already hold m_chunkMapMutex before calling this method.
+     *
+     * Use this when you already hold the lock to prevent deadlock.
+     * For normal use, call getBlockAt() instead.
+     *
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @return Block ID, or 0 if out of bounds
+     */
+    int getBlockAtUnsafe(float worldX, float worldY, float worldZ);
+
 private:
     /**
      * @brief Internal chunk lookup without locking (caller must hold lock)
@@ -434,15 +450,6 @@ private:
      * @return Pointer to chunk, or nullptr if not found
      */
     Chunk* getChunkAtWorldPosUnsafe(float worldX, float worldY, float worldZ);
-
-    /**
-     * @brief Internal block getter without locking (caller must hold lock)
-     * @param worldX World X coordinate
-     * @param worldY World Y coordinate
-     * @param worldZ World Z coordinate
-     * @return Block ID, or 0 if out of bounds
-     */
-    int getBlockAtUnsafe(float worldX, float worldY, float worldZ);
 
     /**
      * @brief Internal block setter without locking (caller must hold lock)
