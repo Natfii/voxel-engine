@@ -52,17 +52,19 @@ World::World(int width, int height, int depth, int seed)
     : m_width(width), m_height(height), m_depth(depth), m_seed(seed) {
     // Center world generation around origin (0, 0, 0)
     int halfWidth = width / 2;
+    int halfHeight = height / 2;  // CHANGED: Center Y axis too for deep caves
     int halfDepth = depth / 2;
 
     Logger::info() << "Creating world with " << width << "x" << height << "x" << depth << " chunks (seed: " << seed << ")";
     Logger::info() << "Chunk coordinates range: X[" << -halfWidth << " to " << (width - halfWidth - 1)
-                   << "], Y[0 to " << (height - 1) << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]";
+                   << "], Y[" << -halfHeight << " to " << (height - halfHeight - 1)
+                   << "], Z[" << -halfDepth << " to " << (depth - halfDepth - 1) << "]";
 
     // Reserve space for chunks
     m_chunks.reserve(width * height * depth);
 
     for (int x = -halfWidth; x < width - halfWidth; ++x) {
-        for (int y = 0; y < height; ++y) {
+        for (int y = -halfHeight; y < height - halfHeight; ++y) {  // CHANGED: Support negative Y
             for (int z = -halfDepth; z < depth - halfDepth; ++z) {
                 // Create chunk and store in hash map for O(1) lookup
                 auto chunk = std::make_unique<Chunk>(x, y, z);

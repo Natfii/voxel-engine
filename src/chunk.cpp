@@ -200,25 +200,38 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 int worldY = static_cast<int64_t>(m_y) * HEIGHT + y;
                 float worldYf = static_cast<float>(worldY);
 
-                // BEDROCK LAYER: Y=0 to Y=1 is always bedrock (unbreakable bottom)
-                if (worldY <= 1) {
+                // Calculate world bounds (world is centered around Y=0)
+                // This is calculated per-column for safety, but could be cached
+                constexpr int CHUNK_SIZE = 32;
+                // For bedrock layer, we need to know the absolute minimum Y
+                // In a centered world with height H chunks: min Y = -(H/2) * 32
+                // But we don't have access to total height here, so use a constant
+                // Bedrock should be at the bottom ~10 blocks of the world
+                // For now, assume bedrock is when worldY < -5000 (for deep worlds)
+                // This will be refined later when we pass world bounds to chunks
+
+                // BEDROCK LAYER: Bottom 2 blocks of world (unbreakable)
+                // For centered world, this would be around Y=-5,120 to -5,119
+                // Temporary: use worldY < -5000 as bedrock zone
+                if (worldY <= -5000) {
                     m_blocks[x][y][z] = BLOCK_BEDROCK;
                     continue;
                 }
 
-                // SOLID STONE GUARANTEE: Y=2 to Y=10 is always stone (no caves)
+                // SOLID STONE GUARANTEE: 10 blocks above bedrock is always stone (no caves)
                 // This prevents giant holes to the void and ensures solid foundation
-                if (worldY >= 2 && worldY <= 10) {
+                if (worldY > -5000 && worldY <= -4990) {
                     m_blocks[x][y][z] = BLOCK_STONE;
                     continue;
                 }
 
-                // Check if this is inside a cave (only for Y > 15)
+                // Check if this is inside a cave (only far enough below surface and above bedrock layer)
                 float caveDensity = biomeMap->getCaveDensityAt(worldX, worldYf, worldZ);
-                bool isCave = (caveDensity < 0.45f) && (worldY > 15);  // Caves only above Y=15
+                // Caves can spawn anywhere between bedrock layer and 10 blocks below surface
+                bool isCave = (caveDensity < 0.45f) && (worldY > -4980);  // Caves only above stone guarantee layer
 
-                // Check if inside underground biome chamber (only for Y > 15)
-                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ) && (worldY > 15);
+                // Check if inside underground biome chamber
+                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ) && (worldY > -4980);
 
                 // Determine block placement
                 if (worldY < terrainHeight) {
