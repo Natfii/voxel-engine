@@ -212,7 +212,7 @@ float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
 
     // Create winding tunnels where noise is close to 0 (creates tubular structure)
     // Tunnel forms when |noise| < threshold (creates continuous winding paths)
-    float tunnelRadius = 0.15f;  // Controls tunnel width (0.15 = ~5 block wide tunnels)
+    float tunnelRadius = 0.30f;  // Controls tunnel width (0.30 = wider tunnels for better cave systems)
     float tunnelDensity = std::abs(tunnelNoise) / tunnelRadius;  // 0.0 at tunnel center, >1.0 outside
     tunnelDensity = std::min(1.0f, tunnelDensity);  // Clamp to [0, 1]
 
@@ -242,9 +242,9 @@ float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
 }
 
 bool BiomeMap::isUndergroundBiomeAt(float worldX, float worldY, float worldZ) {
-    // Underground chambers restricted to mid-depth range to preserve mining gameplay
-    // Only generate between Y=10 and Y=45 (prevents Swiss-cheese deep underground)
-    if (worldY < 10.0f || worldY > 45.0f) {
+    // Underground chambers generate in deep caves for exploration gameplay
+    // Extended range to Y=-200 to Y=200 for deep underground cave systems
+    if (worldY < -200.0f || worldY > 200.0f) {
         return false;
     }
 

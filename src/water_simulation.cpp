@@ -52,6 +52,11 @@ void WaterSimulation::update(float deltaTime, World* world) {
             // If cell changed, mark it and neighbors as dirty for next frame
             if (it->second.level != oldLevel) {
                 markDirty(pos);
+
+                // OPTIMIZATION: Mark containing chunk as dirty for mesh regeneration
+                // Convert world block position to chunk position (assumes 32x32x32 chunks)
+                glm::ivec3 chunkPos(pos.x >> 5, pos.y >> 5, pos.z >> 5);  // Divide by 32
+                markChunkDirty(chunkPos);
             }
         }
     }

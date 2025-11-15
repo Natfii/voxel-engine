@@ -164,9 +164,10 @@ public:
      * Performs face culling against adjacent chunks.
      *
      * @param world World instance to query neighboring chunks
+     * @param callerHoldsLock If true, caller already holds world's chunk map lock (prevents deadlock)
      * @note Must be called after all chunks are generated
      */
-    void generateMesh(class World* world);
+    void generateMesh(class World* world, bool callerHoldsLock = false);
 
     /**
      * @brief Creates Vulkan vertex and index buffers

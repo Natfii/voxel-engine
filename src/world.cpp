@@ -824,7 +824,8 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
     int blockID = getBlockAtUnsafe(worldX, worldY, worldZ);
     auto& registry = BlockRegistry::instance();
 
-    if (blockID != 0 && registry.get(blockID).isLiquid) {
+    // Bounds check before registry access to prevent crash
+    if (blockID != 0 && blockID >= 0 && blockID < registry.count() && registry.get(blockID).isLiquid) {
         // Only allow breaking source blocks (level 0)
         uint8_t waterLevel = getBlockMetadataAtUnsafe(worldX, worldY, worldZ);
         if (waterLevel > 0) {
@@ -882,7 +883,8 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
     Chunk* affectedChunk = getChunkAtWorldPosUnsafe(worldX, worldY, worldZ);
     if (affectedChunk) {
         try {
-            affectedChunk->generateMesh(this);
+            // Pass true to indicate we already hold the lock (prevents deadlock)
+            affectedChunk->generateMesh(this, true);
             affectedChunk->createVertexBuffer(renderer);
         } catch (const std::exception& e) {
             Logger::error() << "Failed to update chunk after breaking block: " << e.what();
@@ -916,7 +918,8 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
             }
             if (!alreadyUpdated) {
                 try {
-                    neighbors[i]->generateMesh(this);
+                    // Pass true to indicate we already hold the lock (prevents deadlock)
+                    neighbors[i]->generateMesh(this, true);
                     neighbors[i]->createVertexBuffer(renderer);
                 } catch (const std::exception& e) {
                     Logger::error() << "Failed to update neighbor chunk: " << e.what();
@@ -945,7 +948,9 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
     std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
     // Don't place air blocks (use breakBlock for that)
-    if (blockID <= 0) return;
+    // Bounds check to prevent crash from invalid block IDs
+    auto& registry = BlockRegistry::instance();
+    if (blockID <= 0 || blockID >= registry.count()) return;
 
     // Check if there's already a block here (don't place over existing blocks)
     // Use UNSAFE version - we already hold lock
@@ -956,7 +961,6 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
     setBlockAtUnsafe(worldX, worldY, worldZ, blockID);
 
     // If placing water, set metadata to 0 (source block)
-    auto& registry = BlockRegistry::instance();
     if (registry.get(blockID).isLiquid) {
         setBlockMetadataAtUnsafe(worldX, worldY, worldZ, 0);  // Level 0 = source block
     }
@@ -966,7 +970,8 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
     Chunk* affectedChunk = getChunkAtWorldPosUnsafe(worldX, worldY, worldZ);
     if (affectedChunk) {
         try {
-            affectedChunk->generateMesh(this);
+            // Pass true to indicate we already hold the lock (prevents deadlock)
+            affectedChunk->generateMesh(this, true);
             affectedChunk->createVertexBuffer(renderer);
         } catch (const std::exception& e) {
             Logger::error() << "Failed to update chunk after placing block: " << e.what();
@@ -999,7 +1004,8 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
             }
             if (!alreadyUpdated) {
                 try {
-                    neighbors[i]->generateMesh(this);
+                    // Pass true to indicate we already hold the lock (prevents deadlock)
+                    neighbors[i]->generateMesh(this, true);
                     neighbors[i]->createVertexBuffer(renderer);
                 } catch (const std::exception& e) {
                     Logger::error() << "Failed to update neighbor chunk: " << e.what();
@@ -1181,25 +1187,28 @@ void World::updateWaterSimulation(float deltaTime, VulkanRenderer* renderer) {
     // Check for water level changes and spawn splash particles
     // TODO: Track water level changes in simulation and spawn particles
 
-    // Regenerate meshes for chunks with active water
-    const auto& activeChunks = m_waterSimulation->getActiveWaterChunks();
+    // OPTIMIZATION: Only regenerate meshes for chunks where water actually changed
+    // Using dirty chunk tracking (only updates chunks with water level changes)
+    const auto& dirtyChunks = m_waterSimulation->getDirtyChunks();
 
-    // Limit chunk updates per frame to prevent lag spikes (max 5 per frame)
+    // Limit chunk updates per frame to prevent lag spikes (max 10 per frame)
     int updatesThisFrame = 0;
-    const int maxUpdatesPerFrame = 5;
+    const int maxUpdatesPerFrame = 10;  // Increased from 5 since we're only updating changed chunks
 
-    for (const auto& chunkPos : activeChunks) {
+    for (const auto& chunkPos : dirtyChunks) {
         if (updatesThisFrame >= maxUpdatesPerFrame) break;
 
         Chunk* chunk = getChunkAt(chunkPos.x, chunkPos.y, chunkPos.z);
         if (chunk) {
-            // Only update if there's significant water activity
-            // TODO: Add dirty flag system to track which chunks need updates
+            // Regenerate mesh for this chunk (water levels changed)
             chunk->generateMesh(this);
             chunk->createVertexBuffer(renderer);
             updatesThisFrame++;
         }
     }
+
+    // Clear dirty chunks for next frame
+    m_waterSimulation->clearDirtyChunks();
 }
 
 // ========== World Persistence ==========

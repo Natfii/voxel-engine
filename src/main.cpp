@@ -848,7 +848,9 @@ int main() {
 
                     if (selectedItem.type == InventoryItemType::BLOCK) {
                         // Place block adjacent to the targeted block (using hit normal)
-                        if (selectedItem.blockID > 0) {
+                        // Bounds check to prevent crash from invalid block IDs
+                        auto& registry = BlockRegistry::instance();
+                        if (selectedItem.blockID > 0 && selectedItem.blockID < registry.count()) {
                             glm::vec3 placePosition = target.blockPosition + target.hitNormal;
                             world.placeBlock(placePosition, selectedItem.blockID, &renderer);
                         }

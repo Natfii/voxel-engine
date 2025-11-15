@@ -87,6 +87,11 @@ public:
     // Query active chunks
     const std::set<glm::ivec3, Ivec3Compare>& getActiveWaterChunks() const { return m_activeChunks; }
 
+    // Query and manage dirty chunks (chunks needing mesh regeneration)
+    const std::set<glm::ivec3, Ivec3Compare>& getDirtyChunks() const { return m_dirtyChunks; }
+    void clearDirtyChunks() { m_dirtyChunks.clear(); }
+    void markChunkDirty(const glm::ivec3& chunkPos) { m_dirtyChunks.insert(chunkPos); }
+
     // Configuration
     void setEvaporationEnabled(bool enabled) { m_enableEvaporation = enabled; }
     void setFlowSpeed(float speed) { m_flowSpeed = speed; }
@@ -107,6 +112,9 @@ private:
 
     // Dirty tracking - only update cells that have changed
     std::set<glm::ivec3, Ivec3Compare> m_dirtyCells;
+
+    // Dirty chunks - chunks that need mesh regeneration due to water changes
+    std::set<glm::ivec3, Ivec3Compare> m_dirtyChunks;
 
     // Configuration
     bool m_enableEvaporation;
