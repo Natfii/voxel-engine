@@ -39,6 +39,7 @@ MenuResult MainMenu::render() {
             }
             result.action = MenuAction::NEW_GAME;
             result.seed = seed;
+            result.spawnRadius = spawnRadiusSlider;
         }
     } else if (showLoadDialog) {
         renderLoadWorldDialog();
@@ -157,7 +158,7 @@ void MainMenu::renderSeedDialog() {
     float centerX = displaySize.x * 0.5f;
     float centerY = displaySize.y * 0.5f;
     float dialogWidth = 400.0f;
-    float dialogHeight = 250.0f;
+    float dialogHeight = 330.0f;
     float buttonWidth = 150.0f;
     float buttonHeight = 35.0f;
 
@@ -197,6 +198,15 @@ void MainMenu::renderSeedDialog() {
         int randomSeed = std::rand() % 1000000;
         snprintf(seedInputBuffer, sizeof(seedInputBuffer), "%d", randomSeed);
     }
+
+    ImGui::Spacing();
+    ImGui::Spacing();
+
+    // Spawn radius slider
+    ImGui::Text("Initial Spawn Area:");
+    ImGui::SetNextItemWidth(dialogWidth - 40.0f);
+    ImGui::SliderInt("##spawnradius", &spawnRadiusSlider, 2, 8, "%d chunks radius");
+    ImGui::TextDisabled("Larger areas take longer to generate");
 
     ImGui::Spacing();
     ImGui::Spacing();

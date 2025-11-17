@@ -1125,90 +1125,82 @@ void World::updateLiquids(VulkanRenderer* renderer) {
     std::vector<WaterBlock> waterToAdd;
 
     // Pass 1: Process all water blocks and schedule flows
-    // Performance optimization: Only check chunks with water
+    // Performance optimization: Only check chunks that exist
     // Water-containing chunks: TRACKED via WaterSimulation::m_activeChunks
-    for (int y = 0; y < m_height; ++y) {
-        for (int x = 0; x < m_width; ++x) {
-            for (int z = 0; z < m_depth; ++z) {
-                int halfWidth = m_width / 2;
-                int halfHeight = m_height / 2;
-                int halfDepth = m_depth / 2;
-                int chunkX = x - halfWidth;
-                int chunkY = y - halfHeight;  // Convert to centered coordinates
-                int chunkZ = z - halfDepth;
+    std::vector<Chunk*> allChunks;
+    {
+        std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+        for (const auto& pair : m_chunkMap) {
+            allChunks.push_back(pair.second.get());
+        }
+    }
 
-                Chunk* chunk = getChunkAt(chunkX, chunkY, chunkZ);
-                if (!chunk) continue;
+    for (Chunk* chunk : allChunks) {
+        // Early skip: If chunk has no vertices, it's likely empty
+        if (chunk->getVertexCount() == 0 && chunk->getTransparentVertexCount() == 0) continue;
 
-                // Early skip: If chunk has no vertices, it's likely empty
-                if (chunk->getVertexCount() == 0 && chunk->getTransparentVertexCount() == 0) continue;
+        int chunkX = chunk->getChunkX();
+        int chunkY = chunk->getChunkY();
+        int chunkZ = chunk->getChunkZ();
 
-                // Iterate through blocks in this chunk (top to bottom for proper flow)
-                // Sample every other block for performance (still looks smooth)
-                for (int localX = 0; localX < Chunk::WIDTH; localX += 1) {
-                    for (int localY = Chunk::HEIGHT - 1; localY >= 0; localY -= 1) {
-                        for (int localZ = 0; localZ < Chunk::DEPTH; localZ += 1) {
-                            int blockID = chunk->getBlock(localX, localY, localZ);
-                            if (blockID == 0) continue;
+        // Iterate through blocks in this chunk (top to bottom for proper flow)
+        for (int localX = 0; localX < Chunk::WIDTH; localX += 1) {
+            for (int localY = Chunk::HEIGHT - 1; localY >= 0; localY -= 1) {
+                for (int localZ = 0; localZ < Chunk::DEPTH; localZ += 1) {
+                    int blockID = chunk->getBlock(localX, localY, localZ);
+                    if (blockID == 0) continue;
 
-                            // Bounds check before registry access to prevent crash
-                            if (blockID < 0 || blockID >= registry.count()) continue;
+                    // Bounds check before registry access to prevent crash
+                    if (blockID < 0 || blockID >= registry.count()) continue;
 
-                            const BlockDefinition& def = registry.get(blockID);
-                            if (!def.isLiquid) continue;
+                    const BlockDefinition& def = registry.get(blockID);
+                    if (!def.isLiquid) continue;
 
-                            // Calculate world position
-                            float worldX = static_cast<float>(chunkX * Chunk::WIDTH + localX);
-                            float worldY = static_cast<float>(chunkY * Chunk::HEIGHT + localY);
-                            float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + localZ);
+                    // Calculate world position
+                    float worldX = static_cast<float>(chunkX * Chunk::WIDTH + localX);
+                    float worldY = static_cast<float>(chunkY * Chunk::HEIGHT + localY);
+                    float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + localZ);
 
-                            // Get water level
-                            uint8_t waterLevel = getBlockMetadataAt(worldX, worldY, worldZ);
+                    // Get water level
+                    uint8_t waterLevel = getBlockMetadataAt(worldX, worldY, worldZ);
 
-                            // VERTICAL FLOW: Water always flows down first
-                            float belowY = worldY - 1.0f;
-                            int blockBelow = getBlockAt(worldX, belowY, worldZ);
+                    // VERTICAL FLOW: Water always flows down first
+                    float belowY = worldY - 1.0f;
+                    int blockBelow = getBlockAt(worldX, belowY, worldZ);
 
-                            if (blockBelow == 0) {
-                                // Air below - water flows down as SOURCE block (level 0)
-                                // CRITICAL: In Minecraft, falling water becomes a source!
-                                waterToAdd.push_back({worldX, belowY, worldZ, 0});
-                                chunksToUpdate.insert(getChunkAtWorldPos(worldX, belowY, worldZ));
-                                // Skip horizontal spread when falling (priority to vertical flow)
-                                continue;
-                            } else if (blockBelow >= 0 && blockBelow < registry.count() && !registry.get(blockBelow).isLiquid) {
-                                // Solid block below - try horizontal spread
-                                // Only spread if we're a source or low-level flow (level < 7)
-                                if (waterLevel < 7) {
-                                    uint8_t newLevel = waterLevel + 1;
+                    if (blockBelow == 0) {
+                        // Air below - water flows down as SOURCE block (level 0)
+                        waterToAdd.push_back({worldX, belowY, worldZ, 0});
+                        chunksToUpdate.insert(getChunkAtWorldPos(worldX, belowY, worldZ));
+                        continue;
+                    } else if (blockBelow >= 0 && blockBelow < registry.count() && !registry.get(blockBelow).isLiquid) {
+                        // Solid block below - try horizontal spread
+                        if (waterLevel < 7) {
+                            uint8_t newLevel = waterLevel + 1;
 
-                                    // Check 4 horizontal neighbors
-                                    const glm::vec3 directions[4] = {
-                                        {0.5f, 0.0f, 0.0f},   // +X
-                                        {-0.5f, 0.0f, 0.0f},  // -X
-                                        {0.0f, 0.0f, 0.5f},   // +Z
-                                        {0.0f, 0.0f, -0.5f}   // -Z
-                                    };
+                            // Check 4 horizontal neighbors
+                            const glm::vec3 directions[4] = {
+                                {0.5f, 0.0f, 0.0f},
+                                {-0.5f, 0.0f, 0.0f},
+                                {0.0f, 0.0f, 0.5f},
+                                {0.0f, 0.0f, -0.5f}
+                            };
 
-                                    for (const auto& dir : directions) {
-                                        float nx = worldX + dir.x;
-                                        float ny = worldY + dir.y;
-                                        float nz = worldZ + dir.z;
+                            for (const auto& dir : directions) {
+                                float nx = worldX + dir.x;
+                                float ny = worldY + dir.y;
+                                float nz = worldZ + dir.z;
 
-                                        int neighborBlock = getBlockAt(nx, ny, nz);
+                                int neighborBlock = getBlockAt(nx, ny, nz);
 
-                                        if (neighborBlock == 0) {
-                                            // Empty space - place water
-                                            waterToAdd.push_back({nx, ny, nz, newLevel});
-                                            chunksToUpdate.insert(getChunkAtWorldPos(nx, ny, nz));
-                                        } else if (neighborBlock >= 0 && neighborBlock < registry.count() && registry.get(neighborBlock).isLiquid) {
-                                            // Existing water - update if we have lower level (stronger flow)
-                                            uint8_t neighborLevel = getBlockMetadataAt(nx, ny, nz);
-                                            if (newLevel < neighborLevel) {
-                                                setBlockMetadataAt(nx, ny, nz, newLevel);
-                                                chunksToUpdate.insert(getChunkAtWorldPos(nx, ny, nz));
-                                            }
-                                        }
+                                if (neighborBlock == 0) {
+                                    waterToAdd.push_back({nx, ny, nz, newLevel});
+                                    chunksToUpdate.insert(getChunkAtWorldPos(nx, ny, nz));
+                                } else if (neighborBlock >= 0 && neighborBlock < registry.count() && registry.get(neighborBlock).isLiquid) {
+                                    uint8_t neighborLevel = getBlockMetadataAt(nx, ny, nz);
+                                    if (newLevel < neighborLevel) {
+                                        setBlockMetadataAt(nx, ny, nz, newLevel);
+                                        chunksToUpdate.insert(getChunkAtWorldPos(nx, ny, nz));
                                     }
                                 }
                             }

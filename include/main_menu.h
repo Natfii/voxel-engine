@@ -15,6 +15,7 @@ struct MenuResult {
     MenuAction action = MenuAction::NONE;
     int seed = 0;              // World seed (if NEW_GAME)
     std::string worldPath = "";  // World path (if LOAD_GAME)
+    int spawnRadius = 4;       // Initial spawn area radius in chunks (if NEW_GAME)
 
     MenuResult() = default;
     MenuResult(MenuAction a, int s = 0) : action(a), seed(s) {}
@@ -42,6 +43,7 @@ private:
     bool showLoadDialog = false;
     char seedInputBuffer[32] = "1124345";  // Default seed
     bool randomSeedRequested = false;
+    int spawnRadiusSlider = 4;  // Initial spawn radius (2-8 chunks)
 
     // Load dialog state
     std::vector<std::string> availableWorlds;
