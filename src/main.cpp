@@ -786,7 +786,8 @@ int main() {
             glm::mat4 viewProj = projection * view;
 
             // Update uniform buffer with camera position and render distance for fog
-            const float renderDistance = 80.0f;
+            // Increased for wider biomes and better fog visibility
+            const float renderDistance = 120.0f;
 
             // Detect if camera is specifically underwater (not just feet in water)
             bool underwater = player.isCameraUnderwater();
@@ -923,7 +924,7 @@ int main() {
             vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipeline);
             vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
-            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, 80.0f, &renderer);
+            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, renderDistance, &renderer);
 
             // Render block outline with line pipeline
             if (target.hasTarget) {

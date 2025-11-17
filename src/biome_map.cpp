@@ -6,30 +6,30 @@
 #include <iostream>
 
 BiomeMap::BiomeMap(int seed) {
-    // Temperature noise - VERY large scale, creates modern Minecraft-style massive climate zones
-    // Lower frequency = wider biomes (0.001 = ~1000 block features, modern Minecraft 1.18+ scale)
+    // Temperature noise - EXTRA large scale for expansive biomes
+    // Lower frequency = wider biomes (0.0004 = ~2500 block features, 2.5x larger than before)
     m_temperatureNoise = std::make_unique<FastNoiseLite>(seed);
     m_temperatureNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_temperatureNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
     m_temperatureNoise->SetFractalOctaves(4);
-    m_temperatureNoise->SetFrequency(0.001f);  // Modern Minecraft scale (1.18+ biomes: 800-1500 blocks)
+    m_temperatureNoise->SetFrequency(0.0004f);  // Expansive biomes: 2000-3000 blocks wide
 
     // Temperature variation - adds local temperature changes within biomes
     m_temperatureVariation = std::make_unique<FastNoiseLite>(seed + 1000);
     m_temperatureVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    m_temperatureVariation->SetFrequency(0.012f);  // Medium features for variation
+    m_temperatureVariation->SetFrequency(0.008f);  // Smoother variation for natural blending
 
-    // Moisture noise - VERY large scale, creates modern Minecraft-style massive wet/dry zones
+    // Moisture noise - EXTRA large scale for expansive wet/dry zones
     m_moistureNoise = std::make_unique<FastNoiseLite>(seed + 100);
     m_moistureNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_moistureNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
     m_moistureNoise->SetFractalOctaves(4);
-    m_moistureNoise->SetFrequency(0.0012f);  // Modern Minecraft scale (1.18+ biomes: 800-1500 blocks)
+    m_moistureNoise->SetFrequency(0.0005f);  // Expansive biomes: 2000-3000 blocks wide
 
     // Moisture variation - adds local moisture changes within biomes
     m_moistureVariation = std::make_unique<FastNoiseLite>(seed + 1100);
     m_moistureVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    m_moistureVariation->SetFrequency(0.015f);  // Medium features for variation
+    m_moistureVariation->SetFrequency(0.010f);  // Smoother variation for natural blending
 
     // Terrain height noise - controlled by biome age
     m_terrainNoise = std::make_unique<FastNoiseLite>(seed + 200);
@@ -76,6 +76,17 @@ float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
 
     // Combine: 70% base + 30% variation
     float combined = (baseTemp * 0.7f) + (variation * 0.3f);
+
+    // Add distance-based temperature gradient for variety as you travel far
+    // Distance from world origin (0, 0)
+    float distanceFromOrigin = std::sqrt(worldX * worldX + worldZ * worldZ);
+
+    // Create gradual temperature shift based on distance (every ~5000 blocks = full temp range)
+    // This creates natural temperature zones as you explore further from spawn
+    float distanceInfluence = std::sin(distanceFromOrigin * 0.0004f) * 0.3f;  // ±30% temp shift
+
+    // Apply distance influence to create exploration variety
+    combined = combined + distanceInfluence;
 
     // Map from [-1, 1] to [0, 100]
     return mapNoiseToRange(combined, 0.0f, 100.0f);
@@ -295,7 +306,8 @@ const Biome* BiomeMap::selectBiome(float temperature, float moisture) {
     }
 
     // Single-pass algorithm: find best matching biome in one iteration
-    const float TOLERANCE = 15.0f;
+    // Increased tolerance for smoother biome blending and natural transitions
+    const float TOLERANCE = 25.0f;  // Wider tolerance = more gradual biome transitions
     const Biome* bestBiome = nullptr;
     float bestWeight = -1.0f;
     const Biome* closestBiome = nullptr;
