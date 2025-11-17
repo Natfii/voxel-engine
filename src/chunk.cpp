@@ -1121,8 +1121,6 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
     m_transparentIndexStagingBuffer = VK_NULL_HANDLE;
     m_transparentIndexStagingBufferMemory = VK_NULL_HANDLE;
 
-    VkDevice device = renderer->getDevice();
-
     // ========== CREATE OPAQUE BUFFERS (BATCHED) ==========
     if (m_vertexCount > 0) {
         // Create vertex staging buffer and device buffer
