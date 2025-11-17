@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <shared_mutex>
 #include <cstdint>
 #include <glm/glm.hpp>
