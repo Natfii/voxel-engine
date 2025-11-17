@@ -7,3 +7,4 @@
 [X] Add Exit to Main Menu button on pause menu - DONE
 [X] Auto-save when exiting to main menu - DONE
 [X] Enable world streaming for infinite chunk generation - DONE
+[X] Fix Exit to Main Menu bug (was closing game instead of returning to menu) - DONE
