@@ -126,16 +126,6 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
                     int chunkY = centerChunkY + dy;
                     int chunkZ = centerChunkZ + dz;
 
-                    // Bounds check: Skip chunks outside world boundaries
-                    int halfWidth = m_width / 2;
-                    int halfHeight = m_height / 2;
-                    int halfDepth = m_depth / 2;
-                    if (chunkX < -halfWidth || chunkX >= halfWidth ||
-                        chunkY < -halfHeight || chunkY >= halfHeight ||
-                        chunkZ < -halfDepth || chunkZ >= halfDepth) {
-                        continue;  // Skip out-of-bounds chunk
-                    }
-
                     // Create chunk if it doesn't exist
                     ChunkCoord coord{chunkX, chunkY, chunkZ};
                     if (m_chunkMap.find(coord) == m_chunkMap.end()) {
@@ -278,36 +268,43 @@ void World::decorateWorld() {
     std::mt19937 rng(m_seed + 77777);
     std::uniform_int_distribution<int> densityDist(0, 100);
 
-    // Calculate world bounds
-    int halfWidth = m_width / 2;
-    int halfHeight = m_height / 2;
-    int halfDepth = m_depth / 2;
-    int maxWorldY = m_height * Chunk::HEIGHT;
-
     // Track modified chunks for selective mesh regeneration
     std::unordered_set<Chunk*> modifiedChunks;
 
+    // Get all surface chunks (Y > 0) that exist in the world
+    std::vector<Chunk*> surfaceChunks;
+    {
+        std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+        for (const auto& pair : m_chunkMap) {
+            Chunk* chunk = pair.second.get();
+            if (chunk->getChunkY() >= 0) {  // Surface chunks only
+                surfaceChunks.push_back(chunk);
+            }
+        }
+    }
+
     // Decorate surface - grid-based tree sampling for proper density
     // Sample every 4 blocks on a grid (8x8 = 64 sample points per chunk)
-    // This gives proper Minecraft-accurate tree density in forests
-    const int TREE_SAMPLE_SPACING = 4;  // Sample every 4 blocks
+    const int TREE_SAMPLE_SPACING = 4;
 
-    for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
-        for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
-            // Grid-based sampling within chunk
-            for (int localX = 0; localX < Chunk::WIDTH; localX += TREE_SAMPLE_SPACING) {
-                for (int localZ = 0; localZ < Chunk::DEPTH; localZ += TREE_SAMPLE_SPACING) {
-                    // Add small random offset (0-3 blocks) to avoid perfectly aligned trees
-                    std::uniform_int_distribution<int> offsetDist(0, TREE_SAMPLE_SPACING - 1);
-                    int offsetX = offsetDist(rng);
-                    int offsetZ = offsetDist(rng);
+    for (Chunk* chunk : surfaceChunks) {
+        int chunkX = chunk->getChunkX();
+        int chunkZ = chunk->getChunkZ();
 
-                    int sampleX = std::min(localX + offsetX, Chunk::WIDTH - 1);
-                    int sampleZ = std::min(localZ + offsetZ, Chunk::DEPTH - 1);
+        // Grid-based sampling within chunk
+        for (int localX = 0; localX < Chunk::WIDTH; localX += TREE_SAMPLE_SPACING) {
+            for (int localZ = 0; localZ < Chunk::DEPTH; localZ += TREE_SAMPLE_SPACING) {
+                // Add small random offset (0-3 blocks) to avoid perfectly aligned trees
+                std::uniform_int_distribution<int> offsetDist(0, TREE_SAMPLE_SPACING - 1);
+                int offsetX = offsetDist(rng);
+                int offsetZ = offsetDist(rng);
 
-                    // Convert to world coordinates
-                    float worldX = static_cast<float>(chunkX * Chunk::WIDTH + sampleX);
-                    float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + sampleZ);
+                int sampleX = std::min(localX + offsetX, Chunk::WIDTH - 1);
+                int sampleZ = std::min(localZ + offsetZ, Chunk::DEPTH - 1);
+
+                // Convert to world coordinates
+                float worldX = static_cast<float>(chunkX * Chunk::WIDTH + sampleX);
+                float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + sampleZ);
 
                 // Get biome at this position
                 const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
@@ -364,42 +361,53 @@ void World::decorateWorld() {
                         }
                     }
                 }
-                }  // End localZ loop
-            }  // End localX loop
-        }  // End chunkZ loop
-    }  // End chunkX loop
+            }  // End localZ loop
+        }  // End localX loop
+    }  // End surface chunk loop
+
+    // Get all underground chunks for underground decoration
+    std::vector<Chunk*> undergroundChunks;
+    {
+        std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+        for (const auto& pair : m_chunkMap) {
+            Chunk* chunk = pair.second.get();
+            if (chunk->getChunkY() < 0) {  // Underground chunks only
+                undergroundChunks.push_back(chunk);
+            }
+        }
+    }
 
     // Decorate underground biome chambers
-    for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
-        for (int chunkY = -halfHeight; chunkY < m_height - halfHeight; ++chunkY) {
-            for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
-                // Sample positions in underground chunks
-                std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
+    for (Chunk* chunk : undergroundChunks) {
+        int chunkX = chunk->getChunkX();
+        int chunkY = chunk->getChunkY();
+        int chunkZ = chunk->getChunkZ();
 
-                for (int attempt = 0; attempt < 2; attempt++) {  // 2 attempts per underground chunk
-                    int localX = posDist(rng);
-                    int localY = posDist(rng);
-                    int localZ = posDist(rng);
+        // Sample positions in underground chunks
+        std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
 
-                    int worldX = chunkX * Chunk::WIDTH + localX;
-                    int worldY = chunkY * Chunk::HEIGHT + localY;
-                    int worldZ = chunkZ * Chunk::DEPTH + localZ;
+        for (int attempt = 0; attempt < 2; attempt++) {  // 2 attempts per underground chunk
+            int localX = posDist(rng);
+            int localY = posDist(rng);
+            int localZ = posDist(rng);
 
-                    // Check if in underground chamber
-                    if (m_biomeMap->isUndergroundBiomeAt(worldX, worldY, worldZ)) {
-                        // Check if this is floor of chamber (solid block below, air here)
-                        int blockHere = getBlockAt(worldX, worldY, worldZ);
-                        int blockBelow = getBlockAt(worldX, static_cast<float>(worldY - 1), worldZ);
+            int worldX = chunkX * Chunk::WIDTH + localX;
+            int worldY = chunkY * Chunk::HEIGHT + localY;
+            int worldZ = chunkZ * Chunk::DEPTH + localZ;
 
-                        if (blockHere == BLOCK_AIR && blockBelow == BLOCK_STONE) {
-                            // Get underground biome
-                            const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+            // Check if in underground chamber
+            if (m_biomeMap->isUndergroundBiomeAt(worldX, worldY, worldZ)) {
+                // Check if this is floor of chamber (solid block below, air here)
+                int blockHere = getBlockAt(worldX, worldY, worldZ);
+                int blockBelow = getBlockAt(worldX, static_cast<float>(worldY - 1), worldZ);
 
-                            // Place mushrooms or small features (for now, just count)
-                            // TODO: Add mushrooms, glowing flora, etc.
-                            undergroundFeaturesPlaced++;
-                        }
-                    }
+                if (blockHere == BLOCK_AIR && blockBelow == BLOCK_STONE) {
+                    // Get underground biome
+                    const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+
+                    // Place mushrooms or small features (for now, just count)
+                    // TODO: Add mushrooms, glowing flora, etc.
+                    undergroundFeaturesPlaced++;
                 }
             }
         }
