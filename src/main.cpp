@@ -316,14 +316,11 @@ int main() {
         bool loadingExistingWorld = (menuResult.action == MenuAction::LOAD_GAME && !menuResult.worldPath.empty());
         std::string worldPath = menuResult.worldPath;
 
-        // Get world configuration from config file (use seed from menu)
-        int worldWidth = config.getInt("World", "world_width", 12);
-        int worldDepth = config.getInt("World", "world_depth", 12);
-
-        // World height: default 3 chunks (96 blocks) for fast startup
-        // Can be increased in config.ini for taller worlds
-        // Note: Streaming system can load additional chunks on-demand
-        int worldHeight = config.getInt("World", "world_height", 3);
+        // World dimensions are no longer used - infinite world via streaming
+        // These dummy values are kept for World constructor compatibility
+        int worldWidth = 1;
+        int worldHeight = 1;
+        int worldDepth = 1;
 
         // Loading stage 1: Block registry (10%)
         loadingProgress = 0.05f;
@@ -410,13 +407,11 @@ int main() {
 
             // We'll determine spawn chunk coordinates and generate them before finding exact spawn point
             // Assume spawn will be somewhere near (0, 64, 0) in world space
-            // That's chunk (0, 2, 0) in chunk coordinates if spawn height is 64 blocks
-            // For centered world with 320 height: Y chunks from -160 to +159
-            // Spawn at Y=64 is chunk Y=2 (chunk 2 * 32 = 64-95 blocks)
+            // Generate spawn chunks around origin
             int spawnChunkX = 0;
             int spawnChunkY = 2;  // Y=64 surface is in chunk Y=2
             int spawnChunkZ = 0;
-            int spawnRadius = 4;  // Generate 9x9x9 chunks = 729 chunks (reasonable startup time)
+            int spawnRadius = menuResult.spawnRadius;  // From menu slider (2-8 chunks)
 
             world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
 
@@ -450,25 +445,19 @@ int main() {
         std::cout << "Finding safe spawn location..." << std::endl;
 
         // World is centered around Y=0 with both positive and negative chunks
-        const int halfHeight = worldHeight / 2;
-        const int MIN_WORLD_Y = -halfHeight * 32;  // Minimum Y coordinate (deep caves)
-        const int MAX_WORLD_Y = (worldHeight - halfHeight) * 32 - 1;  // Maximum Y coordinate (sky)
-
-        // Search for spawn on surface (typically around Y=64) down to minimum safe depth
-        const int MAX_TERRAIN_HEIGHT = std::min(180, MAX_WORLD_Y);  // Don't search above world bounds
-        const int MIN_SEARCH_Y = std::max(10, MIN_WORLD_Y + 20);  // Don't spawn too close to void
+        // Search for spawn on surface
+        const int MAX_TERRAIN_HEIGHT = 180;  // Search up to Y=180
+        const int MIN_SEARCH_Y = 10;  // Don't spawn below Y=10
         const int SEARCH_RADIUS = 32;  // Search in 32 block radius
         const int MIN_SOLID_DEPTH = 5;  // Require at least 5 blocks of solid ground below
 
-        std::cout << "World Y range: " << MIN_WORLD_Y << " to " << MAX_WORLD_Y
-                  << " (" << (MAX_WORLD_Y - MIN_WORLD_Y + 1) << " blocks)" << std::endl;
         std::cout << "Searching for spawn from Y=" << MAX_TERRAIN_HEIGHT << " down to Y=" << MIN_SEARCH_Y << std::endl;
 
         // Helper to check if a location is safe to spawn
         auto isSafeSpawn = [&world, MIN_SOLID_DEPTH, MAX_TERRAIN_HEIGHT](float x, float z, int groundY) -> bool {
             // Bounds check
             if (groundY < MIN_SOLID_DEPTH || groundY >= MAX_TERRAIN_HEIGHT - 4) {
-                return false;  // Too close to terrain boundaries
+                return false;  // Too extreme for spawn
             }
 
             // Check if there's solid ground below (no caves)
