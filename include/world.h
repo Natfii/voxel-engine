@@ -434,6 +434,13 @@ public:
     int getSeed() const { return m_seed; }
 
     /**
+     * @brief Gets all chunks for iteration
+     * @return Reference to vector of all chunks
+     */
+    std::vector<Chunk*>& getChunks() { return m_chunks; }
+    const std::vector<Chunk*>& getChunks() const { return m_chunks; }
+
+    /**
      * @brief Internal block getter without locking (caller must hold lock)
      *
      * THREAD SAFETY: This method does NOT acquire any locks. The caller MUST

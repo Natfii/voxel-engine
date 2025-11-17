@@ -491,7 +491,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     if (checkCollision(Position, world)) {
         // Player is currently inside a block - calculate correction
         glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
-        float blockGridY = std::ceil(feetPos.y);
+        float blockGridY = std::floor(feetPos.y) + 1.0f;  // Floor + 1 to place on top of block
         float correctionY = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
 
         // Only apply correction if it's significant (player is really stuck, not just touching edge)
@@ -520,8 +520,8 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
             if (!m_inLiquid) {
                 // On land: snap feet to top of block grid for precise landing
                 glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
-                // Round feet position UP to next 1.0 block boundary
-                float blockGridY = std::ceil(feetPos.y);
+                // Floor to get the block below, then add 1.0 to place on top
+                float blockGridY = std::floor(feetPos.y) + 1.0f;
                 // Set movement to place feet exactly on block grid
                 movement.y = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
             } else {

@@ -391,6 +391,38 @@ int main() {
                 loadingProgress = 0.50f;
                 loadingMessage = "Building chunk meshes";
                 renderLoadingScreen();
+
+                // Regenerate all chunk meshes (blocks loaded from disk, but meshes need rebuilding)
+                auto& chunks = world.getChunks();
+                std::cout << "Regenerating meshes for " << chunks.size() << " loaded chunks..." << std::endl;
+
+                // Parallel mesh generation for better performance
+                unsigned int numThreads = std::thread::hardware_concurrency();
+                if (numThreads == 0) numThreads = 4;
+                std::vector<std::thread> threads;
+                threads.reserve(numThreads);
+
+                size_t chunksPerThread = (chunks.size() + numThreads - 1) / numThreads;
+
+                for (unsigned int i = 0; i < numThreads; ++i) {
+                    size_t startIdx = i * chunksPerThread;
+                    size_t endIdx = std::min(startIdx + chunksPerThread, chunks.size());
+
+                    if (startIdx >= chunks.size()) break;
+
+                    threads.emplace_back([&world, &chunks, startIdx, endIdx]() {
+                        for (size_t idx = startIdx; idx < endIdx; ++idx) {
+                            chunks[idx]->generateMesh(&world);
+                        }
+                    });
+                }
+
+                // Wait for all threads to complete
+                for (auto& thread : threads) {
+                    thread.join();
+                }
+
+                std::cout << "Regenerated " << chunks.size() << " chunk meshes" << std::endl;
             }
         }
 

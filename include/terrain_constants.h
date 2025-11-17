@@ -38,7 +38,7 @@ namespace TerrainGeneration {
 namespace PhysicsConstants {
     // Player physics thresholds
     constexpr float TERMINAL_VELOCITY = -40.0f;  ///< Maximum falling speed (world units/sec)
-    constexpr float GROUND_CHECK_DISTANCE = 0.05f; ///< Distance below player to check for ground
+    constexpr float GROUND_CHECK_DISTANCE = 0.1f; ///< Distance below player to check for ground (increased for better precision)
     constexpr float STUCK_THRESHOLD = 0.02f;     ///< Minimum movement to not be considered stuck
     constexpr float STEP_HEIGHT = 0.3f;          ///< Maximum height player can step up (world units)
 }
