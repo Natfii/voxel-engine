@@ -428,6 +428,12 @@ public:
     std::string getWorldName() const;
 
     /**
+     * @brief Gets the world save path
+     * @return World path string (e.g., "worlds/world_12345")
+     */
+    std::string getWorldPath() const { return m_worldPath; }
+
+    /**
      * @brief Gets the world seed
      * @return World seed value
      */

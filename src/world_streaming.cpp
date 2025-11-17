@@ -310,8 +310,27 @@ std::unique_ptr<Chunk> WorldStreaming::generateChunk(int chunkX, int chunkY, int
     // Create chunk
     auto chunk = std::make_unique<Chunk>(chunkX, chunkY, chunkZ);
 
-    // Generate terrain
-    chunk->generate(m_biomeMap);
+    // Try to load from disk first (if world has a save path)
+    bool loadedFromDisk = false;
+    if (m_world) {
+        std::string worldPath = m_world->getWorldPath();
+        if (!worldPath.empty() && chunk->load(worldPath)) {
+            loadedFromDisk = true;
+            Logger::debug() << "Loaded chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from disk";
+        }
+    }
+
+    // Generate terrain if not loaded from disk
+    if (!loadedFromDisk) {
+        chunk->generate(m_biomeMap);
+        Logger::debug() << "Generated fresh chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
+
+        // TODO: Add per-chunk decoration for freshly generated chunks
+        // Currently, only spawn chunks get decorated via decorateWorld()
+        // New streamed chunks have terrain but no trees/features
+        // Need to implement lightweight decoration that can run on background thread
+        // or mark chunks as "needs decoration" for main thread processing
+    }
 
     // Generate mesh (CPU-only, thread-safe with thread-local pools)
     chunk->generateMesh(m_world);
