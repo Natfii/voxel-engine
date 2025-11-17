@@ -751,34 +751,43 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
         return false;  // Chunk doesn't exist
     }
 
-    Chunk* chunkPtr = it->second.get();
-
-    // CRITICAL: Save chunk to disk before removing (preserves player modifications)
-    // This ensures builds, mining, etc. persist across chunk streaming
-    if (!m_worldPath.empty()) {
-        if (!chunkPtr->save(m_worldPath)) {
-            Logger::warning() << "Failed to save chunk (" << chunkX << ", " << chunkY
-                            << ", " << chunkZ << ") during unload";
-        }
-    }
-
     // Remove from vector (order doesn't matter, so use swap-and-pop for O(1))
+    Chunk* chunkPtr = it->second.get();
     auto vecIt = std::find(m_chunks.begin(), m_chunks.end(), chunkPtr);
     if (vecIt != m_chunks.end()) {
-        // Swap with last element and pop
         std::swap(*vecIt, m_chunks.back());
         m_chunks.pop_back();
     }
 
-    // Destroy Vulkan buffers before removing chunk
+    // Destroy Vulkan buffers (can't keep GPU resources in cache)
     if (renderer) {
         chunkPtr->destroyBuffers(renderer);
     }
 
-    // Remove from map (this destroys the chunk via unique_ptr)
+    // Move chunk to cache instead of deleting (RAM cache for fast reload)
+    m_unloadedChunksCache[coord] = std::move(it->second);
     m_chunkMap.erase(it);
 
-    Logger::debug() << "Saved and removed chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from world";
+    // Check cache size limit and evict oldest chunks if needed
+    if (m_unloadedChunksCache.size() > m_maxCachedChunks) {
+        // Evict first chunk found (simple eviction, could use LRU later)
+        auto evictIt = m_unloadedChunksCache.begin();
+        ChunkCoord evictCoord = evictIt->first;
+
+        // Save if dirty before eviction
+        if (m_dirtyChunks.count(evictCoord) > 0) {
+            if (!m_worldPath.empty()) {
+                evictIt->second->save(m_worldPath);
+                m_dirtyChunks.erase(evictCoord);
+            }
+        }
+
+        m_unloadedChunksCache.erase(evictIt);
+        Logger::debug() << "Evicted cached chunk to stay under limit (" << m_maxCachedChunks << ")";
+    }
+
+    Logger::debug() << "Moved chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                   << ") to cache (total cached: " << m_unloadedChunksCache.size() << ")";
 
     return true;
 }
@@ -850,6 +859,9 @@ void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID, bo
 
     // Set the block
     chunk->setBlock(coords.localX, coords.localY, coords.localZ, blockID);
+
+    // Mark chunk as dirty (needs saving during next autosave)
+    markChunkDirty(coords.chunkX, coords.chunkY, coords.chunkZ);
 
     // Optionally regenerate mesh immediately (disable for batch operations)
     if (regenerateMesh) {
@@ -1353,11 +1365,20 @@ bool World::saveWorld(const std::string& worldPath) const {
         metaFile.close();
         Logger::info() << "World metadata saved successfully";
 
-        // Save all chunks
+        // Save all loaded chunks
         int savedChunks = 0;
         int skippedChunks = 0;
 
         for (const auto& [coord, chunk] : m_chunkMap) {
+            if (chunk && chunk->save(worldPath)) {
+                savedChunks++;
+            } else {
+                skippedChunks++;
+            }
+        }
+
+        // Also save cached chunks (includes unloaded but modified chunks)
+        for (const auto& [coord, chunk] : m_unloadedChunksCache) {
             if (chunk && chunk->save(worldPath)) {
                 savedChunks++;
             } else {
@@ -1373,6 +1394,67 @@ bool World::saveWorld(const std::string& worldPath) const {
         Logger::error() << "Failed to save world: " << e.what();
         return false;
     }
+}
+
+int World::saveModifiedChunks() {
+    if (m_worldPath.empty()) {
+        Logger::warning() << "Cannot autosave - no world path set";
+        return 0;
+    }
+
+    int savedCount = 0;
+
+    // Save dirty chunks from active chunks
+    for (const auto& coord : m_dirtyChunks) {
+        // Check active chunks first
+        auto activeIt = m_chunkMap.find(coord);
+        if (activeIt != m_chunkMap.end() && activeIt->second) {
+            if (activeIt->second->save(m_worldPath)) {
+                savedCount++;
+            }
+            continue;
+        }
+
+        // Check cache
+        auto cacheIt = m_unloadedChunksCache.find(coord);
+        if (cacheIt != m_unloadedChunksCache.end() && cacheIt->second) {
+            if (cacheIt->second->save(m_worldPath)) {
+                savedCount++;
+            }
+        }
+    }
+
+    // Clear dirty flags after successful save
+    m_dirtyChunks.clear();
+
+    if (savedCount > 0) {
+        Logger::info() << "Autosave: saved " << savedCount << " modified chunks";
+    }
+
+    return savedCount;
+}
+
+void World::markChunkDirty(int chunkX, int chunkY, int chunkZ) {
+    ChunkCoord coord{chunkX, chunkY, chunkZ};
+    m_dirtyChunks.insert(coord);
+}
+
+std::unique_ptr<Chunk> World::getChunkFromCache(int chunkX, int chunkY, int chunkZ) {
+    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    ChunkCoord coord{chunkX, chunkY, chunkZ};
+    auto it = m_unloadedChunksCache.find(coord);
+
+    if (it != m_unloadedChunksCache.end()) {
+        // Move chunk out of cache (caller takes ownership)
+        std::unique_ptr<Chunk> chunk = std::move(it->second);
+        m_unloadedChunksCache.erase(it);
+        Logger::debug() << "Cache hit! Retrieved chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                       << ") from RAM cache (remaining cached: " << m_unloadedChunksCache.size() << ")";
+        return chunk;
+    }
+
+    return nullptr;  // Cache miss
 }
 
 bool World::loadWorld(const std::string& worldPath) {

@@ -713,12 +713,26 @@ int main() {
         bool f9Pressed = false;
         bool iPressed = false;
 
+        // Autosave timer (saves modified chunks every 5 minutes)
+        float autosaveTimer = 0.0f;
+        constexpr float AUTOSAVE_INTERVAL = 300.0f;  // 5 minutes in seconds
+
         std::cout << "Entering main loop..." << std::endl;
 
         while (!glfwWindowShouldClose(window) && gameState == GameState::IN_GAME) {
             float currentFrame = static_cast<float>(glfwGetTime());
             deltaTime = currentFrame - lastFrame;
             lastFrame = currentFrame;
+
+            // Autosave system (RAM cache → disk every 5 min)
+            autosaveTimer += deltaTime;
+            if (autosaveTimer >= AUTOSAVE_INTERVAL) {
+                autosaveTimer = 0.0f;
+                int savedChunks = world.saveModifiedChunks();
+                if (savedChunks > 0) {
+                    std::cout << "Autosave: saved " << savedChunks << " modified chunks" << std::endl;
+                }
+            }
 
             glfwPollEvents();
 

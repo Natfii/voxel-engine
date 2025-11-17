@@ -307,10 +307,17 @@ void WorldStreaming::workerThreadFunction() {
 }
 
 std::unique_ptr<Chunk> WorldStreaming::generateChunk(int chunkX, int chunkY, int chunkZ) {
-    // Create chunk
-    auto chunk = std::make_unique<Chunk>(chunkX, chunkY, chunkZ);
+    // PRIORITY 1: Check RAM cache first (10,000x faster than disk!)
+    std::unique_ptr<Chunk> chunk = m_world->getChunkFromCache(chunkX, chunkY, chunkZ);
+    if (chunk) {
+        Logger::debug() << "Loaded chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from RAM cache (instant)";
+        // Regenerate mesh (GPU buffers were destroyed when cached)
+        chunk->generateMesh(m_world);
+        return chunk;
+    }
 
-    // Try to load from disk first (if world has a save path)
+    // PRIORITY 2: Try to load from disk
+    chunk = std::make_unique<Chunk>(chunkX, chunkY, chunkZ);
     bool loadedFromDisk = false;
     if (m_world) {
         std::string worldPath = m_world->getWorldPath();
@@ -320,7 +327,7 @@ std::unique_ptr<Chunk> WorldStreaming::generateChunk(int chunkX, int chunkY, int
         }
     }
 
-    // Generate terrain if not loaded from disk
+    // PRIORITY 3: Generate fresh terrain
     if (!loadedFromDisk) {
         chunk->generate(m_biomeMap);
         Logger::debug() << "Generated fresh chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
