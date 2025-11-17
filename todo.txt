@@ -4,3 +4,6 @@
 [X] Update rendering to show water height based on level (src/world.cpp:1120) - ALREADY IMPLEMENTED
 [X] Track water-containing chunks (src/world.cpp:1134) - ALREADY IMPLEMENTED
 [X] Track water level changes and spawn particles (src/world.cpp:1284) - DONE
+[X] Add Exit to Main Menu button on pause menu - DONE
+[X] Auto-save when exiting to main menu - DONE
+[X] Enable world streaming for infinite chunk generation - DONE
