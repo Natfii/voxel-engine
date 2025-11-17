@@ -819,7 +819,7 @@ int main() {
             const float renderDistance = 120.0f;
             const float loadDistance = renderDistance + 32.0f;    // Load chunks slightly beyond render distance
             const float unloadDistance = renderDistance + 64.0f;  // Unload chunks well beyond render distance
-            worldStreaming.updatePlayerPosition(player.getPosition(), loadDistance, unloadDistance);
+            worldStreaming.updatePlayerPosition(player.Position, loadDistance, unloadDistance);
             worldStreaming.processCompletedChunks(4);  // Upload max 4 chunks per frame to avoid stuttering
 
             // Calculate matrices
