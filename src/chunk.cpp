@@ -15,6 +15,7 @@
 #include "block_system.h"
 #include "terrain_constants.h"
 #include "mesh_buffer_pool.h"
+#include "logger.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
