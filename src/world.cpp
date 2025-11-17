@@ -193,14 +193,27 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
 }
 
 void World::generateWorld() {
-    // DEPRECATED: This generates ALL chunks which is too slow for large worlds
-    // Use generateSpawnChunks() + WorldStreaming instead
     Logger::warning() << "generateWorld() called - this is slow for large worlds!";
     Logger::warning() << "Consider using generateSpawnChunks() + WorldStreaming for better performance";
 
     if (m_chunks.empty()) {
-        Logger::warning() << "No chunks to generate (world is empty - use streaming mode)";
-        return;
+        Logger::info() << "Creating all chunks for world bounds (test mode)";
+        std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+        int halfWidth = m_width / 2;
+        int halfHeight = m_height / 2;
+        int halfDepth = m_depth / 2;
+
+        for (int x = -halfWidth; x < m_width - halfWidth; x++) {
+            for (int y = -halfHeight; y < m_height - halfHeight; y++) {
+                for (int z = -halfDepth; z < m_depth - halfDepth; z++) {
+                    auto chunk = std::make_unique<Chunk>(x, y, z);
+                    m_chunkMap[{x, y, z}] = chunk.get();
+                    m_chunks.push_back(std::move(chunk));
+                }
+            }
+        }
+        Logger::info() << "Created " << m_chunks.size() << " chunks";
     }
 
     // Parallel chunk generation for better performance
