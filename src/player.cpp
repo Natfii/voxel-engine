@@ -87,8 +87,8 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
 }
 
 void Player::updateNoclip(GLFWwindow* window, float deltaTime) {
-    // Original noclip movement (fly mode)
-    float velocity = MovementSpeed * deltaTime;
+    // Noclip movement (fly mode) - 2x normal speed for faster exploration
+    float velocity = MovementSpeed * 2.0f * deltaTime;
 
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         Position += Front * velocity;
