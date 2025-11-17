@@ -753,6 +753,15 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
 
     Chunk* chunkPtr = it->second.get();
 
+    // CRITICAL: Save chunk to disk before removing (preserves player modifications)
+    // This ensures builds, mining, etc. persist across chunk streaming
+    if (!m_worldPath.empty()) {
+        if (!chunkPtr->save(m_worldPath)) {
+            Logger::warning() << "Failed to save chunk (" << chunkX << ", " << chunkY
+                            << ", " << chunkZ << ") during unload";
+        }
+    }
+
     // Remove from vector (order doesn't matter, so use swap-and-pop for O(1))
     auto vecIt = std::find(m_chunks.begin(), m_chunks.end(), chunkPtr);
     if (vecIt != m_chunks.end()) {
@@ -769,7 +778,7 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
     // Remove from map (this destroys the chunk via unique_ptr)
     m_chunkMap.erase(it);
 
-    Logger::debug() << "Removed chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from world";
+    Logger::debug() << "Saved and removed chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from world";
 
     return true;
 }
@@ -1308,8 +1317,9 @@ bool World::saveWorld(const std::string& worldPath) const {
     namespace fs = std::filesystem;
 
     try {
-        // Store world name from path
+        // Store world name and path for chunk streaming persistence
         const_cast<World*>(this)->m_worldName = fs::path(worldPath).filename().string();
+        const_cast<World*>(this)->m_worldPath = worldPath;
 
         // Create world directory
         fs::create_directories(worldPath);
@@ -1421,6 +1431,9 @@ bool World::loadWorld(const std::string& worldPath) {
 
         metaFile.close();
         Logger::info() << "Loaded world metadata: " << m_worldName << " (seed: " << m_seed << ")";
+
+        // Store world path for chunk streaming persistence
+        m_worldPath = worldPath;
 
         // Load all chunks
         int loadedChunks = 0;

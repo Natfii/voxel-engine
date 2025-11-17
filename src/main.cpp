@@ -430,6 +430,11 @@ int main() {
             std::cout << "Initializing world generation..." << std::endl;
             Chunk::initNoise(seed);
 
+            // Set world path for new worlds (enables save-on-unload for chunk streaming)
+            std::string newWorldPath = "worlds/world_" + std::to_string(seed);
+            world.saveWorld(newWorldPath);  // Creates directory and saves initial metadata
+            std::cout << "World path set to: " << newWorldPath << std::endl;
+
             // Loading stage 6: Generate spawn area only (much faster than full world)
             // With 320 chunk height, generating all 46,080 chunks takes forever
             // Instead, generate just a small area around spawn and let streaming handle the rest
