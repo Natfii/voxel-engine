@@ -674,7 +674,7 @@ int main() {
 
         std::cout << "Entering main loop..." << std::endl;
 
-        while (!glfwWindowShouldClose(window)) {
+        while (!glfwWindowShouldClose(window) && gameState == GameState::IN_GAME) {
             float currentFrame = static_cast<float>(glfwGetTime());
             deltaTime = currentFrame - lastFrame;
             lastFrame = currentFrame;
@@ -978,9 +978,32 @@ int main() {
             ImGui::NewFrame();
 
             if (isPaused) {
-                if (pauseMenu.render()) {
+                PauseMenuAction pauseAction = pauseMenu.render();
+                if (pauseAction == PauseMenuAction::RESUME) {
                     isPaused = false;
                     requestMouseReset = true;
+                } else if (pauseAction == PauseMenuAction::EXIT_TO_MENU) {
+                    // Save and exit to main menu
+                    std::cout << "Exiting to main menu..." << std::endl;
+
+                    // Save world, player, and inventory
+                    std::string exitSaveWorldPath = "worlds/world_" + std::to_string(seed);
+                    std::cout << "Saving world to " << exitSaveWorldPath << "..." << std::endl;
+                    if (world.saveWorld(exitSaveWorldPath)) {
+                        std::cout << "World saved successfully" << std::endl;
+                    }
+                    if (player.savePlayerState(exitSaveWorldPath)) {
+                        std::cout << "Player state saved successfully" << std::endl;
+                    }
+                    if (inventory.save(exitSaveWorldPath)) {
+                        std::cout << "Inventory saved successfully" << std::endl;
+                    }
+
+                    // Return to main menu by breaking game loop
+                    gameState = GameState::MAIN_MENU;
+                    isPaused = false;
+                } else if (pauseAction == PauseMenuAction::QUIT) {
+                    glfwSetWindowShouldClose(window, GLFW_TRUE);
                 }
             } else if (!console.isVisible() && !inventory.isOpen()) {
                 targetingSystem.renderCrosshair();
