@@ -232,77 +232,86 @@ int main() {
             glfwPollEvents();  // Keep window responsive
         };
 
-        // ========== MAIN MENU ==========
-        // Show main menu and wait for player to start game
-        std::cout << "Showing main menu..." << std::endl;
+        // ========== MAIN GAME LOOP ==========
+        // Outer loop allows cycling: Main Menu -> Game -> Main Menu -> Game -> ...
+        // Only exits when player selects Quit or closes window
+        std::cout << "Entering main game loop..." << std::endl;
         MainMenu mainMenu(window);
         GameState gameState = GameState::MAIN_MENU;
         int seed = config.getInt("World", "seed", 1124345);  // Default seed
         bool shouldQuit = false;
 
-        // Enable cursor for menu
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-        InputManager::instance().setContext(InputManager::Context::MAIN_MENU);
+        while (!shouldQuit && !glfwWindowShouldClose(window)) {
+            if (gameState == GameState::MAIN_MENU) {
+                // ========== MAIN MENU ==========
+                std::cout << "Showing main menu..." << std::endl;
 
-        MenuResult menuResult;  // Declare outside loop so it's accessible after
-        while (gameState == GameState::MAIN_MENU && !glfwWindowShouldClose(window)) {
-            glfwPollEvents();
+                // Enable cursor for menu
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                InputManager::instance().setContext(InputManager::Context::MAIN_MENU);
 
-            // Begin frame for menu rendering
-            if (!renderer.beginFrame()) {
-                continue;
+                MenuResult menuResult;  // Declare outside loop so it's accessible after
+                while (gameState == GameState::MAIN_MENU && !glfwWindowShouldClose(window)) {
+                    glfwPollEvents();
+
+                    // Begin frame for menu rendering
+                    if (!renderer.beginFrame()) {
+                        continue;
+                    }
+
+                    // Start ImGui frame
+                    ImGui_ImplVulkan_NewFrame();
+                    ImGui_ImplGlfw_NewFrame();
+                    ImGui::NewFrame();
+
+                    // Render main menu and get result
+                    menuResult = mainMenu.render();
+
+                    // Process menu result
+                    if (menuResult.action == MenuAction::NEW_GAME) {
+                        seed = menuResult.seed;
+                        gameState = GameState::IN_GAME;
+                        std::cout << "Starting new game with seed: " << seed << std::endl;
+                    } else if (menuResult.action == MenuAction::LOAD_GAME) {
+                        if (!menuResult.worldPath.empty()) {
+                            // Set flag to load world instead of generating new one
+                            gameState = GameState::IN_GAME;
+                            std::cout << "Loading world from: " << menuResult.worldPath << std::endl;
+                        } else {
+                            std::cout << "Error: No world path provided" << std::endl;
+                        }
+                    } else if (menuResult.action == MenuAction::QUIT) {
+                        shouldQuit = true;
+                        break;
+                    }
+
+                    // Render ImGui
+                    ImGui::Render();
+                    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), renderer.getCurrentCommandBuffer());
+
+                    renderer.endFrame();
+                }
+
+                // If player quit from menu, break outer loop to shutdown
+                if (shouldQuit || glfwWindowShouldClose(window)) {
+                    std::cout << "Player quit from main menu" << std::endl;
+                    break;
+                }
             }
 
-            // Start ImGui frame
-            ImGui_ImplVulkan_NewFrame();
-            ImGui_ImplGlfw_NewFrame();
-            ImGui::NewFrame();
-
-            // Render main menu and get result
-            menuResult = mainMenu.render();
-
-            // Process menu result
-            if (menuResult.action == MenuAction::NEW_GAME) {
-                seed = menuResult.seed;
-                gameState = GameState::IN_GAME;
-                std::cout << "Starting new game with seed: " << seed << std::endl;
-            } else if (menuResult.action == MenuAction::LOAD_GAME) {
-                if (!menuResult.worldPath.empty()) {
-                    // Set flag to load world instead of generating new one
-                    gameState = GameState::IN_GAME;
-                    std::cout << "Loading world from: " << menuResult.worldPath << std::endl;
-                } else {
-                    std::cout << "Error: No world path provided" << std::endl;
-                }
-            } else if (menuResult.action == MenuAction::QUIT) {
-                shouldQuit = true;
+            // If we're quitting, break to shutdown
+            if (shouldQuit || glfwWindowShouldClose(window)) {
                 break;
             }
 
-            // Render ImGui
-            ImGui::Render();
-            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), renderer.getCurrentCommandBuffer());
+            // Only proceed to game if we're in IN_GAME state
+            if (gameState == GameState::IN_GAME) {
+                // ========== GAME INITIALIZATION ==========
+                // Only runs when starting a new game or loading a world
+                std::cout << "Initializing game..." << std::endl;
 
-            renderer.endFrame();
-        }
-
-        // If player quit from menu, exit early
-        if (shouldQuit || glfwWindowShouldClose(window)) {
-            std::cout << "Exiting from main menu..." << std::endl;
-
-            // Cleanup ImGui
-            ImGui_ImplVulkan_Shutdown();
-            ImGui_ImplGlfw_Shutdown();
-            ImGui::DestroyContext();
-            vkDestroyDescriptorPool(renderer.getDevice(), imguiPool, nullptr);
-
-            glfwDestroyWindow(window);
-            glfwTerminate();
-            return 0;
-        }
-
-        // Disable cursor for gameplay
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            // Disable cursor for gameplay
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
         // Determine if we're loading an existing world or creating a new one
         bool loadingExistingWorld = (menuResult.action == MenuAction::LOAD_GAME && !menuResult.worldPath.empty());
@@ -1012,6 +1021,19 @@ int main() {
                     gameState = GameState::MAIN_MENU;
                     isPaused = false;
                 } else if (pauseAction == PauseMenuAction::QUIT) {
+                    // Save before quitting
+                    std::cout << "Quitting to desktop..." << std::endl;
+                    std::string quitSaveWorldPath = "worlds/world_" + std::to_string(seed);
+                    std::cout << "Saving world to " << quitSaveWorldPath << "..." << std::endl;
+                    if (world.saveWorld(quitSaveWorldPath)) {
+                        std::cout << "World saved successfully" << std::endl;
+                    }
+                    if (player.savePlayerState(quitSaveWorldPath)) {
+                        std::cout << "Player state saved successfully" << std::endl;
+                    }
+                    if (inventory.save(quitSaveWorldPath)) {
+                        std::cout << "Inventory saved successfully" << std::endl;
+                    }
                     glfwSetWindowShouldClose(window, GLFW_TRUE);
                 }
             } else if (!console.isVisible() && !inventory.isOpen()) {
@@ -1100,44 +1122,60 @@ int main() {
             renderer.endFrame();
         }
 
-        std::cout << "Shutting down..." << std::endl;
+                // Game loop ended - check why it ended
 
-        // Stop world streaming first (shutdown worker threads)
-        std::cout << "  Stopping world streaming..." << std::endl;
-        worldStreaming.stop();
+                // If window was closed (user clicked X), save first
+                if (glfwWindowShouldClose(window) && gameState == GameState::IN_GAME) {
+                    std::cout << "Window closed during gameplay - saving..." << std::endl;
+                    std::string closeSaveWorldPath = "worlds/world_" + std::to_string(seed);
+                    if (world.saveWorld(closeSaveWorldPath)) {
+                        std::cout << "World saved successfully" << std::endl;
+                    }
+                    if (player.savePlayerState(closeSaveWorldPath)) {
+                        std::cout << "Player state saved successfully" << std::endl;
+                    }
+                    if (inventory.save(closeSaveWorldPath)) {
+                        std::cout << "Inventory saved successfully" << std::endl;
+                    }
+                }
+
+                // Check if we're returning to menu or shutting down
+                if (gameState == GameState::MAIN_MENU) {
+                    // Return to main menu - cleanup game resources but keep ImGui/Vulkan alive
+                    std::cout << "Returning to main menu..." << std::endl;
+
+                    // Stop world streaming
+                    std::cout << "  Stopping world streaming..." << std::endl;
+                    worldStreaming.stop();
+
+                    // Wait for GPU to finish before cleanup
+                    std::cout << "  Waiting for GPU to finish..." << std::endl;
+                    vkDeviceWaitIdle(renderer.getDevice());
+
+                    // Cleanup world chunk buffers
+                    std::cout << "  Cleaning up world resources..." << std::endl;
+                    world.cleanup(&renderer);
+
+                    // Note: Save was already done when EXIT_TO_MENU was pressed
+                    std::cout << "Ready to show main menu" << std::endl;
+
+                    // Continue outer loop - will show main menu again
+                    continue;
+                }
+            }  // End of if (gameState == IN_GAME)
+
+        // If we reach here, loop continues (back to menu check)
+        }  // End of outer game loop
+
+    // ========== FULL SHUTDOWN ==========
+    // Only reached when player quits
+    // Note: Game is already saved if it was running (via QUIT or EXIT_TO_MENU handlers)
+    std::cout << "Shutting down..." << std::endl;
 
         // Wait for device to finish before cleanup
         std::cout << "  Waiting for GPU to finish..." << std::endl;
         vkDeviceWaitIdle(renderer.getDevice());
         std::cout << "  GPU idle" << std::endl;
-
-        // Save world, player, and inventory before cleanup
-        std::cout << "  Saving world..." << std::endl;
-        std::string saveWorldPath = "worlds/world_" + std::to_string(seed);
-        if (world.saveWorld(saveWorldPath)) {
-            std::cout << "  World saved successfully to " << saveWorldPath << std::endl;
-        } else {
-            std::cout << "  Warning: Failed to save world" << std::endl;
-        }
-
-        std::cout << "  Saving player state..." << std::endl;
-        if (player.savePlayerState(saveWorldPath)) {
-            std::cout << "  Player state saved successfully" << std::endl;
-        } else {
-            std::cout << "  Warning: Failed to save player state" << std::endl;
-        }
-
-        std::cout << "  Saving inventory..." << std::endl;
-        if (inventory.save(saveWorldPath)) {
-            std::cout << "  Inventory saved successfully" << std::endl;
-        } else {
-            std::cout << "  Warning: Failed to save inventory" << std::endl;
-        }
-
-        // Cleanup world chunk buffers
-        std::cout << "  Cleaning up world..." << std::endl;
-        world.cleanup(&renderer);
-        std::cout << "  World cleanup complete" << std::endl;
 
         // Cleanup ImGui
         std::cout << "  Cleaning up ImGui..." << std::endl;
