@@ -111,3 +111,27 @@ ROOT CAUSES IDENTIFIED FOR FAILING TESTS:
    Agent 9: Registries - found cleanup and thread safety issues
    Agent 10: Test logs - confirmed tests not run yet
 
+================================================================================
+POST-FIX TEST RUN - Additional Issue Found
+================================================================================
+
+After fixing all 7 issues above, tests ran but revealed new problem:
+
+## ISSUE #8: generateWorld() No Longer Creates Chunks
+   File: src/world.cpp:195-204
+   Problem: World constructor changed to streaming mode (no chunks created)
+            generateWorld() checks if m_chunks.empty() and returns early
+            Tests call World(4,2,4) + generateWorld() expecting chunks to exist
+            All chunk queries return nullptr -> tests fail
+   Impact: All tests failing with "chunk != nullptr" assertions
+   Failures:
+   - ChunkCorrectness (all chunks nullptr)
+   - MemoryLeaks (all chunks nullptr)
+   - Stress WorldBoundaryConditions (line 65: c1 != nullptr)
+   - Stress ExtremeWorldSize (line 153: chunk != nullptr)
+   Fix: Modified generateWorld() to create all chunks in world bounds
+        if m_chunks is empty (backward compatibility for tests)
+        Production code uses generateSpawnChunks() + streaming instead
+
+Tests should now pass. All 8 issues fixed and committed.
+
