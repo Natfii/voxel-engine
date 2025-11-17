@@ -3,6 +3,7 @@
 #include <vector>
 #include <memory>
 #include <random>
+#include <mutex>
 #include <glm/glm.hpp>
 
 // Forward declaration
@@ -76,4 +77,5 @@ private:
 
 private:
     std::mt19937 m_rng;
+    std::mutex m_rngMutex;
 };

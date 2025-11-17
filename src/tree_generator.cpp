@@ -90,7 +90,7 @@ bool TreeGenerator::placeTree(World* world, int blockX, int blockY, int blockZ, 
 }
 
 int TreeGenerator::getRandomTreeType() {
-    // Return random index 0-9 (10 tree templates per biome)
+    std::lock_guard<std::mutex> lock(m_rngMutex);
     std::uniform_int_distribution<int> dist(0, 9);
     return dist(m_rng);
 }
@@ -98,9 +98,12 @@ int TreeGenerator::getRandomTreeType() {
 // ==================== Tree Generation Functions ====================
 
 void TreeGenerator::generateSmallTree(TreeTemplate& tree, int logID, int leavesID) {
-    // Small tree: 4-6 blocks tall
-    std::uniform_int_distribution<int> heightDist(4, 6);
-    int height = heightDist(m_rng);
+    int height;
+    {
+        std::lock_guard<std::mutex> lock(m_rngMutex);
+        std::uniform_int_distribution<int> heightDist(4, 6);
+        height = heightDist(m_rng);
+    }
     tree.height = height;
 
     // Add trunk
@@ -111,23 +114,26 @@ void TreeGenerator::generateSmallTree(TreeTemplate& tree, int logID, int leavesI
 }
 
 void TreeGenerator::generateMediumTree(TreeTemplate& tree, int logID, int leavesID) {
-    // Medium tree: 7-10 blocks tall with some branches
-    std::uniform_int_distribution<int> heightDist(7, 10);
-    int height = heightDist(m_rng);
+    int height;
+    {
+        std::lock_guard<std::mutex> lock(m_rngMutex);
+        std::uniform_int_distribution<int> heightDist(7, 10);
+        height = heightDist(m_rng);
+    }
     tree.height = height;
 
-    // Add trunk
     addTrunk(tree, height, logID);
-
-    // Add canopy
     addCanopy(tree, height, 3, leavesID);
 
-    // Add a few small branches
     int branchHeight = height - 3;
     for (int i = 0; i < 3; i++) {
         glm::ivec3 start(0, branchHeight, 0);
-        std::uniform_int_distribution<int> dirDist(0, 3);
-        int dir = dirDist(m_rng);
+        int dir;
+        {
+            std::lock_guard<std::mutex> lock(m_rngMutex);
+            std::uniform_int_distribution<int> dirDist(0, 3);
+            dir = dirDist(m_rng);
+        }
 
         glm::ivec3 direction;
         switch (dir) {
@@ -143,9 +149,12 @@ void TreeGenerator::generateMediumTree(TreeTemplate& tree, int logID, int leaves
 }
 
 void TreeGenerator::generateLargeTree(TreeTemplate& tree, int logID, int leavesID) {
-    // Large tree: 11-15 blocks tall with fractal branching
-    std::uniform_int_distribution<int> heightDist(11, 15);
-    int height = heightDist(m_rng);
+    int height;
+    {
+        std::lock_guard<std::mutex> lock(m_rngMutex);
+        std::uniform_int_distribution<int> heightDist(11, 15);
+        height = heightDist(m_rng);
+    }
     tree.height = height;
 
     // Add thick trunk (2x2 base for very tall trees)
@@ -229,11 +238,14 @@ void TreeGenerator::addBranch(TreeTemplate& tree, glm::ivec3 start, glm::ivec3 d
         }
     }
 
-    // Recursively add sub-branches (fractal)
     if (depth < 2 && length > 2) {
-        std::uniform_int_distribution<int> branchDist(0, 1);
-        if (branchDist(m_rng) == 0) {
-            // Add perpendicular sub-branch
+        bool shouldAddBranch;
+        {
+            std::lock_guard<std::mutex> lock(m_rngMutex);
+            std::uniform_int_distribution<int> branchDist(0, 1);
+            shouldAddBranch = (branchDist(m_rng) == 0);
+        }
+        if (shouldAddBranch) {
             glm::ivec3 perpDir;
             if (direction.x != 0) {
                 perpDir = glm::ivec3(0, 1, 1);

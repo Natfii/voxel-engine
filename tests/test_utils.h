@@ -189,21 +189,28 @@ inline void run_all_tests() {
 // ============================================================
 
 #include <vulkan/vulkan.h>
+#include <unordered_map>
 
 class MockVulkanRenderer {
 public:
-    // Mock Vulkan handles (all null, just for compilation)
+    ~MockVulkanRenderer() {
+        for (auto& [memory, ptr] : m_mappedMemory) {
+            if (ptr) {
+                free(ptr);
+            }
+        }
+        m_mappedMemory.clear();
+    }
+
     VkDevice getDevice() const { return nullptr; }
     VkPhysicalDevice getPhysicalDevice() const { return nullptr; }
     VkCommandBuffer getCurrentCommandBuffer() const { return nullptr; }
     VkQueue getGraphicsQueue() const { return nullptr; }
     uint32_t getGraphicsQueueFamily() const { return 0; }
 
-    // Mock buffer creation
     bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                      VkMemoryPropertyFlags properties,
                      VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
-        // Allocate dummy handles using counters to avoid pointer arithmetic on incomplete types
         static uintptr_t bufferCounter = 0x1000;
         static uintptr_t memoryCounter = 0x2000;
         buffer = reinterpret_cast<VkBuffer>(bufferCounter++);
@@ -211,26 +218,41 @@ public:
         return true;
     }
 
-    // Mock buffer destruction
     void destroyBuffer(VkBuffer buffer, VkDeviceMemory bufferMemory) {
-        // No-op
+        auto it = m_mappedMemory.find(bufferMemory);
+        if (it != m_mappedMemory.end()) {
+            if (it->second) {
+                free(it->second);
+            }
+            m_mappedMemory.erase(it);
+        }
     }
 
-    // Mock copy operations
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
-        // No-op
     }
 
     bool mapMemory(VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size,
                    void** ppData) {
-        // Allocate actual memory for testing
         *ppData = malloc(size);
-        return true;
+        if (*ppData) {
+            m_mappedMemory[memory] = *ppData;
+            return true;
+        }
+        return false;
     }
 
     void unmapMemory(VkDeviceMemory memory) {
-        // No-op (in real test would free)
+        auto it = m_mappedMemory.find(memory);
+        if (it != m_mappedMemory.end()) {
+            if (it->second) {
+                free(it->second);
+            }
+            m_mappedMemory.erase(it);
+        }
     }
+
+private:
+    std::unordered_map<VkDeviceMemory, void*> m_mappedMemory;
 };
 
 extern MockVulkanRenderer g_testRenderer;

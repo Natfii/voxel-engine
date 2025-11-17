@@ -193,14 +193,28 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
 }
 
 void World::generateWorld() {
-    // DEPRECATED: This generates ALL chunks which is too slow for large worlds
-    // Use generateSpawnChunks() + WorldStreaming instead
     Logger::warning() << "generateWorld() called - this is slow for large worlds!";
     Logger::warning() << "Consider using generateSpawnChunks() + WorldStreaming for better performance";
 
     if (m_chunks.empty()) {
-        Logger::warning() << "No chunks to generate (world is empty - use streaming mode)";
-        return;
+        Logger::info() << "Creating all chunks for world bounds (test mode)";
+        std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+        int halfWidth = m_width / 2;
+        int halfHeight = m_height / 2;
+        int halfDepth = m_depth / 2;
+
+        for (int x = -halfWidth; x < m_width - halfWidth; x++) {
+            for (int y = -halfHeight; y < m_height - halfHeight; y++) {
+                for (int z = -halfDepth; z < m_depth - halfDepth; z++) {
+                    auto chunk = std::make_unique<Chunk>(x, y, z);
+                    Chunk* chunkPtr = chunk.get();
+                    m_chunkMap[{x, y, z}] = std::move(chunk);
+                    m_chunks.push_back(chunkPtr);
+                }
+            }
+        }
+        Logger::info() << "Created " << m_chunks.size() << " chunks";
     }
 
     // Parallel chunk generation for better performance
@@ -453,14 +467,13 @@ void World::decorateWorld() {
 }
 
 void World::registerWaterBlocks() {
-    // Scan all generated chunks and register water blocks with simulation
-    // This initializes water flow physics for water placed during world generation
     Logger::info() << "Registering water blocks with simulation system...";
 
     int waterBlocksFound = 0;
     auto& registry = BlockRegistry::instance();
 
-    // Iterate through all chunks
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
     for (auto& chunk : m_chunks) {
         int chunkX = chunk->getChunkX();
         int chunkY = chunk->getChunkY();
@@ -492,24 +505,18 @@ void World::registerWaterBlocks() {
 }
 
 void World::createBuffers(VulkanRenderer* renderer) {
-    // BATCHED BUFFER UPLOAD: Submit all buffer copies in one batch for 10-15x speedup
-    // Old approach: Each chunk uploaded individually with separate GPU sync (16+ sync points per frame)
-    // New approach: All chunks batched into one command buffer (1 sync point total)
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
-    // Begin batch
     renderer->beginBufferCopyBatch();
 
-    // Create buffers for all chunks (records copy commands, doesn't submit yet)
     for (auto& chunk : m_chunks) {
         if (chunk->getVertexCount() > 0 || chunk->getTransparentVertexCount() > 0) {
             chunk->createVertexBufferBatched(renderer);
         }
     }
 
-    // Submit all copies at once
     renderer->submitBufferCopyBatch();
 
-    // Clean up staging buffers and free CPU-side mesh data
     for (auto& chunk : m_chunks) {
         if (chunk->getVertexCount() > 0 || chunk->getTransparentVertexCount() > 0) {
             chunk->cleanupStagingBuffers(renderer);
@@ -518,7 +525,8 @@ void World::createBuffers(VulkanRenderer* renderer) {
 }
 
 void World::cleanup(VulkanRenderer* renderer) {
-    // Destroy all chunk buffers before deleting chunks
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
     for (auto& chunk : m_chunks) {
         chunk->destroyBuffers(renderer);
     }
