@@ -96,6 +96,9 @@ void WaterSimulation::update(float deltaTime, World* world, const glm::vec3& pla
 void WaterSimulation::updateWaterCell(const glm::ivec3& pos, WaterCell& cell, World* world, float deltaTime) {
     if (cell.level == 0) return;
 
+    // Track original level for particle spawning
+    uint8_t originalLevel = cell.level;
+
     // Step 1: Evaporation
     if (m_enableEvaporation && cell.level < m_evaporationThreshold) {
         cell.level = std::max(0, (int)cell.level - 1);
@@ -116,7 +119,17 @@ void WaterSimulation::updateWaterCell(const glm::ivec3& pos, WaterCell& cell, Wo
     // Step 4: Update shore counter for foam effects
     updateShoreCounter(pos, cell, world);
 
-    // Step 5: Reset flow vector (will be set by neighbors spreading to this cell)
+    // Step 5: Spawn splash particles if water level increased significantly (optional)
+    // Note: Disabled by default as particle system is not used in main loop
+    // Uncomment to enable water splash effects:
+    // if (cell.level > originalLevel + 50 && cell.shoreCounter > 0) {
+    //     world->getParticleSystem()->spawnWaterSplash(
+    //         glm::vec3(pos.x + 0.5f, pos.y + 0.5f, pos.z + 0.5f),
+    //         (cell.level - originalLevel) / 50.0f
+    //     );
+    // }
+
+    // Step 6: Reset flow vector (will be set by neighbors spreading to this cell)
     cell.flowVector = glm::vec2(0.0f, 0.0f);
 }
 

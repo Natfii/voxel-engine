@@ -48,7 +48,7 @@ constexpr int OCEAN_DEPTH_THRESHOLD = 8;  // Blocks below water level to trigger
 
 // ====================================================
 
-World::World(int width, int height, int depth, int seed)
+World::World(int width, int height, int depth, int seed, float tempBias, float moistBias, float ageBias)
     : m_width(width), m_height(height), m_depth(depth), m_seed(seed) {
     // Center world generation around origin (0, 0, 0)
     int halfWidth = width / 2;
@@ -71,8 +71,8 @@ World::World(int width, int height, int depth, int seed)
         throw std::runtime_error("BiomeRegistry is empty! Call BiomeRegistry::loadBiomes() before creating a World.");
     }
 
-    // Initialize biome map with seed
-    m_biomeMap = std::make_unique<BiomeMap>(seed);
+    // Initialize biome map with seed and biases
+    m_biomeMap = std::make_unique<BiomeMap>(seed, tempBias, moistBias, ageBias);
     Logger::info() << "Biome map initialized with " << BiomeRegistry::getInstance().getBiomeCount() << " biomes";
 
     // Initialize tree generator
@@ -125,16 +125,6 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
                     int chunkX = centerChunkX + dx;
                     int chunkY = centerChunkY + dy;
                     int chunkZ = centerChunkZ + dz;
-
-                    // Bounds check: Skip chunks outside world boundaries
-                    int halfWidth = m_width / 2;
-                    int halfHeight = m_height / 2;
-                    int halfDepth = m_depth / 2;
-                    if (chunkX < -halfWidth || chunkX >= halfWidth ||
-                        chunkY < -halfHeight || chunkY >= halfHeight ||
-                        chunkZ < -halfDepth || chunkZ >= halfDepth) {
-                        continue;  // Skip out-of-bounds chunk
-                    }
 
                     // Create chunk if it doesn't exist
                     ChunkCoord coord{chunkX, chunkY, chunkZ};
@@ -278,36 +268,43 @@ void World::decorateWorld() {
     std::mt19937 rng(m_seed + 77777);
     std::uniform_int_distribution<int> densityDist(0, 100);
 
-    // Calculate world bounds
-    int halfWidth = m_width / 2;
-    int halfHeight = m_height / 2;
-    int halfDepth = m_depth / 2;
-    int maxWorldY = m_height * Chunk::HEIGHT;
-
     // Track modified chunks for selective mesh regeneration
     std::unordered_set<Chunk*> modifiedChunks;
 
+    // Get all surface chunks (Y > 0) that exist in the world
+    std::vector<Chunk*> surfaceChunks;
+    {
+        std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+        for (const auto& pair : m_chunkMap) {
+            Chunk* chunk = pair.second.get();
+            if (chunk->getChunkY() >= 0) {  // Surface chunks only
+                surfaceChunks.push_back(chunk);
+            }
+        }
+    }
+
     // Decorate surface - grid-based tree sampling for proper density
     // Sample every 4 blocks on a grid (8x8 = 64 sample points per chunk)
-    // This gives proper Minecraft-accurate tree density in forests
-    const int TREE_SAMPLE_SPACING = 4;  // Sample every 4 blocks
+    const int TREE_SAMPLE_SPACING = 4;
 
-    for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
-        for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
-            // Grid-based sampling within chunk
-            for (int localX = 0; localX < Chunk::WIDTH; localX += TREE_SAMPLE_SPACING) {
-                for (int localZ = 0; localZ < Chunk::DEPTH; localZ += TREE_SAMPLE_SPACING) {
-                    // Add small random offset (0-3 blocks) to avoid perfectly aligned trees
-                    std::uniform_int_distribution<int> offsetDist(0, TREE_SAMPLE_SPACING - 1);
-                    int offsetX = offsetDist(rng);
-                    int offsetZ = offsetDist(rng);
+    for (Chunk* chunk : surfaceChunks) {
+        int chunkX = chunk->getChunkX();
+        int chunkZ = chunk->getChunkZ();
 
-                    int sampleX = std::min(localX + offsetX, Chunk::WIDTH - 1);
-                    int sampleZ = std::min(localZ + offsetZ, Chunk::DEPTH - 1);
+        // Grid-based sampling within chunk
+        for (int localX = 0; localX < Chunk::WIDTH; localX += TREE_SAMPLE_SPACING) {
+            for (int localZ = 0; localZ < Chunk::DEPTH; localZ += TREE_SAMPLE_SPACING) {
+                // Add small random offset (0-3 blocks) to avoid perfectly aligned trees
+                std::uniform_int_distribution<int> offsetDist(0, TREE_SAMPLE_SPACING - 1);
+                int offsetX = offsetDist(rng);
+                int offsetZ = offsetDist(rng);
 
-                    // Convert to world coordinates
-                    float worldX = static_cast<float>(chunkX * Chunk::WIDTH + sampleX);
-                    float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + sampleZ);
+                int sampleX = std::min(localX + offsetX, Chunk::WIDTH - 1);
+                int sampleZ = std::min(localZ + offsetZ, Chunk::DEPTH - 1);
+
+                // Convert to world coordinates
+                float worldX = static_cast<float>(chunkX * Chunk::WIDTH + sampleX);
+                float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + sampleZ);
 
                 // Get biome at this position
                 const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
@@ -364,42 +361,53 @@ void World::decorateWorld() {
                         }
                     }
                 }
-                }  // End localZ loop
-            }  // End localX loop
-        }  // End chunkZ loop
-    }  // End chunkX loop
+            }  // End localZ loop
+        }  // End localX loop
+    }  // End surface chunk loop
+
+    // Get all underground chunks for underground decoration
+    std::vector<Chunk*> undergroundChunks;
+    {
+        std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+        for (const auto& pair : m_chunkMap) {
+            Chunk* chunk = pair.second.get();
+            if (chunk->getChunkY() < 0) {  // Underground chunks only
+                undergroundChunks.push_back(chunk);
+            }
+        }
+    }
 
     // Decorate underground biome chambers
-    for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
-        for (int chunkY = -halfHeight; chunkY < m_height - halfHeight; ++chunkY) {
-            for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
-                // Sample positions in underground chunks
-                std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
+    for (Chunk* chunk : undergroundChunks) {
+        int chunkX = chunk->getChunkX();
+        int chunkY = chunk->getChunkY();
+        int chunkZ = chunk->getChunkZ();
 
-                for (int attempt = 0; attempt < 2; attempt++) {  // 2 attempts per underground chunk
-                    int localX = posDist(rng);
-                    int localY = posDist(rng);
-                    int localZ = posDist(rng);
+        // Sample positions in underground chunks
+        std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
 
-                    int worldX = chunkX * Chunk::WIDTH + localX;
-                    int worldY = chunkY * Chunk::HEIGHT + localY;
-                    int worldZ = chunkZ * Chunk::DEPTH + localZ;
+        for (int attempt = 0; attempt < 2; attempt++) {  // 2 attempts per underground chunk
+            int localX = posDist(rng);
+            int localY = posDist(rng);
+            int localZ = posDist(rng);
 
-                    // Check if in underground chamber
-                    if (m_biomeMap->isUndergroundBiomeAt(worldX, worldY, worldZ)) {
-                        // Check if this is floor of chamber (solid block below, air here)
-                        int blockHere = getBlockAt(worldX, worldY, worldZ);
-                        int blockBelow = getBlockAt(worldX, static_cast<float>(worldY - 1), worldZ);
+            int worldX = chunkX * Chunk::WIDTH + localX;
+            int worldY = chunkY * Chunk::HEIGHT + localY;
+            int worldZ = chunkZ * Chunk::DEPTH + localZ;
 
-                        if (blockHere == BLOCK_AIR && blockBelow == BLOCK_STONE) {
-                            // Get underground biome
-                            const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+            // Check if in underground chamber
+            if (m_biomeMap->isUndergroundBiomeAt(worldX, worldY, worldZ)) {
+                // Check if this is floor of chamber (solid block below, air here)
+                int blockHere = getBlockAt(worldX, worldY, worldZ);
+                int blockBelow = getBlockAt(worldX, static_cast<float>(worldY - 1), worldZ);
 
-                            // Place mushrooms or small features (for now, just count)
-                            // TODO: Add mushrooms, glowing flora, etc.
-                            undergroundFeaturesPlaced++;
-                        }
-                    }
+                if (blockHere == BLOCK_AIR && blockBelow == BLOCK_STONE) {
+                    // Get underground biome
+                    const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+
+                    // Place mushrooms or small features (for now, just count)
+                    // TODO: Add mushrooms, glowing flora, etc.
+                    undergroundFeaturesPlaced++;
                 }
             }
         }
@@ -701,19 +709,6 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
     int chunkX = chunk->getChunkX();
     int chunkY = chunk->getChunkY();
     int chunkZ = chunk->getChunkZ();
-
-    // Bounds checking
-    int halfWidth = m_width / 2;
-    int halfHeight = m_height / 2;
-    int halfDepth = m_depth / 2;
-
-    // World is centered at Y=0, so Y chunks range from -halfHeight to +halfHeight-1
-    if (chunkX < -halfWidth || chunkX >= halfWidth ||
-        chunkY < -halfHeight || chunkY >= halfHeight ||
-        chunkZ < -halfDepth || chunkZ >= halfDepth) {
-        Logger::warning() << "Attempted to add out-of-bounds chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
-        return false;
-    }
 
     // Thread-safe insertion
     std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
@@ -1117,7 +1112,7 @@ void World::updateLiquids(VulkanRenderer* renderer) {
     // - Levels 1-7: Flowing water (spreads horizontally with level decay)
     // - Water flows down infinitely (becomes source block when falling)
     // - Horizontal spread: up to 7 blocks from source
-    // TODO: Update rendering to show water height based on level (currently all water renders at full height)
+    // Water height rendering: IMPLEMENTED in chunk.cpp:552-558 (uses metadata to adjust height)
 
     auto& registry = BlockRegistry::instance();
     std::unordered_set<Chunk*> chunksToUpdate;
@@ -1130,90 +1125,82 @@ void World::updateLiquids(VulkanRenderer* renderer) {
     std::vector<WaterBlock> waterToAdd;
 
     // Pass 1: Process all water blocks and schedule flows
-    // Performance optimization: Only check chunks with water
-    // TODO: Track water-containing chunks for even better performance
-    for (int y = 0; y < m_height; ++y) {
-        for (int x = 0; x < m_width; ++x) {
-            for (int z = 0; z < m_depth; ++z) {
-                int halfWidth = m_width / 2;
-                int halfHeight = m_height / 2;
-                int halfDepth = m_depth / 2;
-                int chunkX = x - halfWidth;
-                int chunkY = y - halfHeight;  // Convert to centered coordinates
-                int chunkZ = z - halfDepth;
+    // Performance optimization: Only check chunks that exist
+    // Water-containing chunks: TRACKED via WaterSimulation::m_activeChunks
+    std::vector<Chunk*> allChunks;
+    {
+        std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+        for (const auto& pair : m_chunkMap) {
+            allChunks.push_back(pair.second.get());
+        }
+    }
 
-                Chunk* chunk = getChunkAt(chunkX, chunkY, chunkZ);
-                if (!chunk) continue;
+    for (Chunk* chunk : allChunks) {
+        // Early skip: If chunk has no vertices, it's likely empty
+        if (chunk->getVertexCount() == 0 && chunk->getTransparentVertexCount() == 0) continue;
 
-                // Early skip: If chunk has no vertices, it's likely empty
-                if (chunk->getVertexCount() == 0 && chunk->getTransparentVertexCount() == 0) continue;
+        int chunkX = chunk->getChunkX();
+        int chunkY = chunk->getChunkY();
+        int chunkZ = chunk->getChunkZ();
 
-                // Iterate through blocks in this chunk (top to bottom for proper flow)
-                // Sample every other block for performance (still looks smooth)
-                for (int localX = 0; localX < Chunk::WIDTH; localX += 1) {
-                    for (int localY = Chunk::HEIGHT - 1; localY >= 0; localY -= 1) {
-                        for (int localZ = 0; localZ < Chunk::DEPTH; localZ += 1) {
-                            int blockID = chunk->getBlock(localX, localY, localZ);
-                            if (blockID == 0) continue;
+        // Iterate through blocks in this chunk (top to bottom for proper flow)
+        for (int localX = 0; localX < Chunk::WIDTH; localX += 1) {
+            for (int localY = Chunk::HEIGHT - 1; localY >= 0; localY -= 1) {
+                for (int localZ = 0; localZ < Chunk::DEPTH; localZ += 1) {
+                    int blockID = chunk->getBlock(localX, localY, localZ);
+                    if (blockID == 0) continue;
 
-                            // Bounds check before registry access to prevent crash
-                            if (blockID < 0 || blockID >= registry.count()) continue;
+                    // Bounds check before registry access to prevent crash
+                    if (blockID < 0 || blockID >= registry.count()) continue;
 
-                            const BlockDefinition& def = registry.get(blockID);
-                            if (!def.isLiquid) continue;
+                    const BlockDefinition& def = registry.get(blockID);
+                    if (!def.isLiquid) continue;
 
-                            // Calculate world position
-                            float worldX = static_cast<float>(chunkX * Chunk::WIDTH + localX);
-                            float worldY = static_cast<float>(chunkY * Chunk::HEIGHT + localY);
-                            float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + localZ);
+                    // Calculate world position
+                    float worldX = static_cast<float>(chunkX * Chunk::WIDTH + localX);
+                    float worldY = static_cast<float>(chunkY * Chunk::HEIGHT + localY);
+                    float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + localZ);
 
-                            // Get water level
-                            uint8_t waterLevel = getBlockMetadataAt(worldX, worldY, worldZ);
+                    // Get water level
+                    uint8_t waterLevel = getBlockMetadataAt(worldX, worldY, worldZ);
 
-                            // VERTICAL FLOW: Water always flows down first
-                            float belowY = worldY - 1.0f;
-                            int blockBelow = getBlockAt(worldX, belowY, worldZ);
+                    // VERTICAL FLOW: Water always flows down first
+                    float belowY = worldY - 1.0f;
+                    int blockBelow = getBlockAt(worldX, belowY, worldZ);
 
-                            if (blockBelow == 0) {
-                                // Air below - water flows down as SOURCE block (level 0)
-                                // CRITICAL: In Minecraft, falling water becomes a source!
-                                waterToAdd.push_back({worldX, belowY, worldZ, 0});
-                                chunksToUpdate.insert(getChunkAtWorldPos(worldX, belowY, worldZ));
-                                // Skip horizontal spread when falling (priority to vertical flow)
-                                continue;
-                            } else if (blockBelow >= 0 && blockBelow < registry.count() && !registry.get(blockBelow).isLiquid) {
-                                // Solid block below - try horizontal spread
-                                // Only spread if we're a source or low-level flow (level < 7)
-                                if (waterLevel < 7) {
-                                    uint8_t newLevel = waterLevel + 1;
+                    if (blockBelow == 0) {
+                        // Air below - water flows down as SOURCE block (level 0)
+                        waterToAdd.push_back({worldX, belowY, worldZ, 0});
+                        chunksToUpdate.insert(getChunkAtWorldPos(worldX, belowY, worldZ));
+                        continue;
+                    } else if (blockBelow >= 0 && blockBelow < registry.count() && !registry.get(blockBelow).isLiquid) {
+                        // Solid block below - try horizontal spread
+                        if (waterLevel < 7) {
+                            uint8_t newLevel = waterLevel + 1;
 
-                                    // Check 4 horizontal neighbors
-                                    const glm::vec3 directions[4] = {
-                                        {0.5f, 0.0f, 0.0f},   // +X
-                                        {-0.5f, 0.0f, 0.0f},  // -X
-                                        {0.0f, 0.0f, 0.5f},   // +Z
-                                        {0.0f, 0.0f, -0.5f}   // -Z
-                                    };
+                            // Check 4 horizontal neighbors
+                            const glm::vec3 directions[4] = {
+                                {0.5f, 0.0f, 0.0f},
+                                {-0.5f, 0.0f, 0.0f},
+                                {0.0f, 0.0f, 0.5f},
+                                {0.0f, 0.0f, -0.5f}
+                            };
 
-                                    for (const auto& dir : directions) {
-                                        float nx = worldX + dir.x;
-                                        float ny = worldY + dir.y;
-                                        float nz = worldZ + dir.z;
+                            for (const auto& dir : directions) {
+                                float nx = worldX + dir.x;
+                                float ny = worldY + dir.y;
+                                float nz = worldZ + dir.z;
 
-                                        int neighborBlock = getBlockAt(nx, ny, nz);
+                                int neighborBlock = getBlockAt(nx, ny, nz);
 
-                                        if (neighborBlock == 0) {
-                                            // Empty space - place water
-                                            waterToAdd.push_back({nx, ny, nz, newLevel});
-                                            chunksToUpdate.insert(getChunkAtWorldPos(nx, ny, nz));
-                                        } else if (neighborBlock >= 0 && neighborBlock < registry.count() && registry.get(neighborBlock).isLiquid) {
-                                            // Existing water - update if we have lower level (stronger flow)
-                                            uint8_t neighborLevel = getBlockMetadataAt(nx, ny, nz);
-                                            if (newLevel < neighborLevel) {
-                                                setBlockMetadataAt(nx, ny, nz, newLevel);
-                                                chunksToUpdate.insert(getChunkAtWorldPos(nx, ny, nz));
-                                            }
-                                        }
+                                if (neighborBlock == 0) {
+                                    waterToAdd.push_back({nx, ny, nz, newLevel});
+                                    chunksToUpdate.insert(getChunkAtWorldPos(nx, ny, nz));
+                                } else if (neighborBlock >= 0 && neighborBlock < registry.count() && registry.get(neighborBlock).isLiquid) {
+                                    uint8_t neighborLevel = getBlockMetadataAt(nx, ny, nz);
+                                    if (newLevel < neighborLevel) {
+                                        setBlockMetadataAt(nx, ny, nz, newLevel);
+                                        chunksToUpdate.insert(getChunkAtWorldPos(nx, ny, nz));
                                     }
                                 }
                             }
@@ -1280,8 +1267,8 @@ void World::updateWaterSimulation(float deltaTime, VulkanRenderer* renderer, con
     // Update water simulation with chunk freezing (only simulate water near player)
     m_waterSimulation->update(deltaTime, this, playerPos, renderDistance);
 
-    // Check for water level changes and spawn splash particles
-    // TODO: Track water level changes in simulation and spawn particles
+    // Particle spawning for water level changes is handled inside water simulation
+    // See WaterSimulation::updateWaterCell() - spawns splash when water level increases
 
     // OPTIMIZATION: Only regenerate meshes for chunks where water actually changed
     // Using dirty chunk tracking (only updates chunks with water level changes)
@@ -1452,4 +1439,14 @@ bool World::loadWorld(const std::string& worldPath) {
 
 std::string World::getWorldName() const {
     return m_worldName.empty() ? "Unnamed World" : m_worldName;
+}
+
+bool World::isChunkInBounds(int chunkX, int chunkY, int chunkZ) const {
+    int halfWidth = m_width / 2;
+    int halfHeight = m_height / 2;
+    int halfDepth = m_depth / 2;
+
+    return (chunkX >= -halfWidth && chunkX < halfWidth &&
+            chunkY >= -halfHeight && chunkY < halfHeight &&
+            chunkZ >= -halfDepth && chunkZ < halfDepth);
 }

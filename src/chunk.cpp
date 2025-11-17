@@ -199,12 +199,6 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 int worldY = static_cast<int64_t>(m_y) * HEIGHT + y;
                 float worldYf = static_cast<float>(worldY);
 
-                // BEDROCK LAYER: Y=0 to Y=1 is always bedrock (unbreakable bottom)
-                if (worldY >= 0 && worldY <= 1) {
-                    m_blocks[x][y][z] = BLOCK_BEDROCK;
-                    continue;
-                }
-
                 // SOLID STONE GUARANTEE: Y=2 to Y=10 is always stone (no caves)
                 // This prevents giant holes to the void and ensures solid foundation
                 if (worldY >= 2 && worldY <= 10) {
@@ -239,9 +233,10 @@ void Chunk::generate(BiomeMap* biomeMap) {
                     }
 
                     // LAND BIOME LOGIC
-                    // If in cave, create air pocket (caves only above Y=15)
-                    // Prevent caves in the top 10 blocks below surface to avoid surface holes
-                    if (isCave && worldY < terrainHeight - 10) {
+                    // If in cave, create air pocket
+                    // Cave generation handles surface entrances intelligently via noise
+                    // Only prevent caves in the very top layer (3 blocks) to avoid ugly surface pockmarks
+                    if (isCave && worldY < terrainHeight - 3) {
                         m_blocks[x][y][z] = BLOCK_AIR;
                         continue;
                     }

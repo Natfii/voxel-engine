@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <cstring>
+#include <filesystem>
+#include <iostream>
 
 MainMenu::MainMenu(GLFWwindow* window) : window(window) {
     // Initialize random seed generator
@@ -27,7 +29,7 @@ MenuResult MainMenu::render() {
         renderSeedDialog();
 
         // Check if we should start the game
-        if (!showSeedDialog) {
+        if (!showSeedDialog && !showLoadDialog) {
             // Dialog was closed with "Start Game" button
             // Parse the seed from input buffer
             int seed = std::atoi(seedInputBuffer);
@@ -37,6 +39,18 @@ MenuResult MainMenu::render() {
             }
             result.action = MenuAction::NEW_GAME;
             result.seed = seed;
+            result.spawnRadius = spawnRadiusSlider;
+            result.temperatureBias = temperatureSlider;
+            result.moistureBias = moistureSlider;
+            result.ageBias = ageSlider;
+        }
+    } else if (showLoadDialog) {
+        renderLoadWorldDialog();
+
+        // Check if a world was selected
+        if (!showLoadDialog && selectedWorldIndex >= 0) {
+            result.action = MenuAction::LOAD_GAME;
+            result.worldPath = availableWorlds[selectedWorldIndex];
         }
     } else {
         renderMainButtons();
@@ -72,12 +86,12 @@ void MainMenu::renderMainButtons() {
         showSeedDialog = true;
     }
 
-    // Load Game button (placeholder)
+    // Load Game button
     ImGui::SetCursorPos(ImVec2(centerX - buttonWidth * 0.5f, centerY - 60.0f + (buttonHeight + buttonSpacing)));
     if (ImGui::Button("Load Game", ImVec2(buttonWidth, buttonHeight))) {
-        // TODO: Implement save/load system
-        // For now, just show a message in the console
-        showSeedDialog = false;  // Close any open dialogs
+        showLoadDialog = true;
+        selectedWorldIndex = -1;
+        availableWorlds = scanAvailableWorlds();
     }
 
     // Host button (placeholder)
@@ -103,16 +117,6 @@ void MainMenu::renderMainButtons() {
     static bool showMessage = false;
     static std::string message = "";
 
-    // Check if Load Game was clicked
-    ImVec2 loadButtonPos(centerX - buttonWidth * 0.5f, centerY - 60.0f + (buttonHeight + buttonSpacing));
-    ImVec2 loadButtonMax(loadButtonPos.x + buttonWidth, loadButtonPos.y + buttonHeight);
-    if (ImGui::IsMouseClicked(0) &&
-        io.MousePos.x >= loadButtonPos.x && io.MousePos.x <= loadButtonMax.x &&
-        io.MousePos.y >= loadButtonPos.y && io.MousePos.y <= loadButtonMax.y) {
-        message = "Save/Load system coming soon!";
-        showMessage = true;
-        messageTimer = 3.0f;
-    }
 
     // Check if Host was clicked
     ImVec2 hostButtonPos(centerX - buttonWidth * 0.5f, centerY - 60.0f + 2 * (buttonHeight + buttonSpacing));
@@ -156,8 +160,8 @@ void MainMenu::renderSeedDialog() {
 
     float centerX = displaySize.x * 0.5f;
     float centerY = displaySize.y * 0.5f;
-    float dialogWidth = 400.0f;
-    float dialogHeight = 250.0f;
+    float dialogWidth = 450.0f;
+    float dialogHeight = 520.0f;
     float buttonWidth = 150.0f;
     float buttonHeight = 35.0f;
 
@@ -197,6 +201,40 @@ void MainMenu::renderSeedDialog() {
         int randomSeed = std::rand() % 1000000;
         snprintf(seedInputBuffer, sizeof(seedInputBuffer), "%d", randomSeed);
     }
+
+    ImGui::Spacing();
+    ImGui::Spacing();
+
+    // Spawn radius slider
+    ImGui::Text("Initial Spawn Area:");
+    ImGui::SetNextItemWidth(dialogWidth - 40.0f);
+    ImGui::SliderInt("##spawnradius", &spawnRadiusSlider, 2, 8, "%d chunks radius");
+    ImGui::TextDisabled("Larger areas take longer to generate");
+
+    ImGui::Spacing();
+    ImGui::Spacing();
+
+    // Temperature slider
+    ImGui::Text("Temperature:");
+    ImGui::SetNextItemWidth(dialogWidth - 40.0f);
+    ImGui::SliderFloat("##temperature", &temperatureSlider, -1.0f, 1.0f, "%.2f");
+    ImGui::TextDisabled("Negative = colder world, Positive = hotter world");
+
+    ImGui::Spacing();
+
+    // Moisture slider
+    ImGui::Text("Moisture:");
+    ImGui::SetNextItemWidth(dialogWidth - 40.0f);
+    ImGui::SliderFloat("##moisture", &moistureSlider, -1.0f, 1.0f, "%.2f");
+    ImGui::TextDisabled("Negative = drier world, Positive = wetter world");
+
+    ImGui::Spacing();
+
+    // Age/Roughness slider
+    ImGui::Text("Terrain Roughness:");
+    ImGui::SetNextItemWidth(dialogWidth - 40.0f);
+    ImGui::SliderFloat("##age", &ageSlider, -1.0f, 1.0f, "%.2f");
+    ImGui::TextDisabled("Negative = flatter/smoother, Positive = mountainous");
 
     ImGui::Spacing();
     ImGui::Spacing();
