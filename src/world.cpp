@@ -1453,3 +1453,13 @@ bool World::loadWorld(const std::string& worldPath) {
 std::string World::getWorldName() const {
     return m_worldName.empty() ? "Unnamed World" : m_worldName;
 }
+
+bool World::isChunkInBounds(int chunkX, int chunkY, int chunkZ) const {
+    int halfWidth = m_width / 2;
+    int halfHeight = m_height / 2;
+    int halfDepth = m_depth / 2;
+
+    return (chunkX >= -halfWidth && chunkX < halfWidth &&
+            chunkY >= -halfHeight && chunkY < halfHeight &&
+            chunkZ >= -halfDepth && chunkZ < halfDepth);
+}

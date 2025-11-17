@@ -112,6 +112,11 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
                 int chunkY = playerChunkY + dy;
                 int chunkZ = playerChunkZ + dz;
 
+                // Check if chunk is within world bounds (skip if fixed-size world)
+                if (!m_world->isChunkInBounds(chunkX, chunkY, chunkZ)) {
+                    continue;
+                }
+
                 // Check if chunk is within load distance
                 if (shouldLoadChunk(chunkX, chunkY, chunkZ, playerPos, loadDistance)) {
                     // Check if chunk already exists

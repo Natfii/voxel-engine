@@ -371,6 +371,16 @@ public:
     BiomeMap* getBiomeMap() { return m_biomeMap.get(); }
 
     /**
+     * @brief Checks if chunk coordinates are within world bounds
+     *
+     * @param chunkX Chunk X coordinate
+     * @param chunkY Chunk Y coordinate
+     * @param chunkZ Chunk Z coordinate
+     * @return True if chunk is within bounds, false otherwise
+     */
+    bool isChunkInBounds(int chunkX, int chunkY, int chunkZ) const;
+
+    /**
      * @brief Runs decoration pass (trees, grass, flowers, structures)
      * Should be called after generateWorld() but before createBuffers()
      */
