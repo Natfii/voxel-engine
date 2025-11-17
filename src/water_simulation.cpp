@@ -1,6 +1,7 @@
 #include "water_simulation.h"
 #include "world.h"
 #include "block_system.h"
+#include "chunk.h"
 #include <algorithm>
 #include <random>
 #include <cmath>
@@ -11,6 +12,7 @@ WaterSimulation::WaterSimulation()
     , m_lavaFlowMultiplier(0.5f)
     , m_evaporationThreshold(5)
     , m_frameOffset(0)
+    , m_rng(std::random_device{}())
 {
 }
 
@@ -138,30 +140,32 @@ void WaterSimulation::applyGravity(const glm::ivec3& pos, WaterCell& cell, World
 
     // Check if block below is solid
     if (isBlockSolid(below.x, below.y, below.z, world)) {
-        return; // Can't fall through solid blocks
-    }
-
-    // Get or create water cell below
-    WaterCell& belowCell = m_waterCells[below];
-
-    // If different fluid types, don't mix (for now)
-    if (belowCell.level > 0 && belowCell.fluidType != cell.fluidType) {
         return;
     }
 
-    // Calculate how much water can move down
-    int spaceBelow = 255 - belowCell.level;
+    auto it = m_waterCells.find(below);
+    WaterCell* belowCellPtr = nullptr;
+    if (it != m_waterCells.end()) {
+        belowCellPtr = &it->second;
+        if (belowCellPtr->level > 0 && belowCellPtr->fluidType != cell.fluidType) {
+            return;
+        }
+    }
+
+    int spaceBelow = belowCellPtr ? (255 - belowCellPtr->level) : 255;
     int amountToMove = std::min((int)cell.level, spaceBelow);
 
     if (amountToMove > 0) {
         cell.level -= amountToMove;
-        belowCell.level += amountToMove;
-        belowCell.fluidType = cell.fluidType;
 
-        // Set flow vector pointing down
-        belowCell.flowVector = glm::vec2(0.0f, -1.0f);
+        if (!belowCellPtr) {
+            belowCellPtr = &m_waterCells[below];
+        }
 
-        // Mark destination cell as dirty (water flowed here)
+        belowCellPtr->level += amountToMove;
+        belowCellPtr->fluidType = cell.fluidType;
+        belowCellPtr->flowVector = glm::vec2(0.0f, -1.0f);
+
         markDirty(below);
     }
 }
@@ -204,51 +208,52 @@ void WaterSimulation::spreadHorizontally(const glm::ivec3& pos, WaterCell& cell,
 
     if (validNeighbors.empty()) return;
 
-    // Random number generator for natural variation
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-
-    // Distribute water among valid neighbors
     for (int idx : validNeighbors) {
         if (cell.level <= 1) break;
 
         glm::ivec3 neighborPos = neighbors[idx];
 
-        // Check if neighbor is solid
         if (isBlockSolid(neighborPos.x, neighborPos.y, neighborPos.z, world)) {
             continue;
         }
 
-        // Get or create neighbor cell
-        WaterCell& neighborCell = m_waterCells[neighborPos];
+        auto it = m_waterCells.find(neighborPos);
+        WaterCell* neighborCellPtr = nullptr;
+        int neighborLevel = 0;
 
-        // Don't mix different fluid types
-        if (neighborCell.level > 0 && neighborCell.fluidType != cell.fluidType) {
-            continue;
+        if (it != m_waterCells.end()) {
+            neighborCellPtr = &it->second;
+            neighborLevel = neighborCellPtr->level;
+            if (neighborLevel > 0 && neighborCellPtr->fluidType != cell.fluidType) {
+                continue;
+            }
         }
 
-        // Calculate amount to transfer
-        int levelDiff = cell.level - neighborCell.level;
+        int levelDiff = cell.level - neighborLevel;
         if (levelDiff <= 0) continue;
 
-        // Random amount between 25-50% of level difference
-        std::uniform_int_distribution<> dis(levelDiff / 4, levelDiff / 2);
-        int amountToMove = std::min(dis(gen), (int)cell.level);
+        int amountToMove;
+        {
+            std::lock_guard<std::mutex> lock(m_rngMutex);
+            std::uniform_int_distribution<> dis(levelDiff / 4, levelDiff / 2);
+            amountToMove = std::min(dis(m_rng), (int)cell.level);
+        }
         amountToMove = std::max(1, (int)(amountToMove * flowMult));
 
-        // Ensure we don't exceed capacity
-        int spaceAvailable = 255 - neighborCell.level;
+        int spaceAvailable = 255 - neighborLevel;
         amountToMove = std::min(amountToMove, spaceAvailable);
 
         if (amountToMove > 0) {
             cell.level -= amountToMove;
-            neighborCell.level += amountToMove;
-            neighborCell.fluidType = cell.fluidType;
 
-            // Set flow vector
-            neighborCell.flowVector = directions[idx];
+            if (!neighborCellPtr) {
+                neighborCellPtr = &m_waterCells[neighborPos];
+            }
 
-            // Mark neighbor as dirty (water flowed here)
+            neighborCellPtr->level += amountToMove;
+            neighborCellPtr->fluidType = cell.fluidType;
+            neighborCellPtr->flowVector = directions[idx];
+
             markDirty(neighborPos);
         }
     }
@@ -263,11 +268,10 @@ int WaterSimulation::calculateFlowWeight(const glm::ivec3& from, const glm::ivec
         return weight;
     }
 
-    // Check if there's already water with different type
     auto it = m_waterCells.find(to);
     if (it != m_waterCells.end()) {
-        auto& fromCell = m_waterCells[from];
-        if (it->second.fluidType != fromCell.fluidType && it->second.level > 0) {
+        auto fromIt = m_waterCells.find(from);
+        if (fromIt != m_waterCells.end() && it->second.fluidType != fromIt->second.fluidType && it->second.level > 0) {
             return weight;
         }
     }
@@ -359,9 +363,9 @@ void WaterSimulation::updateWaterBodies() {
         for (const auto& pos : body.cells) {
             WaterCell& cell = m_waterCells[pos];
 
-            // Maintain minimum water level
             if (cell.level < body.minLevel) {
                 cell.level = body.minLevel;
+                markDirty(pos);
             }
         }
     }
@@ -488,12 +492,10 @@ bool WaterSimulation::isBlockLiquid(int x, int y, int z, World* world) const {
 }
 
 glm::ivec3 WaterSimulation::worldToChunk(const glm::ivec3& worldPos) const {
-    // Assuming chunk size of 16
-    const int CHUNK_SIZE = 16;
     return glm::ivec3(
-        worldPos.x / CHUNK_SIZE,
-        worldPos.y / CHUNK_SIZE,
-        worldPos.z / CHUNK_SIZE
+        worldPos.x / Chunk::WIDTH,
+        worldPos.y / Chunk::HEIGHT,
+        worldPos.z / Chunk::DEPTH
     );
 }
 

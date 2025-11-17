@@ -453,14 +453,13 @@ void World::decorateWorld() {
 }
 
 void World::registerWaterBlocks() {
-    // Scan all generated chunks and register water blocks with simulation
-    // This initializes water flow physics for water placed during world generation
     Logger::info() << "Registering water blocks with simulation system...";
 
     int waterBlocksFound = 0;
     auto& registry = BlockRegistry::instance();
 
-    // Iterate through all chunks
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
     for (auto& chunk : m_chunks) {
         int chunkX = chunk->getChunkX();
         int chunkY = chunk->getChunkY();
@@ -492,24 +491,18 @@ void World::registerWaterBlocks() {
 }
 
 void World::createBuffers(VulkanRenderer* renderer) {
-    // BATCHED BUFFER UPLOAD: Submit all buffer copies in one batch for 10-15x speedup
-    // Old approach: Each chunk uploaded individually with separate GPU sync (16+ sync points per frame)
-    // New approach: All chunks batched into one command buffer (1 sync point total)
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
-    // Begin batch
     renderer->beginBufferCopyBatch();
 
-    // Create buffers for all chunks (records copy commands, doesn't submit yet)
     for (auto& chunk : m_chunks) {
         if (chunk->getVertexCount() > 0 || chunk->getTransparentVertexCount() > 0) {
             chunk->createVertexBufferBatched(renderer);
         }
     }
 
-    // Submit all copies at once
     renderer->submitBufferCopyBatch();
 
-    // Clean up staging buffers and free CPU-side mesh data
     for (auto& chunk : m_chunks) {
         if (chunk->getVertexCount() > 0 || chunk->getTransparentVertexCount() > 0) {
             chunk->cleanupStagingBuffers(renderer);
@@ -518,7 +511,8 @@ void World::createBuffers(VulkanRenderer* renderer) {
 }
 
 void World::cleanup(VulkanRenderer* renderer) {
-    // Destroy all chunk buffers before deleting chunks
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
     for (auto& chunk : m_chunks) {
         chunk->destroyBuffers(renderer);
     }

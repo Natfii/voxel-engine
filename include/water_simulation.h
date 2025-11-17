@@ -5,6 +5,8 @@
 #include <vector>
 #include <set>
 #include <queue>
+#include <random>
+#include <mutex>
 
 class World;
 class Chunk;
@@ -124,6 +126,9 @@ private:
 
     // Frame counter for spreading updates
     int m_frameOffset;
+
+    std::mt19937 m_rng;
+    std::mutex m_rngMutex;
 
     // Internal simulation methods
     void updateWaterCell(const glm::ivec3& pos, WaterCell& cell, World* world, float deltaTime);
