@@ -14,7 +14,7 @@
  */
 class BiomeMap {
 public:
-    BiomeMap(int seed);
+    BiomeMap(int seed, float tempBias = 0.0f, float moistBias = 0.0f, float ageBias = 0.0f);
     ~BiomeMap() = default;
 
     /**
@@ -93,4 +93,9 @@ private:
     const Biome* selectBiome(float temperature, float moisture);
     float mapNoiseTo01(float noise);  // Maps [-1, 1] to [0, 1]
     float mapNoiseToRange(float noise, float min, float max);
+
+    // World generation biases
+    float m_temperatureBias;
+    float m_moistureBias;
+    float m_ageBias;
 };

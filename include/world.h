@@ -87,8 +87,11 @@ public:
      * @param height Number of chunks along the Y axis (vertical)
      * @param depth Number of chunks along the Z axis
      * @param seed Random seed for world generation (default: 12345)
+     * @param tempBias Temperature bias (-1.0 to +1.0)
+     * @param moistBias Moisture bias (-1.0 to +1.0)
+     * @param ageBias Age/roughness bias (-1.0 to +1.0)
      */
-    World(int width, int height, int depth, int seed = 12345);
+    World(int width, int height, int depth, int seed = 12345, float tempBias = 0.0f, float moistBias = 0.0f, float ageBias = 0.0f);
 
     /**
      * @brief Destroys the world and cleans up all chunks

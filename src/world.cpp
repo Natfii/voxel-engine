@@ -48,7 +48,7 @@ constexpr int OCEAN_DEPTH_THRESHOLD = 8;  // Blocks below water level to trigger
 
 // ====================================================
 
-World::World(int width, int height, int depth, int seed)
+World::World(int width, int height, int depth, int seed, float tempBias, float moistBias, float ageBias)
     : m_width(width), m_height(height), m_depth(depth), m_seed(seed) {
     // Center world generation around origin (0, 0, 0)
     int halfWidth = width / 2;
@@ -71,8 +71,8 @@ World::World(int width, int height, int depth, int seed)
         throw std::runtime_error("BiomeRegistry is empty! Call BiomeRegistry::loadBiomes() before creating a World.");
     }
 
-    // Initialize biome map with seed
-    m_biomeMap = std::make_unique<BiomeMap>(seed);
+    // Initialize biome map with seed and biases
+    m_biomeMap = std::make_unique<BiomeMap>(seed, tempBias, moistBias, ageBias);
     Logger::info() << "Biome map initialized with " << BiomeRegistry::getInstance().getBiomeCount() << " biomes";
 
     // Initialize tree generator

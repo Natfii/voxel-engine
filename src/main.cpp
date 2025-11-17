@@ -367,7 +367,8 @@ int main() {
         loadingMessage = loadingExistingWorld ? "Loading world data" : "Initializing world generator";
         renderLoadingScreen();
 
-        World world(worldWidth, worldHeight, worldDepth, seed);
+        World world(worldWidth, worldHeight, worldDepth, seed,
+                    menuResult.temperatureBias, menuResult.moistureBias, menuResult.ageBias);
 
         if (loadingExistingWorld) {
             std::cout << "Loading world from: " << worldPath << std::endl;
