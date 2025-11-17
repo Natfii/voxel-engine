@@ -208,8 +208,9 @@ void World::generateWorld() {
             for (int y = -halfHeight; y < m_height - halfHeight; y++) {
                 for (int z = -halfDepth; z < m_depth - halfDepth; z++) {
                     auto chunk = std::make_unique<Chunk>(x, y, z);
-                    m_chunkMap[{x, y, z}] = chunk.get();
-                    m_chunks.push_back(std::move(chunk));
+                    Chunk* chunkPtr = chunk.get();
+                    m_chunkMap[{x, y, z}] = std::move(chunk);
+                    m_chunks.push_back(chunkPtr);
                 }
             }
         }
