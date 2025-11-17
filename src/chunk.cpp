@@ -7,7 +7,6 @@
  * - Optimized mesh generation with face culling
  * - Vulkan buffer management
  *
- * Created by original author, enhanced documentation by Claude (Anthropic AI Assistant)
  */
 
 #include "chunk.h"

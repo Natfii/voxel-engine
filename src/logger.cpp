@@ -2,7 +2,6 @@
  * @file logger.cpp
  * @brief Implementation of the logging system
  *
- * Created by Claude (Anthropic AI Assistant) for code cleanup
  */
 
 #include "logger.h"

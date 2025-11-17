@@ -2,7 +2,6 @@
  * @file vulkan_renderer.h
  * @brief Vulkan rendering backend with modern graphics pipeline
  *
- * Enhanced API documentation by Claude (Anthropic AI Assistant)
  */
 
 #pragma once

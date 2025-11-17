@@ -2,7 +2,6 @@
  * @file player.h
  * @brief First-person player controller with physics-based movement
  *
- * Enhanced API documentation by Claude (Anthropic AI Assistant)
  */
 
 #pragma once

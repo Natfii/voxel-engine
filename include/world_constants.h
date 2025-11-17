@@ -1,8 +1,6 @@
 /**
  * @file world_constants.h
  * @brief Constants for world rendering and culling
- *
- * Created by Claude (Anthropic AI Assistant) for code cleanup
  */
 
 #pragma once

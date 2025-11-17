@@ -2,7 +2,6 @@
  * @file logger.h
  * @brief Simple logging system with multiple severity levels
  *
- * Created by Claude (Anthropic AI Assistant) for code cleanup
  */
 
 #pragma once

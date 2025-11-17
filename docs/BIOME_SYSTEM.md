@@ -139,6 +139,22 @@ For example, "Forest Hills" could be a variant of "Forest" with different age/ac
 parent_biome: "forest"
 ```
 
+#### `height_multiplier`
+**Type:** Float
+**Default:** `1.0`
+**Description:** Multiplier for terrain height variation. Used to create mountains, valleys, and other dramatic terrain features.
+- `1.0` = Normal terrain height
+- `2.0` = Double height (tall hills)
+- `3.5` = Very tall mountains
+- `0.5` = Flatter than normal
+
+**Note:** For mountainous biomes (>1.5), height scales with biome extent - large mountain ranges grow taller than isolated peaks.
+
+**Example:**
+```yaml
+height_multiplier: 3.5  # Tall mountains
+```
+
 ---
 
 ### Vegetation

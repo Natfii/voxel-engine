@@ -2,7 +2,6 @@
  * @file world.h
  * @brief Voxel world management with chunk-based terrain generation and rendering
  *
- * Enhanced API documentation by Claude (Anthropic AI Assistant)
  */
 
 #pragma once

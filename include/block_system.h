@@ -2,7 +2,6 @@
  * @file block_system.h
  * @brief Extensible block system with YAML-based definitions and texture atlas
  *
- * Enhanced API documentation by Claude (Anthropic AI Assistant)
  */
 
 #pragma once

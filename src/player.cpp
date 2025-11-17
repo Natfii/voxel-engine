@@ -2,7 +2,6 @@
  * @file player.cpp
  * @brief First-person player controller with AABB physics and collision detection
  *
- * Created by original author, enhanced documentation by Claude (Anthropic AI Assistant)
  */
 
 #include "player.h"
