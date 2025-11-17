@@ -6,30 +6,34 @@
 #include <iostream>
 
 BiomeMap::BiomeMap(int seed) {
-    // Temperature noise - VERY large scale, creates modern Minecraft-style massive climate zones
-    // Lower frequency = wider biomes (0.001 = ~1000 block features, modern Minecraft 1.18+ scale)
+    // Temperature noise - MASSIVE scale for truly expansive biomes
+    // Research-based: Minecraft 1.18+ uses ~0.00025 scale for climate zones
+    // Lower frequency = wider biomes (0.00008 = ~12500 block features, truly massive)
     m_temperatureNoise = std::make_unique<FastNoiseLite>(seed);
     m_temperatureNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_temperatureNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
-    m_temperatureNoise->SetFractalOctaves(4);
-    m_temperatureNoise->SetFrequency(0.001f);  // Modern Minecraft scale (1.18+ biomes: 800-1500 blocks)
+    m_temperatureNoise->SetFractalOctaves(3);  // Fewer octaves = smoother, less variation
+    m_temperatureNoise->SetFrequency(0.00008f);  // Massive biomes: 5000-15000 blocks wide
 
-    // Temperature variation - adds local temperature changes within biomes
+    // Temperature variation - minimal local changes for stable biomes
+    // This should only add subtle variation within a biome, not change the biome itself
     m_temperatureVariation = std::make_unique<FastNoiseLite>(seed + 1000);
     m_temperatureVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    m_temperatureVariation->SetFrequency(0.012f);  // Medium features for variation
+    m_temperatureVariation->SetFractalOctaves(2);
+    m_temperatureVariation->SetFrequency(0.003f);  // Very subtle local variation
 
-    // Moisture noise - VERY large scale, creates modern Minecraft-style massive wet/dry zones
+    // Moisture noise - MASSIVE scale for expansive wet/dry zones
     m_moistureNoise = std::make_unique<FastNoiseLite>(seed + 100);
     m_moistureNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_moistureNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
-    m_moistureNoise->SetFractalOctaves(4);
-    m_moistureNoise->SetFrequency(0.0012f);  // Modern Minecraft scale (1.18+ biomes: 800-1500 blocks)
+    m_moistureNoise->SetFractalOctaves(3);  // Fewer octaves = smoother
+    m_moistureNoise->SetFrequency(0.0001f);  // Massive biomes: 5000-15000 blocks wide
 
-    // Moisture variation - adds local moisture changes within biomes
+    // Moisture variation - minimal local changes
     m_moistureVariation = std::make_unique<FastNoiseLite>(seed + 1100);
     m_moistureVariation->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    m_moistureVariation->SetFrequency(0.015f);  // Medium features for variation
+    m_moistureVariation->SetFractalOctaves(2);
+    m_moistureVariation->SetFrequency(0.004f);  // Very subtle local variation
 
     // Terrain height noise - controlled by biome age
     m_terrainNoise = std::make_unique<FastNoiseLite>(seed + 200);
@@ -68,14 +72,28 @@ float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
     // FastNoiseLite is thread-safe for reads - no mutex needed
     // This was causing catastrophic mutex contention during parallel chunk generation
 
-    // Base temperature from large-scale noise
+    // Base temperature from MASSIVE scale noise (dominant factor)
     float baseTemp = m_temperatureNoise->GetNoise(worldX, worldZ);
 
-    // Add variation for more interesting temperature patterns
+    // Add very subtle variation for natural feel within biomes (minimal influence)
     float variation = m_temperatureVariation->GetNoise(worldX, worldZ);
 
-    // Combine: 70% base + 30% variation
-    float combined = (baseTemp * 0.7f) + (variation * 0.3f);
+    // Combine: 90% base + 10% variation (base noise dominates to prevent rapid biome changes)
+    float combined = (baseTemp * 0.90f) + (variation * 0.10f);
+
+    // Add distance-based temperature gradient for variety as you travel far
+    // Distance from world origin (0, 0)
+    float distanceFromOrigin = std::sqrt(worldX * worldX + worldZ * worldZ);
+
+    // Create gradual temperature shift based on distance
+    // Use multiple sine waves at different scales for natural variation
+    float distanceScale1 = std::sin(distanceFromOrigin * 0.0002f) * 0.15f;  // Large-scale shift
+    float distanceScale2 = std::sin(distanceFromOrigin * 0.0005f) * 0.08f;  // Medium-scale shift
+    float distanceInfluence = distanceScale1 + distanceScale2;
+
+    // Apply distance influence (multiply to stay within [-1, 1] range)
+    combined = combined * (1.0f + distanceInfluence * 0.5f);
+    combined = std::clamp(combined, -1.0f, 1.0f);  // Ensure we stay in valid range
 
     // Map from [-1, 1] to [0, 100]
     return mapNoiseToRange(combined, 0.0f, 100.0f);
@@ -84,14 +102,14 @@ float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
 float BiomeMap::getMoistureAt(float worldX, float worldZ) {
     // FastNoiseLite is thread-safe for reads - no mutex needed
 
-    // Base moisture from large-scale noise
+    // Base moisture from MASSIVE scale noise (dominant factor)
     float baseMoisture = m_moistureNoise->GetNoise(worldX, worldZ);
 
-    // Add variation
+    // Add very subtle variation for natural feel within biomes (minimal influence)
     float variation = m_moistureVariation->GetNoise(worldX, worldZ);
 
-    // Combine: 70% base + 30% variation
-    float combined = (baseMoisture * 0.7f) + (variation * 0.3f);
+    // Combine: 90% base + 10% variation (base noise dominates)
+    float combined = (baseMoisture * 0.90f) + (variation * 0.10f);
 
     // Map from [-1, 1] to [0, 100]
     return mapNoiseToRange(combined, 0.0f, 100.0f);
@@ -181,7 +199,39 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     float heightVariation = 30.0f - (ageNormalized * 25.0f);  // 30 to 5
 
     // Apply biome's height multiplier for special terrain (mountains, etc.)
-    heightVariation *= biome->height_multiplier;
+    float baseHeightMultiplier = biome->height_multiplier;
+
+    // BIOME SIZE-BASED SCALING: Mountains grow taller based on biome extent
+    // Sample surrounding area to determine mountain biome density
+    if (baseHeightMultiplier > 1.5f) {  // Only for mountainous biomes
+        // Sample 8 points in a 500-block radius to check mountain biome extent
+        const float sampleRadius = 500.0f;
+        int mountainCount = 0;
+        const int totalSamples = 8;
+
+        for (int i = 0; i < totalSamples; i++) {
+            float angle = (i / float(totalSamples)) * 2.0f * 3.14159f;
+            float sampleX = worldX + std::cos(angle) * sampleRadius;
+            float sampleZ = worldZ + std::sin(angle) * sampleRadius;
+
+            const Biome* sampleBiome = getBiomeAt(sampleX, sampleZ);
+            // Count how many samples are also mountainous (height_multiplier > 1.5)
+            if (sampleBiome && sampleBiome->height_multiplier > 1.5f) {
+                mountainCount++;
+            }
+        }
+
+        // Calculate mountain density (0.0 = isolated peak, 1.0 = large mountain range)
+        float mountainDensity = mountainCount / float(totalSamples);
+
+        // Scale height multiplier based on mountain range size
+        // Small isolated mountains: 1.0x multiplier (stay at base height)
+        // Large mountain ranges: up to 2.0x multiplier (grow much taller)
+        float sizeScaling = 0.5f + (mountainDensity * 1.5f);  // Range: 0.5x to 2.0x
+        baseHeightMultiplier *= sizeScaling;
+    }
+
+    heightVariation *= baseHeightMultiplier;
 
     // Calculate final height
     int height = BASE_HEIGHT + static_cast<int>(noise * heightVariation);
@@ -295,7 +345,9 @@ const Biome* BiomeMap::selectBiome(float temperature, float moisture) {
     }
 
     // Single-pass algorithm: find best matching biome in one iteration
-    const float TOLERANCE = 15.0f;
+    // Reduced tolerance to prevent excessive biome overlap
+    // With biomes at temp: 5, 15, 35, 55, 60, 90, tolerance of 12 prevents most overlap
+    const float TOLERANCE = 12.0f;  // Tight tolerance for distinct biomes
     const Biome* bestBiome = nullptr;
     float bestWeight = -1.0f;
     const Biome* closestBiome = nullptr;

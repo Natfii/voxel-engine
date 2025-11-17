@@ -2,7 +2,6 @@
  * @file frustum.h
  * @brief View frustum culling for efficient chunk rendering
  *
- * Created by original author, enhanced documentation by Claude (Anthropic AI Assistant)
  */
 
 #pragma once

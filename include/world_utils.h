@@ -2,7 +2,6 @@
  * @file world_utils.h
  * @brief Utility functions for world coordinate conversions
  *
- * Created by Claude (Anthropic AI Assistant) for code cleanup
  */
 
 #pragma once

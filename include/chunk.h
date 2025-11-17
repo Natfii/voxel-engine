@@ -1,8 +1,6 @@
 /**
  * @file chunk.h
  * @brief Chunk-based terrain storage with procedural generation and mesh optimization
- *
- * Enhanced API documentation by Claude (Anthropic AI Assistant)
  */
 
 #pragma once
