@@ -16,6 +16,9 @@ struct MenuResult {
     int seed = 0;              // World seed (if NEW_GAME)
     std::string worldPath = "";  // World path (if LOAD_GAME)
     int spawnRadius = 4;       // Initial spawn area radius in chunks (if NEW_GAME)
+    float temperatureBias = 0.0f;  // Temperature modifier (-1.0 to +1.0)
+    float moistureBias = 0.0f;     // Moisture modifier (-1.0 to +1.0)
+    float ageBias = 0.0f;          // Age/roughness modifier (-1.0 to +1.0)
 
     MenuResult() = default;
     MenuResult(MenuAction a, int s = 0) : action(a), seed(s) {}
@@ -44,6 +47,9 @@ private:
     char seedInputBuffer[32] = "1124345";  // Default seed
     bool randomSeedRequested = false;
     int spawnRadiusSlider = 4;  // Initial spawn radius (2-8 chunks)
+    float temperatureSlider = 0.0f;  // Temperature bias (-1.0 to +1.0)
+    float moistureSlider = 0.0f;     // Moisture bias (-1.0 to +1.0)
+    float ageSlider = 0.0f;          // Age/roughness bias (-1.0 to +1.0)
 
     // Load dialog state
     std::vector<std::string> availableWorlds;

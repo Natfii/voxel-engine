@@ -5,7 +5,8 @@
 #include <cstring>
 #include <iostream>
 
-BiomeMap::BiomeMap(int seed) {
+BiomeMap::BiomeMap(int seed, float tempBias, float moistBias, float ageBias)
+    : m_temperatureBias(tempBias), m_moistureBias(moistBias), m_ageBias(ageBias) {
     // Temperature noise - MASSIVE scale for truly expansive biomes
     // Research-based: Minecraft 1.18+ uses ~0.00025 scale for climate zones
     // Lower frequency = wider biomes (0.00008 = ~12500 block features, truly massive)
@@ -95,6 +96,9 @@ float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
     combined = combined * (1.0f + distanceInfluence * 0.5f);
     combined = std::clamp(combined, -1.0f, 1.0f);  // Ensure we stay in valid range
 
+    // Apply temperature bias from menu (-1.0 to +1.0)
+    combined = std::clamp(combined + m_temperatureBias, -1.0f, 1.0f);
+
     // Map from [-1, 1] to [0, 100]
     return mapNoiseToRange(combined, 0.0f, 100.0f);
 }
@@ -110,6 +114,9 @@ float BiomeMap::getMoistureAt(float worldX, float worldZ) {
 
     // Combine: 90% base + 10% variation (base noise dominates)
     float combined = (baseMoisture * 0.90f) + (variation * 0.10f);
+
+    // Apply moisture bias from menu (-1.0 to +1.0)
+    combined = std::clamp(combined + m_moistureBias, -1.0f, 1.0f);
 
     // Map from [-1, 1] to [0, 100]
     return mapNoiseToRange(combined, 0.0f, 100.0f);
@@ -196,6 +203,10 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     // Young terrain (age=0): variation = 30 blocks
     // Old terrain (age=100): variation = 5 blocks
     float ageNormalized = biome->age / 100.0f;  // 0.0 to 1.0
+
+    // Apply age bias from menu (-1.0 = flatter, +1.0 = more mountainous)
+    ageNormalized = std::clamp(ageNormalized - m_ageBias, 0.0f, 1.0f);
+
     float heightVariation = 30.0f - (ageNormalized * 25.0f);  // 30 to 5
 
     // Apply biome's height multiplier for special terrain (mountains, etc.)

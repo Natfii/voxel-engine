@@ -40,6 +40,9 @@ MenuResult MainMenu::render() {
             result.action = MenuAction::NEW_GAME;
             result.seed = seed;
             result.spawnRadius = spawnRadiusSlider;
+            result.temperatureBias = temperatureSlider;
+            result.moistureBias = moistureSlider;
+            result.ageBias = ageSlider;
         }
     } else if (showLoadDialog) {
         renderLoadWorldDialog();
@@ -157,8 +160,8 @@ void MainMenu::renderSeedDialog() {
 
     float centerX = displaySize.x * 0.5f;
     float centerY = displaySize.y * 0.5f;
-    float dialogWidth = 400.0f;
-    float dialogHeight = 330.0f;
+    float dialogWidth = 450.0f;
+    float dialogHeight = 520.0f;
     float buttonWidth = 150.0f;
     float buttonHeight = 35.0f;
 
@@ -207,6 +210,31 @@ void MainMenu::renderSeedDialog() {
     ImGui::SetNextItemWidth(dialogWidth - 40.0f);
     ImGui::SliderInt("##spawnradius", &spawnRadiusSlider, 2, 8, "%d chunks radius");
     ImGui::TextDisabled("Larger areas take longer to generate");
+
+    ImGui::Spacing();
+    ImGui::Spacing();
+
+    // Temperature slider
+    ImGui::Text("Temperature:");
+    ImGui::SetNextItemWidth(dialogWidth - 40.0f);
+    ImGui::SliderFloat("##temperature", &temperatureSlider, -1.0f, 1.0f, "%.2f");
+    ImGui::TextDisabled("Negative = colder world, Positive = hotter world");
+
+    ImGui::Spacing();
+
+    // Moisture slider
+    ImGui::Text("Moisture:");
+    ImGui::SetNextItemWidth(dialogWidth - 40.0f);
+    ImGui::SliderFloat("##moisture", &moistureSlider, -1.0f, 1.0f, "%.2f");
+    ImGui::TextDisabled("Negative = drier world, Positive = wetter world");
+
+    ImGui::Spacing();
+
+    // Age/Roughness slider
+    ImGui::Text("Terrain Roughness:");
+    ImGui::SetNextItemWidth(dialogWidth - 40.0f);
+    ImGui::SliderFloat("##age", &ageSlider, -1.0f, 1.0f, "%.2f");
+    ImGui::TextDisabled("Negative = flatter/smoother, Positive = mountainous");
 
     ImGui::Spacing();
     ImGui::Spacing();
