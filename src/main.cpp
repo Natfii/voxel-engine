@@ -240,6 +240,7 @@ int main() {
         GameState gameState = GameState::MAIN_MENU;
         int seed = config.getInt("World", "seed", 1124345);  // Default seed
         bool shouldQuit = false;
+        MenuResult menuResult;  // Declared here so it's accessible in both menu and game blocks
 
         while (!shouldQuit && !glfwWindowShouldClose(window)) {
             if (gameState == GameState::MAIN_MENU) {
@@ -249,8 +250,6 @@ int main() {
                 // Enable cursor for menu
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
                 InputManager::instance().setContext(InputManager::Context::MAIN_MENU);
-
-                MenuResult menuResult;  // Declare outside loop so it's accessible after
                 while (gameState == GameState::MAIN_MENU && !glfwWindowShouldClose(window)) {
                     glfwPollEvents();
 
