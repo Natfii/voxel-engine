@@ -50,7 +50,12 @@
       "Bash(git restore:*)",
       "Bash(powershell -Command:*)",
       "Bash(python:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(for file in block_system.h frustum.h logger.h player.h vulkan_renderer.h world.h world_utils.h)",
+      "Bash(do sed -i '/ \\* Enhanced API documentation by Claude/d; / \\* Created by.*Claude/d;' \"$file\")",
+      "Bash(done)",
+      "Bash(for file in chunk.cpp logger.cpp player.cpp)",
+      "Bash(do sed -i '/ \\* Enhanced API documentation by Claude/d; / \\* Created by.*Claude/d; / \\* Created by original author, enhanced documentation by Claude/d;' \"$file\")"
     ],
     "deny": [],
     "ask": []
