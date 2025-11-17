@@ -702,19 +702,6 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
     int chunkY = chunk->getChunkY();
     int chunkZ = chunk->getChunkZ();
 
-    // Bounds checking
-    int halfWidth = m_width / 2;
-    int halfHeight = m_height / 2;
-    int halfDepth = m_depth / 2;
-
-    // World is centered at Y=0, so Y chunks range from -halfHeight to +halfHeight-1
-    if (chunkX < -halfWidth || chunkX >= halfWidth ||
-        chunkY < -halfHeight || chunkY >= halfHeight ||
-        chunkZ < -halfDepth || chunkZ >= halfDepth) {
-        Logger::warning() << "Attempted to add out-of-bounds chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
-        return false;
-    }
-
     // Thread-safe insertion
     std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
