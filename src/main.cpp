@@ -243,6 +243,7 @@ int main() {
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         InputManager::instance().setContext(InputManager::Context::MAIN_MENU);
 
+        MenuResult menuResult;  // Declare outside loop so it's accessible after
         while (gameState == GameState::MAIN_MENU && !glfwWindowShouldClose(window)) {
             glfwPollEvents();
 
@@ -257,7 +258,7 @@ int main() {
             ImGui::NewFrame();
 
             // Render main menu and get result
-            MenuResult menuResult = mainMenu.render();
+            menuResult = mainMenu.render();
 
             // Process menu result
             if (menuResult.action == MenuAction::NEW_GAME) {
