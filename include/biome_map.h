@@ -21,6 +21,7 @@ struct BiomeInfluence {
     const Biome* biome;  // Pointer to the biome
     float weight;        // Normalized influence weight (0.0 to 1.0)
 
+    BiomeInfluence() : biome(nullptr), weight(0.0f) {}
     BiomeInfluence(const Biome* b, float w) : biome(b), weight(w) {}
 };
 

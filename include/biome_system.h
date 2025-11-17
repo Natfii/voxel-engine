@@ -7,10 +7,10 @@
 #include <mutex>
 #include <glm/glm.hpp>
 #include "biome_falloff.h"
+#include "tree_generator.h"
 
 // Forward declarations
 class VulkanRenderer;
-struct TreeTemplate;
 
 /**
  * Represents the location where a biome can spawn

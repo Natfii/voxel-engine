@@ -368,9 +368,8 @@ void World::decorateWorld() {
 
     Logger::info() << "Starting world decoration (trees, vegetation)...";
 
-    // Generate per-biome tree templates first (each biome gets 10 unique tree templates)
-    // Use .get() to extract raw pointer from unique_ptr (safe borrowing - function doesn't store pointer)
-    BiomeRegistry::getInstance().generateTreeTemplates(m_treeGenerator.get());
+    // NOTE: Tree templates already generated in World constructor - no need to regenerate
+    // BiomeRegistry::getInstance().generateTreeTemplates() is called in World::World()
 
     int treesPlaced = 0;
     int undergroundFeaturesPlaced = 0;
@@ -378,12 +377,6 @@ void World::decorateWorld() {
     // Use offset seed for decoration to make it different from terrain
     std::mt19937 rng(m_seed + 77777);
     std::uniform_int_distribution<int> densityDist(0, 100);
-
-    // Calculate world bounds
-    int halfWidth = m_width / 2;
-    int halfHeight = m_height / 2;
-    int halfDepth = m_depth / 2;
-    int maxWorldY = m_height * Chunk::HEIGHT;
 
     // Track modified chunks for selective mesh regeneration
     std::unordered_set<Chunk*> modifiedChunks;
@@ -393,11 +386,20 @@ void World::decorateWorld() {
     // This gives proper Minecraft-accurate tree density in forests
     const int TREE_SAMPLE_SPACING = 4;  // Sample every 4 blocks
 
-    for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
-        for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
-            // Grid-based sampling within chunk
-            for (int localX = 0; localX < Chunk::WIDTH; localX += TREE_SAMPLE_SPACING) {
-                for (int localZ = 0; localZ < Chunk::DEPTH; localZ += TREE_SAMPLE_SPACING) {
+    // PERFORMANCE FIX: Only iterate over LOADED chunks instead of all possible chunk coordinates
+    // Old code iterated 4096x4096 = 16,777,216 times even with only 729 chunks loaded!
+    Logger::info() << "Decorating " << m_chunks.size() << " loaded chunks...";
+
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+    for (Chunk* chunk : m_chunks) {
+        if (!chunk) continue;
+
+        int chunkX = chunk->getChunkX();
+        int chunkZ = chunk->getChunkZ();
+
+        // Grid-based sampling within chunk
+        for (int localX = 0; localX < Chunk::WIDTH; localX += TREE_SAMPLE_SPACING) {
+            for (int localZ = 0; localZ < Chunk::DEPTH; localZ += TREE_SAMPLE_SPACING) {
                     // Add small random offset (0-3 blocks) to avoid perfectly aligned trees
                     std::uniform_int_distribution<int> offsetDist(0, TREE_SAMPLE_SPACING - 1);
                     int offsetX = offsetDist(rng);
@@ -474,46 +476,49 @@ void World::decorateWorld() {
                         }
                     }
                 }
-                }  // End localZ loop
-            }  // End localX loop
-        }  // End chunkZ loop
-    }  // End chunkX loop
+            }  // End localZ loop
+        }  // End localX loop
+    }  // End chunk loop
 
     // Decorate underground biome chambers
-    for (int chunkX = -halfWidth; chunkX < m_width - halfWidth; ++chunkX) {
-        for (int chunkY = -halfHeight; chunkY < m_height - halfHeight; ++chunkY) {
-            for (int chunkZ = -halfDepth; chunkZ < m_depth - halfDepth; ++chunkZ) {
-                // Sample positions in underground chunks
-                std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
+    // PERFORMANCE FIX: Only iterate over LOADED chunks
+    for (Chunk* chunk : m_chunks) {
+        if (!chunk) continue;
 
-                for (int attempt = 0; attempt < 2; attempt++) {  // 2 attempts per underground chunk
-                    int localX = posDist(rng);
-                    int localY = posDist(rng);
-                    int localZ = posDist(rng);
+        int chunkX = chunk->getChunkX();
+        int chunkY = chunk->getChunkY();
+        int chunkZ = chunk->getChunkZ();
 
-                    int worldX = chunkX * Chunk::WIDTH + localX;
-                    int worldY = chunkY * Chunk::HEIGHT + localY;
-                    int worldZ = chunkZ * Chunk::DEPTH + localZ;
+        // Sample positions in underground chunks
+        std::uniform_int_distribution<int> posDist(0, Chunk::WIDTH - 1);
 
-                    // Check if in underground chamber
-                    if (m_biomeMap->isUndergroundBiomeAt(worldX, worldY, worldZ)) {
-                        // Check if this is floor of chamber (solid block below, air here)
-                        int blockHere = getBlockAt(worldX, worldY, worldZ);
-                        int blockBelow = getBlockAt(worldX, static_cast<float>(worldY - 1), worldZ);
+        for (int attempt = 0; attempt < 2; attempt++) {  // 2 attempts per underground chunk
+            int localX = posDist(rng);
+            int localY = posDist(rng);
+            int localZ = posDist(rng);
 
-                        if (blockHere == BLOCK_AIR && blockBelow == BLOCK_STONE) {
-                            // Get underground biome
-                            const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+            int worldX = chunkX * Chunk::WIDTH + localX;
+            int worldY = chunkY * Chunk::HEIGHT + localY;
+            int worldZ = chunkZ * Chunk::DEPTH + localZ;
 
-                            // Place mushrooms or small features (for now, just count)
-                            // TODO: Add mushrooms, glowing flora, etc.
-                            undergroundFeaturesPlaced++;
-                        }
-                    }
+            // Check if in underground chamber
+            if (m_biomeMap->isUndergroundBiomeAt(worldX, worldY, worldZ)) {
+                // Check if this is floor of chamber (solid block below, air here)
+                int blockHere = getBlockAt(worldX, worldY, worldZ);
+                int blockBelow = getBlockAt(worldX, static_cast<float>(worldY - 1), worldZ);
+
+                if (blockHere == BLOCK_AIR && blockBelow == BLOCK_STONE) {
+                    // Get underground biome
+                    const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+
+                    // Place mushrooms or small features (for now, just count)
+                    // TODO: Add mushrooms, glowing flora, etc.
+                    undergroundFeaturesPlaced++;
                 }
             }
         }
     }
+    lock.unlock();  // Release lock after decoration complete
 
     Logger::info() << "Decoration complete. Placed " << treesPlaced << " trees and "
                    << undergroundFeaturesPlaced << " underground features";

@@ -18,6 +18,7 @@ struct BiomeCenter {
     float moisture;            // Moisture at center
     int id;                    // Unique identifier for this center
 
+    BiomeCenter() : position(0.0f, 0.0f), biome(nullptr), temperature(0.0f), moisture(0.0f), id(0) {}
     BiomeCenter(const glm::vec2& pos, const Biome* b, float temp, float moist, int centerID)
         : position(pos), biome(b), temperature(temp), moisture(moist), id(centerID) {}
 };
