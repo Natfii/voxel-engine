@@ -30,6 +30,7 @@
 #include "vulkan_renderer.h"
 #include "chunk.h"
 #include "world.h"
+#include "world_streaming.h"
 #include "block_system.h"
 #include "biome_system.h"
 #include "structure_system.h"
@@ -666,6 +667,11 @@ int main() {
         // Hide loading screen - game is ready!
         loadingComplete = true;
 
+        // Initialize world streaming for infinite world generation
+        std::cout << "Starting world streaming system..." << std::endl;
+        WorldStreaming worldStreaming(&world, world.getBiomeMap(), &renderer);
+        worldStreaming.start();  // Starts worker threads (default: CPU cores - 1)
+
         bool isPaused = false;
         bool escPressed = false;
         bool requestMouseReset = false;
@@ -809,6 +815,13 @@ int main() {
                 requestMouseReset = false;
             }
 
+            // Update world streaming (load/unload chunks based on player position)
+            const float renderDistance = 120.0f;
+            const float loadDistance = renderDistance + 32.0f;    // Load chunks slightly beyond render distance
+            const float unloadDistance = renderDistance + 64.0f;  // Unload chunks well beyond render distance
+            worldStreaming.updatePlayerPosition(player.getPosition(), loadDistance, unloadDistance);
+            worldStreaming.processCompletedChunks(4);  // Upload max 4 chunks per frame to avoid stuttering
+
             // Calculate matrices
             glm::mat4 model = glm::mat4(1.0f);
             glm::mat4 view = player.getViewMatrix();
@@ -822,10 +835,6 @@ int main() {
 
             // Calculate view-projection matrix for frustum culling
             glm::mat4 viewProj = projection * view;
-
-            // Update uniform buffer with camera position and render distance for fog
-            // Increased for wider biomes and better fog visibility
-            const float renderDistance = 120.0f;
 
             // Detect if camera is specifically underwater (not just feet in water)
             bool underwater = player.isCameraUnderwater();
@@ -1092,6 +1101,10 @@ int main() {
         }
 
         std::cout << "Shutting down..." << std::endl;
+
+        // Stop world streaming first (shutdown worker threads)
+        std::cout << "  Stopping world streaming..." << std::endl;
+        worldStreaming.stop();
 
         // Wait for device to finish before cleanup
         std::cout << "  Waiting for GPU to finish..." << std::endl;
