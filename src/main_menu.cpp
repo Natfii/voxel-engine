@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <cstring>
+#include <filesystem>
+#include <iostream>
 
 MainMenu::MainMenu(GLFWwindow* window) : window(window) {
     // Initialize random seed generator
@@ -27,7 +29,7 @@ MenuResult MainMenu::render() {
         renderSeedDialog();
 
         // Check if we should start the game
-        if (!showSeedDialog) {
+        if (!showSeedDialog && !showLoadDialog) {
             // Dialog was closed with "Start Game" button
             // Parse the seed from input buffer
             int seed = std::atoi(seedInputBuffer);
@@ -37,6 +39,14 @@ MenuResult MainMenu::render() {
             }
             result.action = MenuAction::NEW_GAME;
             result.seed = seed;
+        }
+    } else if (showLoadDialog) {
+        renderLoadWorldDialog();
+
+        // Check if a world was selected
+        if (!showLoadDialog && selectedWorldIndex >= 0) {
+            result.action = MenuAction::LOAD_GAME;
+            result.worldPath = availableWorlds[selectedWorldIndex];
         }
     } else {
         renderMainButtons();
@@ -72,12 +82,12 @@ void MainMenu::renderMainButtons() {
         showSeedDialog = true;
     }
 
-    // Load Game button (placeholder)
+    // Load Game button
     ImGui::SetCursorPos(ImVec2(centerX - buttonWidth * 0.5f, centerY - 60.0f + (buttonHeight + buttonSpacing)));
     if (ImGui::Button("Load Game", ImVec2(buttonWidth, buttonHeight))) {
-        // TODO: Implement save/load system
-        // For now, just show a message in the console
-        showSeedDialog = false;  // Close any open dialogs
+        showLoadDialog = true;
+        selectedWorldIndex = -1;
+        availableWorlds = scanAvailableWorlds();
     }
 
     // Host button (placeholder)
@@ -103,16 +113,6 @@ void MainMenu::renderMainButtons() {
     static bool showMessage = false;
     static std::string message = "";
 
-    // Check if Load Game was clicked
-    ImVec2 loadButtonPos(centerX - buttonWidth * 0.5f, centerY - 60.0f + (buttonHeight + buttonSpacing));
-    ImVec2 loadButtonMax(loadButtonPos.x + buttonWidth, loadButtonPos.y + buttonHeight);
-    if (ImGui::IsMouseClicked(0) &&
-        io.MousePos.x >= loadButtonPos.x && io.MousePos.x <= loadButtonMax.x &&
-        io.MousePos.y >= loadButtonPos.y && io.MousePos.y <= loadButtonMax.y) {
-        message = "Save/Load system coming soon!";
-        showMessage = true;
-        messageTimer = 3.0f;
-    }
 
     // Check if Host was clicked
     ImVec2 hostButtonPos(centerX - buttonWidth * 0.5f, centerY - 60.0f + 2 * (buttonHeight + buttonSpacing));

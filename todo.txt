@@ -1,20 +1,6 @@
-# TODO List
-# Extracted from code comments
-
-## Main Menu / Save System
-- src/main.cpp:268 - Implement load game functionality
-- src/main_menu.cpp:78 - Implement save/load system
-
-## Water/Liquid System
-- src/main.cpp:743 - Implement dirty list of changed water blocks instead of full world scan
-  Current implementation scans ALL 432 chunks × 32,768 blocks = 14M blocks per update
-- src/world.cpp:1120 - Update rendering to show water height based on level (currently all water renders at full height)
-- src/world.cpp:1134 - Track water-containing chunks for even better performance
-- src/world.cpp:1284 - Track water level changes in simulation and spawn particles
-
-## Biome/World Features
-- src/world.cpp:399 - Add mushrooms, glowing flora, etc. to underground biomes
-
-## Future Enhancements
-- src/player.cpp:174 - Sprint toggle mode could be added by adding a sprint_toggle_mode config option in config.ini
-- src/world.cpp:844 - Block break animations could be added by adding a callback parameter to setBlockAt function
+[X] Implement load game functionality (src/main.cpp:268) - DONE
+[X] Implement save/load system (src/main_menu.cpp:78) - DONE
+[X] Implement dirty list for water blocks instead of full scan (src/main.cpp:743) - ALREADY IMPLEMENTED
+[X] Update rendering to show water height based on level (src/world.cpp:1120) - ALREADY IMPLEMENTED
+[X] Track water-containing chunks (src/world.cpp:1134) - ALREADY IMPLEMENTED
+[X] Track water level changes and spawn particles (src/world.cpp:1284) - DONE

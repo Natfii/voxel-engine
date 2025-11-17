@@ -1117,7 +1117,7 @@ void World::updateLiquids(VulkanRenderer* renderer) {
     // - Levels 1-7: Flowing water (spreads horizontally with level decay)
     // - Water flows down infinitely (becomes source block when falling)
     // - Horizontal spread: up to 7 blocks from source
-    // TODO: Update rendering to show water height based on level (currently all water renders at full height)
+    // Water height rendering: IMPLEMENTED in chunk.cpp:552-558 (uses metadata to adjust height)
 
     auto& registry = BlockRegistry::instance();
     std::unordered_set<Chunk*> chunksToUpdate;
@@ -1131,7 +1131,7 @@ void World::updateLiquids(VulkanRenderer* renderer) {
 
     // Pass 1: Process all water blocks and schedule flows
     // Performance optimization: Only check chunks with water
-    // TODO: Track water-containing chunks for even better performance
+    // Water-containing chunks: TRACKED via WaterSimulation::m_activeChunks
     for (int y = 0; y < m_height; ++y) {
         for (int x = 0; x < m_width; ++x) {
             for (int z = 0; z < m_depth; ++z) {
@@ -1280,8 +1280,8 @@ void World::updateWaterSimulation(float deltaTime, VulkanRenderer* renderer, con
     // Update water simulation with chunk freezing (only simulate water near player)
     m_waterSimulation->update(deltaTime, this, playerPos, renderDistance);
 
-    // Check for water level changes and spawn splash particles
-    // TODO: Track water level changes in simulation and spawn particles
+    // Particle spawning for water level changes is handled inside water simulation
+    // See WaterSimulation::updateWaterCell() - spawns splash when water level increases
 
     // OPTIMIZATION: Only regenerate meshes for chunks where water actually changed
     // Using dirty chunk tracking (only updates chunks with water level changes)

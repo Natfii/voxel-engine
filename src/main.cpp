@@ -265,8 +265,13 @@ int main() {
                 gameState = GameState::IN_GAME;
                 std::cout << "Starting new game with seed: " << seed << std::endl;
             } else if (menuResult.action == MenuAction::LOAD_GAME) {
-                // TODO: Implement load game
-                std::cout << "Load game not yet implemented" << std::endl;
+                if (!menuResult.worldPath.empty()) {
+                    // Set flag to load world instead of generating new one
+                    gameState = GameState::IN_GAME;
+                    std::cout << "Loading world from: " << menuResult.worldPath << std::endl;
+                } else {
+                    std::cout << "Error: No world path provided" << std::endl;
+                }
             } else if (menuResult.action == MenuAction::QUIT) {
                 shouldQuit = true;
                 break;
@@ -296,6 +301,10 @@ int main() {
 
         // Disable cursor for gameplay
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+        // Determine if we're loading an existing world or creating a new one
+        bool loadingExistingWorld = (menuResult.action == MenuAction::LOAD_GAME && !menuResult.worldPath.empty());
+        std::string worldPath = menuResult.worldPath;
 
         // Get world configuration from config file (use seed from menu)
         int worldWidth = config.getInt("World", "world_width", 12);
@@ -348,40 +357,68 @@ int main() {
 
         // Loading stage 5: Initialize world (30%)
         loadingProgress = 0.30f;
-        loadingMessage = "Initializing world generator";
+        loadingMessage = loadingExistingWorld ? "Loading world data" : "Initializing world generator";
         renderLoadingScreen();
-        std::cout << "Initializing world generation..." << std::endl;
-        Chunk::initNoise(seed);
+
         World world(worldWidth, worldHeight, worldDepth, seed);
 
-        // Loading stage 6: Generate spawn area only (much faster than full world)
-        // With 320 chunk height, generating all 46,080 chunks takes forever
-        // Instead, generate just a small area around spawn and let streaming handle the rest
-        loadingProgress = 0.35f;
-        loadingMessage = "Generating spawn area";
-        renderLoadingScreen();
-        std::cout << "Generating spawn chunks (streaming will handle the rest)..." << std::endl;
+        if (loadingExistingWorld) {
+            std::cout << "Loading world from: " << worldPath << std::endl;
+            Chunk::initNoise(seed);  // Init with placeholder, will be overwritten by loaded seed
 
-        // We'll determine spawn chunk coordinates and generate them before finding exact spawn point
-        // Assume spawn will be somewhere near (0, 64, 0) in world space
-        // That's chunk (0, 2, 0) in chunk coordinates if spawn height is 64 blocks
-        // For centered world with 320 height: Y chunks from -160 to +159
-        // Spawn at Y=64 is chunk Y=2 (chunk 2 * 32 = 64-95 blocks)
-        int spawnChunkX = 0;
-        int spawnChunkY = 2;  // Y=64 surface is in chunk Y=2
-        int spawnChunkZ = 0;
-        int spawnRadius = 4;  // Generate 9x9x9 chunks = 729 chunks (reasonable startup time)
+            loadingProgress = 0.35f;
+            loadingMessage = "Loading chunks from disk";
+            renderLoadingScreen();
 
-        world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
+            if (!world.loadWorld(worldPath)) {
+                std::cerr << "Failed to load world, falling back to new world generation" << std::endl;
+                loadingExistingWorld = false;
+            } else {
+                // Update seed from loaded world
+                seed = world.getSeed();
+                Chunk::initNoise(seed);  // Re-init with correct seed
 
-        // Decorate world with trees and features
-        // Only decorates spawn chunks for faster startup
-        std::cout << "Placing trees and features..." << std::endl;
-        world.decorateWorld();
+                // Generate meshes for loaded chunks
+                std::cout << "Generating meshes for loaded chunks..." << std::endl;
+                loadingProgress = 0.50f;
+                loadingMessage = "Building chunk meshes";
+                renderLoadingScreen();
+            }
+        }
 
-        // Register water blocks with simulation system
-        std::cout << "Initializing water physics..." << std::endl;
-        world.registerWaterBlocks();
+        if (!loadingExistingWorld) {
+            std::cout << "Initializing world generation..." << std::endl;
+            Chunk::initNoise(seed);
+
+            // Loading stage 6: Generate spawn area only (much faster than full world)
+            // With 320 chunk height, generating all 46,080 chunks takes forever
+            // Instead, generate just a small area around spawn and let streaming handle the rest
+            loadingProgress = 0.35f;
+            loadingMessage = "Generating spawn area";
+            renderLoadingScreen();
+            std::cout << "Generating spawn chunks (streaming will handle the rest)..." << std::endl;
+
+            // We'll determine spawn chunk coordinates and generate them before finding exact spawn point
+            // Assume spawn will be somewhere near (0, 64, 0) in world space
+            // That's chunk (0, 2, 0) in chunk coordinates if spawn height is 64 blocks
+            // For centered world with 320 height: Y chunks from -160 to +159
+            // Spawn at Y=64 is chunk Y=2 (chunk 2 * 32 = 64-95 blocks)
+            int spawnChunkX = 0;
+            int spawnChunkY = 2;  // Y=64 surface is in chunk Y=2
+            int spawnChunkZ = 0;
+            int spawnRadius = 4;  // Generate 9x9x9 chunks = 729 chunks (reasonable startup time)
+
+            world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
+
+            // Decorate world with trees and features
+            // Only decorates spawn chunks for faster startup
+            std::cout << "Placing trees and features..." << std::endl;
+            world.decorateWorld();
+
+            // Register water blocks with simulation system
+            std::cout << "Initializing water physics..." << std::endl;
+            world.registerWaterBlocks();
+        }
 
         // Loading stage 8: Create GPU buffers (85%)
         loadingProgress = 0.80f;
