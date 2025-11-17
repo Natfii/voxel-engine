@@ -56,8 +56,8 @@ BiomeMap::BiomeMap(int seed) {
     m_caveTunnelNoise = std::make_unique<FastNoiseLite>(seed + 350);
     m_caveTunnelNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_caveTunnelNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
-    m_caveTunnelNoise->SetFractalOctaves(3);  // More octaves = more winding detail
-    m_caveTunnelNoise->SetFrequency(0.02f);   // Lower frequency = longer, wider tunnels
+    m_caveTunnelNoise->SetFractalOctaves(4);  // More octaves = more detailed winding
+    m_caveTunnelNoise->SetFrequency(0.025f);  // Slightly higher for more varied tunnel paths
 
     // Underground chamber noise - creates contained underground biome pockets
     // Higher frequency than surface biomes = smaller, more contained underground areas
@@ -255,39 +255,60 @@ float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
     // FastNoiseLite is thread-safe for reads - no mutex needed
     // Note: Cave density caching disabled - noise lookups are fast enough
 
-    // === Winding Tunnel System (primary cave network) ===
-    // Creates long, continuous tunnels that connect underground biomes
-    // Technique: Sample 3D noise and create tunnels where abs(noise) is close to a target value
+    // === Primary Winding Tunnel System ===
+    // Creates narrow, winding tunnels that snake through the underground
+    // Uses "Perlin worms" technique: tunnels where abs(noise) is close to 0
     float tunnelNoise = m_caveTunnelNoise->GetNoise(worldX, worldY, worldZ);
 
-    // Create winding tunnels where noise is close to 0 (creates tubular structure)
-    // Tunnel forms when |noise| < threshold (creates continuous winding paths)
-    float tunnelRadius = 0.30f;  // Controls tunnel width (0.30 = wider tunnels for better cave systems)
-    float tunnelDensity = std::abs(tunnelNoise) / tunnelRadius;  // 0.0 at tunnel center, >1.0 outside
-    tunnelDensity = std::min(1.0f, tunnelDensity);  // Clamp to [0, 1]
+    // Narrower tunnels for more realistic winding caves
+    float tunnelRadius = 0.12f;  // Reduced from 0.30 for tighter, more winding tunnels
+    float tunnelDensity = std::abs(tunnelNoise) / tunnelRadius;
+    tunnelDensity = std::min(1.0f, tunnelDensity);
 
-    // === Chamber System (larger cave rooms) ===
-    // Creates open spaces that tunnels connect to
+    // === Secondary Tunnel System (crosses primary for connectivity) ===
+    // Rotated noise to create intersecting tunnel networks
+    float tunnelNoise2 = m_caveTunnelNoise->GetNoise(worldX * 0.7f + 1000.0f, worldY * 1.3f, worldZ * 0.7f);
+    float tunnelRadius2 = 0.10f;  // Even narrower secondary tunnels
+    float tunnelDensity2 = std::abs(tunnelNoise2) / tunnelRadius2;
+    tunnelDensity2 = std::min(1.0f, tunnelDensity2);
+
+    // === Occasional Chamber System (rare large rooms) ===
+    // Sparse chambers that tunnels occasionally open into
     float chamberNoise = m_caveNoise->GetNoise(worldX, worldY * 0.5f, worldZ);
     float chamberDensity = mapNoiseTo01(chamberNoise);
 
-    // === Combine tunnel and chamber systems ===
-    // Use minimum (air wins) to connect tunnels to chambers
-    float combinedDensity = std::min(tunnelDensity, chamberDensity);
+    // Make chambers much rarer by raising threshold
+    chamberDensity = (chamberDensity < 0.25f) ? 0.0f : 1.0f;  // Only 25% of areas can be chambers
 
-    // === Surface proximity filter ===
-    // Make caves rarer near the surface (top 20 blocks below terrain height)
+    // === Combine systems ===
+    // Use minimum so tunnels and chambers connect
+    float combinedDensity = std::min(std::min(tunnelDensity, tunnelDensity2), chamberDensity);
+
+    // === Surface Entrance System ===
+    // Allow caves to reach surface in some areas, creating natural entrances
     int terrainHeight = getTerrainHeightAt(worldX, worldZ);
     float depthBelowSurface = terrainHeight - worldY;
 
-    if (depthBelowSurface < 20.0f && depthBelowSurface > 0.0f) {
-        // Near surface - make caves rarer
-        float surfaceProximity = 1.0f - (depthBelowSurface / 20.0f);  // 1.0 at surface, 0.0 at depth 20
-        combinedDensity = combinedDensity + surfaceProximity * (1.0f - combinedDensity);  // Push towards solid
+    // Check if we're near surface (top 15 blocks)
+    if (depthBelowSurface >= 0.0f && depthBelowSurface < 15.0f) {
+        // Sample entrance noise to determine if this area should have cave entrance
+        float entranceNoise = m_undergroundChamberNoise->GetNoise(worldX * 0.05f, 0.0f, worldZ * 0.05f);
+        float entranceChance = mapNoiseTo01(entranceNoise);
+
+        // Only 15% of surface areas have cave entrances
+        if (entranceChance > 0.85f) {
+            // This area can have a cave entrance - don't block caves near surface
+            // Gradually transition from open entrance to normal cave
+            float transitionDepth = depthBelowSurface / 8.0f;  // Transition over 8 blocks
+            combinedDensity = combinedDensity * (0.3f + 0.7f * transitionDepth);
+        } else {
+            // No entrance here - gradually seal off caves near surface
+            float surfaceProximity = 1.0f - (depthBelowSurface / 15.0f);
+            combinedDensity = combinedDensity + surfaceProximity * (1.0f - combinedDensity);
+        }
     }
 
     // Cave threshold: < 0.45 = air (cave), >= 0.45 = solid
-    // We return density where higher = more solid
     return combinedDensity;
 }
 
