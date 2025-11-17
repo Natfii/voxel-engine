@@ -843,10 +843,14 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
         return;  // No vertices to upload
     }
 
-    // Destroy old buffers if they exist
-    destroyBuffers(renderer);
-
+    // CRITICAL FIX: Wait for GPU to finish using old buffers before destroying them
+    // This prevents use-after-free crashes when blocks are placed/broken during rendering
+    // TODO: Optimize with fence-based deferred deletion queue for better performance
     VkDevice device = renderer->getDevice();
+    vkDeviceWaitIdle(device);
+
+    // Destroy old buffers if they exist (now safe - GPU is idle)
+    destroyBuffers(renderer);
 
     // ========== CREATE OPAQUE BUFFERS ==========
     if (m_vertexCount > 0) {
@@ -1100,7 +1104,11 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
         return;  // No vertices to upload
     }
 
-    // Destroy old buffers if they exist
+    // CRITICAL FIX: Wait for GPU before destroying old buffers
+    VkDevice device = renderer->getDevice();
+    vkDeviceWaitIdle(device);
+
+    // Destroy old buffers if they exist (now safe - GPU is idle)
     destroyBuffers(renderer);
 
     // Initialize staging buffers to NULL

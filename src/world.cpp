@@ -998,6 +998,10 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
         setBlockAtUnsafe(worldX, worldY, worldZ, 0);
     }
 
+    // FIX: Mark chunk as dirty so block changes are saved
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+    markChunkDirty(coords.chunkX, coords.chunkY, coords.chunkZ);
+
     // Update the affected chunk and all adjacent chunks
     // Must regenerate MESH (not just vertex buffer) because face culling needs updating
     Chunk* affectedChunk = getChunkAtWorldPosUnsafe(worldX, worldY, worldZ);
@@ -1079,6 +1083,10 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
 
     // Place the block
     setBlockAtUnsafe(worldX, worldY, worldZ, blockID);
+
+    // FIX: Mark chunk as dirty so block changes are saved
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+    markChunkDirty(coords.chunkX, coords.chunkY, coords.chunkZ);
 
     // If placing water, set metadata to 0 (source block) and register with simulation
     if (registry.get(blockID).isLiquid) {
@@ -1416,6 +1424,10 @@ int World::saveModifiedChunks() {
         return 0;
     }
 
+    // THREAD SAFETY FIX: Lock while accessing m_dirtyChunks, m_chunkMap, and m_unloadedChunksCache
+    // Without this, concurrent chunk loading/unloading during autosave causes crashes
+    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
     int savedCount = 0;
 
     // Save dirty chunks from active chunks
@@ -1449,6 +1461,9 @@ int World::saveModifiedChunks() {
 }
 
 void World::markChunkDirty(int chunkX, int chunkY, int chunkZ) {
+    // THREAD SAFETY FIX: Protect m_dirtyChunks with mutex
+    // Without this, concurrent calls from block placement + autosave cause crashes
+    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
     ChunkCoord coord{chunkX, chunkY, chunkZ};
     m_dirtyChunks.insert(coord);
 }
