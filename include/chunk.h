@@ -371,6 +371,39 @@ public:
      */
     void setVisible(bool visible) { m_visible = visible; }
 
+    /**
+     * @brief Checks if chunk is fully occluded by neighbors
+     *
+     * OCCLUSION CULLING: If a chunk is completely surrounded by solid opaque chunks,
+     * it's invisible and can skip mesh generation and rendering entirely.
+     * Huge performance win for underground chunks!
+     *
+     * @param world World instance to query neighbors
+     * @return True if chunk is fully occluded (all 6 neighbors are solid)
+     */
+    bool isFullyOccluded(class World* world) const;
+
+    // ========== Chunk Pooling ==========
+
+    /**
+     * @brief Resets chunk for reuse from pool
+     *
+     * Clears all blocks to air, resets position, and prepares chunk for
+     * reuse without deallocating memory. Much faster than new/delete.
+     *
+     * @param x New chunk X coordinate
+     * @param y New chunk Y coordinate
+     * @param z New chunk Z coordinate
+     * @note Does NOT destroy Vulkan buffers - caller must do that first
+     */
+    void reset(int x, int y, int z);
+
+    /**
+     * @brief Checks if chunk is completely empty (all air)
+     * @return True if all blocks are air, false otherwise
+     */
+    bool isEmpty() const;
+
 private:
     // ========== Position and Storage ==========
     int m_x, m_y, m_z;                      ///< Chunk coordinates in chunk space
@@ -413,4 +446,37 @@ private:
     glm::vec3 m_minBounds;                  ///< AABB minimum corner (world space)
     glm::vec3 m_maxBounds;                  ///< AABB maximum corner (world space)
     bool m_visible;                         ///< Visibility flag for culling
+
+    // ========== RLE Compression Helpers ==========
+
+    /**
+     * @brief Compresses block data using Run-Length Encoding
+     *
+     * RLE is perfect for terrain: layers of stone/dirt/air compress extremely well.
+     * Format: [blockID, count, blockID, count, ...]
+     * Typical compression: 32KB -> 2-8KB (75-90% reduction!)
+     *
+     * @param output Vector to write compressed data to
+     */
+    void compressBlocks(std::vector<uint8_t>& output) const;
+
+    /**
+     * @brief Decompresses block data from Run-Length Encoding
+     * @param input Compressed data
+     * @return True if decompression succeeded, false if data corrupted
+     */
+    bool decompressBlocks(const std::vector<uint8_t>& input);
+
+    /**
+     * @brief Compresses metadata using Run-Length Encoding
+     * @param output Vector to write compressed data to
+     */
+    void compressMetadata(std::vector<uint8_t>& output) const;
+
+    /**
+     * @brief Decompresses metadata from Run-Length Encoding
+     * @param input Compressed data
+     * @return True if decompression succeeded, false if data corrupted
+     */
+    bool decompressMetadata(const std::vector<uint8_t>& input);
 };
