@@ -1076,22 +1076,22 @@ int main() {
 
         // Save world, player, and inventory before cleanup
         std::cout << "  Saving world..." << std::endl;
-        std::string worldPath = "worlds/world_" + std::to_string(seed);
-        if (world.saveWorld(worldPath)) {
-            std::cout << "  World saved successfully to " << worldPath << std::endl;
+        std::string saveWorldPath = "worlds/world_" + std::to_string(seed);
+        if (world.saveWorld(saveWorldPath)) {
+            std::cout << "  World saved successfully to " << saveWorldPath << std::endl;
         } else {
             std::cout << "  Warning: Failed to save world" << std::endl;
         }
 
         std::cout << "  Saving player state..." << std::endl;
-        if (player.savePlayerState(worldPath)) {
+        if (player.savePlayerState(saveWorldPath)) {
             std::cout << "  Player state saved successfully" << std::endl;
         } else {
             std::cout << "  Warning: Failed to save player state" << std::endl;
         }
 
         std::cout << "  Saving inventory..." << std::endl;
-        if (inventory.save(worldPath)) {
+        if (inventory.save(saveWorldPath)) {
             std::cout << "  Inventory saved successfully" << std::endl;
         } else {
             std::cout << "  Warning: Failed to save inventory" << std::endl;
