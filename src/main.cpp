@@ -870,10 +870,10 @@ int main() {
             static float streamingUpdateTimer = 0.0f;
             streamingUpdateTimer += deltaTime;
             const float STREAMING_UPDATE_INTERVAL = 0.25f;  // 4 times per second
+            const float renderDistance = 120.0f;
 
             if (streamingUpdateTimer >= STREAMING_UPDATE_INTERVAL) {
                 streamingUpdateTimer = 0.0f;
-                const float renderDistance = 120.0f;
                 const float loadDistance = renderDistance + 32.0f;    // Load chunks slightly beyond render distance
                 const float unloadDistance = renderDistance + 64.0f;  // Unload chunks well beyond render distance
                 worldStreaming.updatePlayerPosition(player.Position, loadDistance, unloadDistance);
