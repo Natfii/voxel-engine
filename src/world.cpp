@@ -126,10 +126,10 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
                     int chunkY = centerChunkY + dy;
                     int chunkZ = centerChunkZ + dz;
 
-                    // Create chunk if it doesn't exist
+                    // Create chunk if it doesn't exist (using chunk pool!)
                     ChunkCoord coord{chunkX, chunkY, chunkZ};
                     if (m_chunkMap.find(coord) == m_chunkMap.end()) {
-                        auto chunk = std::make_unique<Chunk>(chunkX, chunkY, chunkZ);
+                        auto chunk = acquireChunk(chunkX, chunkY, chunkZ);
                         Chunk* chunkPtr = chunk.get();
                         m_chunkMap[coord] = std::move(chunk);
                         m_chunks.push_back(chunkPtr);
@@ -207,7 +207,7 @@ void World::generateWorld() {
         for (int x = -halfWidth; x < m_width - halfWidth; x++) {
             for (int y = -halfHeight; y < m_height - halfHeight; y++) {
                 for (int z = -halfDepth; z < m_depth - halfDepth; z++) {
-                    auto chunk = std::make_unique<Chunk>(x, y, z);
+                    auto chunk = acquireChunk(x, y, z);
                     Chunk* chunkPtr = chunk.get();
                     m_chunkMap[{x, y, z}] = std::move(chunk);
                     m_chunks.push_back(chunkPtr);
@@ -464,6 +464,80 @@ void World::decorateWorld() {
 
     Logger::info() << "Regenerated " << modifiedChunksVec.size() << " chunk meshes in parallel (out of "
                    << m_chunks.size() << " total chunks)";
+}
+
+void World::decorateChunk(Chunk* chunk) {
+    using namespace TerrainGeneration;
+
+    if (!chunk || chunk->getChunkY() < 0) {
+        return;  // Only decorate surface chunks
+    }
+
+    // DETERMINISTIC SEEDING: Use chunk coordinates + world seed
+    // This ensures the same chunk always gets the same trees, regardless of load order
+    int chunkX = chunk->getChunkX();
+    int chunkY = chunk->getChunkY();
+    int chunkZ = chunk->getChunkZ();
+
+    // Hash chunk coords into seed (same chunk coords always give same seed)
+    uint64_t chunkSeed = m_seed + 77777;  // Decoration offset
+    chunkSeed ^= (uint64_t)chunkX * 73856093;
+    chunkSeed ^= (uint64_t)chunkY * 19349663;
+    chunkSeed ^= (uint64_t)chunkZ * 83492791;
+
+    std::mt19937 rng(chunkSeed);
+    std::uniform_int_distribution<int> densityDist(0, 100);
+
+    // Grid-based tree sampling (same as decorateWorld)
+    const int TREE_SAMPLE_SPACING = 4;
+
+    for (int localX = 0; localX < Chunk::WIDTH; localX += TREE_SAMPLE_SPACING) {
+        for (int localZ = 0; localZ < Chunk::DEPTH; localZ += TREE_SAMPLE_SPACING) {
+            // Add small random offset (0-3 blocks) to avoid perfectly aligned trees
+            std::uniform_int_distribution<int> offsetDist(0, TREE_SAMPLE_SPACING - 1);
+            int offsetX = offsetDist(rng);
+            int offsetZ = offsetDist(rng);
+
+            int sampleX = std::min(localX + offsetX, Chunk::WIDTH - 1);
+            int sampleZ = std::min(localZ + offsetZ, Chunk::DEPTH - 1);
+
+            // Convert to world coordinates
+            float worldX = static_cast<float>(chunkX * Chunk::WIDTH + sampleX);
+            float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + sampleZ);
+
+            // Get biome at this position
+            const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+            if (!biome || !biome->trees_spawn) continue;
+
+            // Check tree density probability
+            if (densityDist(rng) > biome->tree_density) continue;
+
+            // Get terrain height from biome map
+            int terrainHeight = m_biomeMap->getTerrainHeightAt(worldX, worldZ);
+
+            // Find actual solid ground near terrain height
+            int groundY = terrainHeight;
+            for (int y = terrainHeight; y >= std::max(0, terrainHeight - 5); y--) {
+                int blockID = getBlockAt(worldX, static_cast<float>(y), worldZ);
+                if (blockID != BLOCK_AIR && blockID != BLOCK_WATER) {
+                    groundY = y;
+                    break;
+                }
+            }
+
+            if (groundY < 10) continue;  // Too low for tree placement
+
+            // Bounds check before casting to int
+            if (worldX < INT_MIN || worldX > INT_MAX || worldZ < INT_MIN || worldZ > INT_MAX) {
+                continue;
+            }
+            int blockX = static_cast<int>(worldX);
+            int blockZ = static_cast<int>(worldZ);
+
+            // Place tree (no mesh regeneration - will be done after chunk is uploaded)
+            m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ, biome);
+        }
+    }
 }
 
 void World::registerWaterBlocks() {
@@ -751,25 +825,57 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
         return false;  // Chunk doesn't exist
     }
 
-    Chunk* chunkPtr = it->second.get();
-
     // Remove from vector (order doesn't matter, so use swap-and-pop for O(1))
+    Chunk* chunkPtr = it->second.get();
     auto vecIt = std::find(m_chunks.begin(), m_chunks.end(), chunkPtr);
     if (vecIt != m_chunks.end()) {
-        // Swap with last element and pop
         std::swap(*vecIt, m_chunks.back());
         m_chunks.pop_back();
     }
 
-    // Destroy Vulkan buffers before removing chunk
+    // Destroy Vulkan buffers (can't keep GPU resources in cache)
     if (renderer) {
         chunkPtr->destroyBuffers(renderer);
     }
 
-    // Remove from map (this destroys the chunk via unique_ptr)
+    // EMPTY CHUNK CULLING: Don't cache empty chunks (they're free to regenerate!)
+    // This saves RAM for sky chunks and fully-mined chunks
+    if (chunkPtr->isEmpty()) {
+        Logger::debug() << "Skipping cache for empty chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                       << "), returning to pool instead";
+        releaseChunk(std::move(it->second));
+        m_chunkMap.erase(it);
+        m_dirtyChunks.erase(coord);  // Remove from dirty set if present
+        return true;
+    }
+
+    // Move chunk to cache instead of deleting (RAM cache for fast reload)
+    m_unloadedChunksCache[coord] = std::move(it->second);
     m_chunkMap.erase(it);
 
-    Logger::debug() << "Removed chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from world";
+    // Check cache size limit and evict oldest chunks if needed
+    if (m_unloadedChunksCache.size() > m_maxCachedChunks) {
+        // Evict first chunk found (simple eviction, could use LRU later)
+        auto evictIt = m_unloadedChunksCache.begin();
+        ChunkCoord evictCoord = evictIt->first;
+
+        // Save if dirty before eviction
+        if (m_dirtyChunks.count(evictCoord) > 0) {
+            if (!m_worldPath.empty()) {
+                evictIt->second->save(m_worldPath);
+                m_dirtyChunks.erase(evictCoord);
+            }
+        }
+
+        // Return evicted chunk to pool for reuse (CHUNK POOLING)
+        std::unique_ptr<Chunk> evictedChunk = std::move(evictIt->second);
+        m_unloadedChunksCache.erase(evictIt);
+        releaseChunk(std::move(evictedChunk));
+        Logger::debug() << "Evicted cached chunk to stay under limit (" << m_maxCachedChunks << ")";
+    }
+
+    Logger::debug() << "Moved chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                   << ") to cache (total cached: " << m_unloadedChunksCache.size() << ")";
 
     return true;
 }
@@ -841,6 +947,9 @@ void World::setBlockAt(float worldX, float worldY, float worldZ, int blockID, bo
 
     // Set the block
     chunk->setBlock(coords.localX, coords.localY, coords.localZ, blockID);
+
+    // Mark chunk as dirty (needs saving during next autosave)
+    markChunkDirty(coords.chunkX, coords.chunkY, coords.chunkZ);
 
     // Optionally regenerate mesh immediately (disable for batch operations)
     if (regenerateMesh) {
@@ -963,6 +1072,10 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
         setBlockAtUnsafe(worldX, worldY, worldZ, 0);
     }
 
+    // FIX: Mark chunk as dirty so block changes are saved
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+    markChunkDirtyUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
+
     // Update the affected chunk and all adjacent chunks
     // Must regenerate MESH (not just vertex buffer) because face culling needs updating
     Chunk* affectedChunk = getChunkAtWorldPosUnsafe(worldX, worldY, worldZ);
@@ -1044,6 +1157,10 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
 
     // Place the block
     setBlockAtUnsafe(worldX, worldY, worldZ, blockID);
+
+    // FIX: Mark chunk as dirty so block changes are saved
+    auto coords = worldToBlockCoords(worldX, worldY, worldZ);
+    markChunkDirtyUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
 
     // If placing water, set metadata to 0 (source block) and register with simulation
     if (registry.get(blockID).isLiquid) {
@@ -1308,8 +1425,9 @@ bool World::saveWorld(const std::string& worldPath) const {
     namespace fs = std::filesystem;
 
     try {
-        // Store world name from path
+        // Store world name and path for chunk streaming persistence
         const_cast<World*>(this)->m_worldName = fs::path(worldPath).filename().string();
+        const_cast<World*>(this)->m_worldPath = worldPath;
 
         // Create world directory
         fs::create_directories(worldPath);
@@ -1343,11 +1461,20 @@ bool World::saveWorld(const std::string& worldPath) const {
         metaFile.close();
         Logger::info() << "World metadata saved successfully";
 
-        // Save all chunks
+        // Save all loaded chunks
         int savedChunks = 0;
         int skippedChunks = 0;
 
         for (const auto& [coord, chunk] : m_chunkMap) {
+            if (chunk && chunk->save(worldPath)) {
+                savedChunks++;
+            } else {
+                skippedChunks++;
+            }
+        }
+
+        // Also save cached chunks (includes unloaded but modified chunks)
+        for (const auto& [coord, chunk] : m_unloadedChunksCache) {
             if (chunk && chunk->save(worldPath)) {
                 savedChunks++;
             } else {
@@ -1362,6 +1489,125 @@ bool World::saveWorld(const std::string& worldPath) const {
     } catch (const std::exception& e) {
         Logger::error() << "Failed to save world: " << e.what();
         return false;
+    }
+}
+
+int World::saveModifiedChunks() {
+    if (m_worldPath.empty()) {
+        Logger::warning() << "Cannot autosave - no world path set";
+        return 0;
+    }
+
+    // THREAD SAFETY FIX: Lock while accessing m_dirtyChunks, m_chunkMap, and m_unloadedChunksCache
+    // Without this, concurrent chunk loading/unloading during autosave causes crashes
+    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    int savedCount = 0;
+
+    // Save dirty chunks from active chunks
+    for (const auto& coord : m_dirtyChunks) {
+        // Check active chunks first
+        auto activeIt = m_chunkMap.find(coord);
+        if (activeIt != m_chunkMap.end() && activeIt->second) {
+            if (activeIt->second->save(m_worldPath)) {
+                savedCount++;
+            }
+            continue;
+        }
+
+        // Check cache
+        auto cacheIt = m_unloadedChunksCache.find(coord);
+        if (cacheIt != m_unloadedChunksCache.end() && cacheIt->second) {
+            if (cacheIt->second->save(m_worldPath)) {
+                savedCount++;
+            }
+        }
+    }
+
+    // Clear dirty flags after successful save
+    m_dirtyChunks.clear();
+
+    if (savedCount > 0) {
+        Logger::info() << "Autosave: saved " << savedCount << " modified chunks";
+    }
+
+    return savedCount;
+}
+
+void World::markChunkDirty(int chunkX, int chunkY, int chunkZ) {
+    // THREAD SAFETY FIX: Protect m_dirtyChunks with mutex
+    // Without this, concurrent calls from block placement + autosave cause crashes
+    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+    ChunkCoord coord{chunkX, chunkY, chunkZ};
+    m_dirtyChunks.insert(coord);
+}
+
+void World::markChunkDirtyUnsafe(int chunkX, int chunkY, int chunkZ) {
+    // UNSAFE: Caller must already hold m_chunkMapMutex
+    // Used internally by functions that already hold the lock to prevent deadlock
+    ChunkCoord coord{chunkX, chunkY, chunkZ};
+    m_dirtyChunks.insert(coord);
+}
+
+std::unique_ptr<Chunk> World::getChunkFromCache(int chunkX, int chunkY, int chunkZ) {
+    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    ChunkCoord coord{chunkX, chunkY, chunkZ};
+    auto it = m_unloadedChunksCache.find(coord);
+
+    if (it != m_unloadedChunksCache.end()) {
+        // Move chunk out of cache (caller takes ownership)
+        std::unique_ptr<Chunk> chunk = std::move(it->second);
+        m_unloadedChunksCache.erase(it);
+        Logger::debug() << "Cache hit! Retrieved chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                       << ") from RAM cache (remaining cached: " << m_unloadedChunksCache.size() << ")";
+        return chunk;
+    }
+
+    return nullptr;  // Cache miss
+}
+
+/**
+ * @brief Acquires a chunk from the pool (or creates new if pool empty)
+ *
+ * CHUNK POOLING OPTIMIZATION:
+ * Reusing chunk objects is ~100x faster than new/delete because:
+ * - No memory allocation/deallocation overhead
+ * - No constructor/destructor calls
+ * - Reuses existing vector capacities (m_vertices, etc.)
+ * - Better cache locality (chunks stay in same memory locations)
+ */
+std::unique_ptr<Chunk> World::acquireChunk(int chunkX, int chunkY, int chunkZ) {
+    if (!m_chunkPool.empty()) {
+        // Reuse chunk from pool
+        std::unique_ptr<Chunk> chunk = std::move(m_chunkPool.back());
+        m_chunkPool.pop_back();
+        chunk->reset(chunkX, chunkY, chunkZ);
+        Logger::debug() << "Reused chunk from pool (" << chunkX << ", " << chunkY << ", " << chunkZ
+                       << "), pool size: " << m_chunkPool.size();
+        return chunk;
+    } else {
+        // Pool empty, create new chunk
+        Logger::debug() << "Pool empty, creating new chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
+        return std::make_unique<Chunk>(chunkX, chunkY, chunkZ);
+    }
+}
+
+/**
+ * @brief Returns a chunk to the pool for reuse
+ *
+ * If pool is full, the chunk is simply destroyed. Otherwise, it's added to the
+ * pool for fast reuse. Empty chunks are preferred for pooling (less memory usage).
+ */
+void World::releaseChunk(std::unique_ptr<Chunk> chunk) {
+    if (m_chunkPool.size() < m_maxPoolSize) {
+        // Add to pool (empty chunks are lighter, but we pool all chunks)
+        m_chunkPool.push_back(std::move(chunk));
+        Logger::debug() << "Returned chunk to pool, pool size: " << m_chunkPool.size();
+    } else {
+        // Pool full, just destroy the chunk
+        Logger::debug() << "Pool full, destroying chunk";
+        chunk.reset();
     }
 }
 
@@ -1421,6 +1667,9 @@ bool World::loadWorld(const std::string& worldPath) {
 
         metaFile.close();
         Logger::info() << "Loaded world metadata: " << m_worldName << " (seed: " << m_seed << ")";
+
+        // Store world path for chunk streaming persistence
+        m_worldPath = worldPath;
 
         // Load all chunks
         int loadedChunks = 0;

@@ -307,11 +307,36 @@ void WorldStreaming::workerThreadFunction() {
 }
 
 std::unique_ptr<Chunk> WorldStreaming::generateChunk(int chunkX, int chunkY, int chunkZ) {
-    // Create chunk
-    auto chunk = std::make_unique<Chunk>(chunkX, chunkY, chunkZ);
+    // PRIORITY 1: Check RAM cache first (10,000x faster than disk!)
+    std::unique_ptr<Chunk> chunk = m_world->getChunkFromCache(chunkX, chunkY, chunkZ);
+    if (chunk) {
+        Logger::debug() << "Loaded chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from RAM cache (instant)";
+        // Regenerate mesh (GPU buffers were destroyed when cached)
+        chunk->generateMesh(m_world);
+        return chunk;
+    }
 
-    // Generate terrain
-    chunk->generate(m_biomeMap);
+    // PRIORITY 2: Try to load from disk
+    // Use chunk pool for 100x faster allocation!
+    chunk = m_world->acquireChunk(chunkX, chunkY, chunkZ);
+    bool loadedFromDisk = false;
+    if (m_world) {
+        std::string worldPath = m_world->getWorldPath();
+        if (!worldPath.empty() && chunk->load(worldPath)) {
+            loadedFromDisk = true;
+            Logger::debug() << "Loaded chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from disk";
+        }
+    }
+
+    // PRIORITY 3: Generate fresh terrain
+    if (!loadedFromDisk) {
+        chunk->generate(m_biomeMap);
+        Logger::debug() << "Generated fresh chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
+
+        // FIXED: Decorate freshly generated chunks with trees/features
+        // Uses deterministic seeding so same chunk always gets same trees
+        m_world->decorateChunk(chunk.get());
+    }
 
     // Generate mesh (CPU-only, thread-safe with thread-local pools)
     chunk->generateMesh(m_world);

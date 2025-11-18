@@ -38,7 +38,61 @@ namespace TerrainGeneration {
 namespace PhysicsConstants {
     // Player physics thresholds
     constexpr float TERMINAL_VELOCITY = -40.0f;  ///< Maximum falling speed (world units/sec)
-    constexpr float GROUND_CHECK_DISTANCE = 0.05f; ///< Distance below player to check for ground
+    constexpr float GROUND_CHECK_DISTANCE = 0.1f; ///< Distance below player to check for ground (increased for better precision)
     constexpr float STUCK_THRESHOLD = 0.02f;     ///< Minimum movement to not be considered stuck
     constexpr float STEP_HEIGHT = 0.3f;          ///< Maximum height player can step up (world units)
+}
+
+namespace BlockMetadataPacking {
+    // METADATA PACKING: Pack multiple values into the existing uint8_t metadata field
+    // This is more memory-efficient than adding separate arrays for each property
+    //
+    // Bit layout (8 bits total):
+    // Bits 0-3: Water level (0-15, for fluid simulation)
+    // Bits 4-5: Rotation (0-3, for logs/directional blocks: N/S/E/W or up/down)
+    // Bits 6-7: Light level (0-3, simple ambient occlusion hint)
+    //
+    // Example: metadata = 0b11100101
+    //   Light level = 3 (bits 6-7 = 11)
+    //   Rotation = 2 (bits 4-5 = 10)
+    //   Water level = 5 (bits 0-3 = 0101)
+
+    constexpr uint8_t WATER_LEVEL_MASK = 0x0F;  ///< Bits 0-3
+    constexpr uint8_t ROTATION_MASK = 0x30;     ///< Bits 4-5
+    constexpr uint8_t LIGHT_LEVEL_MASK = 0xC0;  ///< Bits 6-7
+
+    constexpr int WATER_LEVEL_SHIFT = 0;
+    constexpr int ROTATION_SHIFT = 4;
+    constexpr int LIGHT_LEVEL_SHIFT = 6;
+
+    // Helper functions for metadata packing/unpacking
+    inline uint8_t packMetadata(uint8_t waterLevel, uint8_t rotation, uint8_t lightLevel) {
+        return ((waterLevel & 0x0F) << WATER_LEVEL_SHIFT) |
+               ((rotation & 0x03) << ROTATION_SHIFT) |
+               ((lightLevel & 0x03) << LIGHT_LEVEL_SHIFT);
+    }
+
+    inline uint8_t getWaterLevel(uint8_t metadata) {
+        return (metadata & WATER_LEVEL_MASK) >> WATER_LEVEL_SHIFT;
+    }
+
+    inline uint8_t getRotation(uint8_t metadata) {
+        return (metadata & ROTATION_MASK) >> ROTATION_SHIFT;
+    }
+
+    inline uint8_t getLightLevel(uint8_t metadata) {
+        return (metadata & LIGHT_LEVEL_MASK) >> LIGHT_LEVEL_SHIFT;
+    }
+
+    inline void setWaterLevel(uint8_t& metadata, uint8_t waterLevel) {
+        metadata = (metadata & ~WATER_LEVEL_MASK) | ((waterLevel & 0x0F) << WATER_LEVEL_SHIFT);
+    }
+
+    inline void setRotation(uint8_t& metadata, uint8_t rotation) {
+        metadata = (metadata & ~ROTATION_MASK) | ((rotation & 0x03) << ROTATION_SHIFT);
+    }
+
+    inline void setLightLevel(uint8_t& metadata, uint8_t lightLevel) {
+        metadata = (metadata & ~LIGHT_LEVEL_MASK) | ((lightLevel & 0x03) << LIGHT_LEVEL_SHIFT);
+    }
 }
