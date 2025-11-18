@@ -149,7 +149,12 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
     Logger::info() << "Generating terrain for " << chunksToGenerate.size() << " spawn chunks...";
 
     // Step 1: Generate terrain blocks in parallel
-    const unsigned int numThreads = std::thread::hardware_concurrency();
+    unsigned int numThreads = std::thread::hardware_concurrency();
+    if (numThreads == 0) {
+        // hardware_concurrency() can return 0 in containers/CI environments
+        numThreads = std::min<unsigned int>(static_cast<unsigned int>(chunksToGenerate.size()), 4);
+        Logger::warning() << "hardware_concurrency() returned 0, using fallback: " << numThreads << " threads";
+    }
     const size_t chunksPerThread = (chunksToGenerate.size() + numThreads - 1) / numThreads;
 
     std::vector<std::thread> threads;
@@ -240,7 +245,12 @@ void World::generateWorld() {
     }
 
     // Parallel chunk generation for better performance
-    const unsigned int numThreads = std::thread::hardware_concurrency();
+    unsigned int numThreads = std::thread::hardware_concurrency();
+    if (numThreads == 0) {
+        // hardware_concurrency() can return 0 in containers/CI environments
+        numThreads = std::min<unsigned int>(static_cast<unsigned int>(m_chunks.size()), 4);
+        Logger::warning() << "hardware_concurrency() returned 0, using fallback: " << numThreads << " threads";
+    }
     const size_t chunksPerThread = (m_chunks.size() + numThreads - 1) / numThreads;
 
     std::vector<std::thread> threads;
@@ -1694,6 +1704,7 @@ std::unique_ptr<Chunk> World::getChunkFromCache(int chunkX, int chunkY, int chun
  * - Better cache locality (chunks stay in same memory locations)
  */
 std::unique_ptr<Chunk> World::acquireChunk(int chunkX, int chunkY, int chunkZ) {
+    std::lock_guard<std::mutex> lock(m_chunkPoolMutex);
     if (!m_chunkPool.empty()) {
         // Reuse chunk from pool
         std::unique_ptr<Chunk> chunk = std::move(m_chunkPool.back());
@@ -1716,6 +1727,7 @@ std::unique_ptr<Chunk> World::acquireChunk(int chunkX, int chunkY, int chunkZ) {
  * pool for fast reuse. Empty chunks are preferred for pooling (less memory usage).
  */
 void World::releaseChunk(std::unique_ptr<Chunk> chunk) {
+    std::lock_guard<std::mutex> lock(m_chunkPoolMutex);
     if (m_chunkPool.size() < m_maxPoolSize) {
         // Add to pool (empty chunks are lighter, but we pool all chunks)
         m_chunkPool.push_back(std::move(chunk));

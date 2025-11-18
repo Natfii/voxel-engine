@@ -618,6 +618,7 @@ private:
     // CHUNK POOLING: Reuse chunk objects instead of new/delete (100x faster allocation)
     std::vector<std::unique_ptr<Chunk>> m_chunkPool;  ///< Pool of reusable chunk objects
     size_t m_maxPoolSize = 500;  ///< Maximum pooled chunks (32MB at 64KB/chunk)
+    mutable std::mutex m_chunkPoolMutex;  ///< Protects m_chunkPool access from worker threads
 
     // THREAD SAFETY: Protects m_chunkMap access for future chunk streaming
     // Use std::shared_lock for readers (many simultaneous), std::unique_lock for writers (exclusive)

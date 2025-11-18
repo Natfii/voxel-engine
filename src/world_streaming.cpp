@@ -79,6 +79,25 @@ void WorldStreaming::stop() {
 
     m_workers.clear();
 
+    // Clear all pending state to avoid stale entries on restart
+    {
+        std::lock_guard<std::mutex> lock(m_loadQueueMutex);
+        // Clear priority queue by swapping with empty queue
+        std::priority_queue<ChunkLoadRequest> emptyQueue;
+        m_loadQueue.swap(emptyQueue);
+        m_chunksInFlight.clear();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_completedMutex);
+        m_completedChunks.clear();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_failedChunksMutex);
+        m_failedChunks.clear();
+    }
+
     Logger::info() << "WorldStreaming stopped. Total chunks loaded: " << m_totalChunksLoaded.load()
                    << ", unloaded: " << m_totalChunksUnloaded.load();
 }
@@ -147,9 +166,9 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
     }
 
     // Unload chunks beyond unload distance
-    if (unloadDistance > loadDistance) {
-        unloadDistantChunks(playerPos, unloadDistance);
-    }
+    // Ensure minimum hysteresis to prevent thrashing (at least one chunk width)
+    float effectiveUnloadDistance = std::max(unloadDistance, loadDistance + (CHUNK_SIZE * BLOCK_SIZE));
+    unloadDistantChunks(playerPos, effectiveUnloadDistance);
 
     // Retry failed chunks with exponential backoff
     retryFailedChunks();
