@@ -77,6 +77,7 @@ namespace std {
  *       are generated at initialization time.
  */
 class World {
+    friend class Chunk;  // Allow Chunk to access unsafe methods when holding lock
 public:
     /**
      * @brief Constructs a world with the specified dimensions in chunks
@@ -391,6 +392,16 @@ public:
     void decorateWorld();
 
     /**
+     * @brief Decorates a single chunk (for streaming chunks)
+     *
+     * Places trees and features in a freshly generated chunk.
+     * Uses deterministic seeding based on chunk coordinates.
+     *
+     * @param chunk The chunk to decorate
+     */
+    void decorateChunk(Chunk* chunk);
+
+    /**
      * @brief Scans all generated chunks and registers water blocks with simulation
      * Should be called after chunk generation to initialize water flow physics
      */
@@ -431,6 +442,14 @@ public:
      * @param chunkZ Chunk Z coordinate
      */
     void markChunkDirty(int chunkX, int chunkY, int chunkZ);
+
+    /**
+     * @brief Marks a chunk as dirty (UNSAFE - caller must hold m_chunkMapMutex)
+     * @param chunkX Chunk X coordinate
+     * @param chunkY Chunk Y coordinate
+     * @param chunkZ Chunk Z coordinate
+     */
+    void markChunkDirtyUnsafe(int chunkX, int chunkY, int chunkZ);
 
     /**
      * @brief Retrieves chunk from RAM cache (if present)

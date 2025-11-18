@@ -12,6 +12,8 @@
 #include <vector>
 #include <optional>
 #include <array>
+#include <deque>
+#include <mutex>
 
 // Forward declare Vertex (defined in chunk.h)
 struct Vertex;
@@ -281,6 +283,37 @@ public:
      * Blocks until GPU completes all copies.
      */
     void submitBufferCopyBatch();
+
+    // ========== Deferred Deletion (Fence-Based Resource Cleanup) ==========
+
+    /**
+     * @brief Queue a buffer for deferred deletion
+     *
+     * Instead of destroying immediately (which requires vkDeviceWaitIdle),
+     * this queues the buffer to be destroyed after MAX_FRAMES_IN_FLIGHT frames.
+     * This ensures the GPU is no longer using the resource.
+     *
+     * @param buffer Vulkan buffer to destroy
+     * @param memory Device memory to free
+     */
+    void queueBufferDeletion(VkBuffer buffer, VkDeviceMemory memory);
+
+    /**
+     * @brief Flush the deletion queue, destroying old resources
+     *
+     * Call once per frame (in endFrame). Destroys resources queued
+     * at least MAX_FRAMES_IN_FLIGHT frames ago.
+     */
+    void flushDeletionQueue();
+
+    /**
+     * @brief Get the current frame number
+     *
+     * Used by chunks to tag resources for deferred deletion.
+     *
+     * @return Total number of frames rendered since app start
+     */
+    uint64_t getFrameNumber() const { return m_frameNumber; }
 
     // ========== Command Buffer Utilities ==========
 
@@ -557,7 +590,17 @@ private:
     uint32_t m_currentFrame = 0;
     uint32_t m_imageIndex = 0;
     bool m_framebufferResized = false;
+    uint64_t m_frameNumber = 0;  // Total frames rendered (for deferred deletion)
 
     // Batched buffer copying
     VkCommandBuffer m_batchCommandBuffer = VK_NULL_HANDLE;
+
+    // Deferred deletion queue (fence-based resource cleanup)
+    struct DeferredDeletion {
+        uint64_t frameNumber;
+        VkBuffer buffer;
+        VkDeviceMemory memory;
+    };
+    std::deque<DeferredDeletion> m_deletionQueue;
+    std::mutex m_deletionQueueMutex;
 };

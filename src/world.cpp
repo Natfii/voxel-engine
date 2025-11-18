@@ -466,6 +466,80 @@ void World::decorateWorld() {
                    << m_chunks.size() << " total chunks)";
 }
 
+void World::decorateChunk(Chunk* chunk) {
+    using namespace TerrainGeneration;
+
+    if (!chunk || chunk->getChunkY() < 0) {
+        return;  // Only decorate surface chunks
+    }
+
+    // DETERMINISTIC SEEDING: Use chunk coordinates + world seed
+    // This ensures the same chunk always gets the same trees, regardless of load order
+    int chunkX = chunk->getChunkX();
+    int chunkY = chunk->getChunkY();
+    int chunkZ = chunk->getChunkZ();
+
+    // Hash chunk coords into seed (same chunk coords always give same seed)
+    uint64_t chunkSeed = m_seed + 77777;  // Decoration offset
+    chunkSeed ^= (uint64_t)chunkX * 73856093;
+    chunkSeed ^= (uint64_t)chunkY * 19349663;
+    chunkSeed ^= (uint64_t)chunkZ * 83492791;
+
+    std::mt19937 rng(chunkSeed);
+    std::uniform_int_distribution<int> densityDist(0, 100);
+
+    // Grid-based tree sampling (same as decorateWorld)
+    const int TREE_SAMPLE_SPACING = 4;
+
+    for (int localX = 0; localX < Chunk::WIDTH; localX += TREE_SAMPLE_SPACING) {
+        for (int localZ = 0; localZ < Chunk::DEPTH; localZ += TREE_SAMPLE_SPACING) {
+            // Add small random offset (0-3 blocks) to avoid perfectly aligned trees
+            std::uniform_int_distribution<int> offsetDist(0, TREE_SAMPLE_SPACING - 1);
+            int offsetX = offsetDist(rng);
+            int offsetZ = offsetDist(rng);
+
+            int sampleX = std::min(localX + offsetX, Chunk::WIDTH - 1);
+            int sampleZ = std::min(localZ + offsetZ, Chunk::DEPTH - 1);
+
+            // Convert to world coordinates
+            float worldX = static_cast<float>(chunkX * Chunk::WIDTH + sampleX);
+            float worldZ = static_cast<float>(chunkZ * Chunk::DEPTH + sampleZ);
+
+            // Get biome at this position
+            const Biome* biome = m_biomeMap->getBiomeAt(worldX, worldZ);
+            if (!biome || !biome->trees_spawn) continue;
+
+            // Check tree density probability
+            if (densityDist(rng) > biome->tree_density) continue;
+
+            // Get terrain height from biome map
+            int terrainHeight = m_biomeMap->getTerrainHeightAt(worldX, worldZ);
+
+            // Find actual solid ground near terrain height
+            int groundY = terrainHeight;
+            for (int y = terrainHeight; y >= std::max(0, terrainHeight - 5); y--) {
+                int blockID = getBlockAt(worldX, static_cast<float>(y), worldZ);
+                if (blockID != BLOCK_AIR && blockID != BLOCK_WATER) {
+                    groundY = y;
+                    break;
+                }
+            }
+
+            if (groundY < 10) continue;  // Too low for tree placement
+
+            // Bounds check before casting to int
+            if (worldX < INT_MIN || worldX > INT_MAX || worldZ < INT_MIN || worldZ > INT_MAX) {
+                continue;
+            }
+            int blockX = static_cast<int>(worldX);
+            int blockZ = static_cast<int>(worldZ);
+
+            // Place tree (no mesh regeneration - will be done after chunk is uploaded)
+            m_treeGenerator->placeTree(this, blockX, groundY + 1, blockZ, biome);
+        }
+    }
+}
+
 void World::registerWaterBlocks() {
     Logger::info() << "Registering water blocks with simulation system...";
 
@@ -1000,7 +1074,7 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
 
     // FIX: Mark chunk as dirty so block changes are saved
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
-    markChunkDirty(coords.chunkX, coords.chunkY, coords.chunkZ);
+    markChunkDirtyUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
 
     // Update the affected chunk and all adjacent chunks
     // Must regenerate MESH (not just vertex buffer) because face culling needs updating
@@ -1086,7 +1160,7 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
 
     // FIX: Mark chunk as dirty so block changes are saved
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
-    markChunkDirty(coords.chunkX, coords.chunkY, coords.chunkZ);
+    markChunkDirtyUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
 
     // If placing water, set metadata to 0 (source block) and register with simulation
     if (registry.get(blockID).isLiquid) {
@@ -1464,6 +1538,13 @@ void World::markChunkDirty(int chunkX, int chunkY, int chunkZ) {
     // THREAD SAFETY FIX: Protect m_dirtyChunks with mutex
     // Without this, concurrent calls from block placement + autosave cause crashes
     std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+    ChunkCoord coord{chunkX, chunkY, chunkZ};
+    m_dirtyChunks.insert(coord);
+}
+
+void World::markChunkDirtyUnsafe(int chunkX, int chunkY, int chunkZ) {
+    // UNSAFE: Caller must already hold m_chunkMapMutex
+    // Used internally by functions that already hold the lock to prevent deadlock
     ChunkCoord coord{chunkX, chunkY, chunkZ};
     m_dirtyChunks.insert(coord);
 }

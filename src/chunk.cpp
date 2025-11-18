@@ -399,7 +399,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
     // OCCLUSION CULLING: Skip mesh generation for fully-occluded chunks
     // Underground chunks surrounded by solid stone don't need any geometry!
     // This saves ~40% of mesh generation work for typical terrain
-    if (isFullyOccluded(world)) {
+    if (isFullyOccluded(world, callerHoldsLock)) {
         // Clear any existing mesh data
         m_vertices.clear();
         m_indices.clear();
@@ -843,14 +843,12 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
         return;  // No vertices to upload
     }
 
-    // CRITICAL FIX: Wait for GPU to finish using old buffers before destroying them
-    // This prevents use-after-free crashes when blocks are placed/broken during rendering
-    // TODO: Optimize with fence-based deferred deletion queue for better performance
-    VkDevice device = renderer->getDevice();
-    vkDeviceWaitIdle(device);
-
-    // Destroy old buffers if they exist (now safe - GPU is idle)
+    // PERFORMANCE FIX: Use deferred deletion instead of vkDeviceWaitIdle()
+    // Old buffers are queued for destruction after MAX_FRAMES_IN_FLIGHT frames
+    // This eliminates the GPU pipeline stall that was causing spawn lag!
     destroyBuffers(renderer);
+
+    VkDevice device = renderer->getDevice();
 
     // ========== CREATE OPAQUE BUFFERS ==========
     if (m_vertexCount > 0) {
@@ -1051,50 +1049,33 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
 }
 
 void Chunk::destroyBuffers(VulkanRenderer* renderer) {
-    VkDevice device = renderer->getDevice();
+    // DEFERRED DELETION: Queue buffers for destruction instead of destroying immediately
+    // The renderer will destroy them after MAX_FRAMES_IN_FLIGHT frames (fence-based approach)
+    // This eliminates the need for vkDeviceWaitIdle() which was causing massive lag!
 
-    // Note: GPU synchronization should be done once at high level (main.cpp does vkDeviceWaitIdle)
-    // before calling cleanup on all chunks. Doing it per-chunk is incredibly slow (hundreds of waits).
-
-    // Destroy opaque buffers
-    if (m_vertexBuffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(device, m_vertexBuffer, nullptr);
+    // Queue opaque buffers for deletion
+    if (m_vertexBuffer != VK_NULL_HANDLE || m_vertexBufferMemory != VK_NULL_HANDLE) {
+        renderer->queueBufferDeletion(m_vertexBuffer, m_vertexBufferMemory);
         m_vertexBuffer = VK_NULL_HANDLE;
-    }
-
-    if (m_vertexBufferMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, m_vertexBufferMemory, nullptr);
         m_vertexBufferMemory = VK_NULL_HANDLE;
     }
 
-    if (m_indexBuffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(device, m_indexBuffer, nullptr);
+    if (m_indexBuffer != VK_NULL_HANDLE || m_indexBufferMemory != VK_NULL_HANDLE) {
+        renderer->queueBufferDeletion(m_indexBuffer, m_indexBufferMemory);
         m_indexBuffer = VK_NULL_HANDLE;
-    }
-
-    if (m_indexBufferMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, m_indexBufferMemory, nullptr);
         m_indexBufferMemory = VK_NULL_HANDLE;
     }
 
-    // Destroy transparent buffers
-    if (m_transparentVertexBuffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(device, m_transparentVertexBuffer, nullptr);
+    // Queue transparent buffers for deletion
+    if (m_transparentVertexBuffer != VK_NULL_HANDLE || m_transparentVertexBufferMemory != VK_NULL_HANDLE) {
+        renderer->queueBufferDeletion(m_transparentVertexBuffer, m_transparentVertexBufferMemory);
         m_transparentVertexBuffer = VK_NULL_HANDLE;
-    }
-
-    if (m_transparentVertexBufferMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, m_transparentVertexBufferMemory, nullptr);
         m_transparentVertexBufferMemory = VK_NULL_HANDLE;
     }
 
-    if (m_transparentIndexBuffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(device, m_transparentIndexBuffer, nullptr);
+    if (m_transparentIndexBuffer != VK_NULL_HANDLE || m_transparentIndexBufferMemory != VK_NULL_HANDLE) {
+        renderer->queueBufferDeletion(m_transparentIndexBuffer, m_transparentIndexBufferMemory);
         m_transparentIndexBuffer = VK_NULL_HANDLE;
-    }
-
-    if (m_transparentIndexBufferMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, m_transparentIndexBufferMemory, nullptr);
         m_transparentIndexBufferMemory = VK_NULL_HANDLE;
     }
 }
@@ -1104,12 +1085,11 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
         return;  // No vertices to upload
     }
 
-    // CRITICAL FIX: Wait for GPU before destroying old buffers
-    VkDevice device = renderer->getDevice();
-    vkDeviceWaitIdle(device);
-
-    // Destroy old buffers if they exist (now safe - GPU is idle)
+    // PERFORMANCE FIX: Use deferred deletion instead of vkDeviceWaitIdle()
+    // Old buffers are queued for destruction after MAX_FRAMES_IN_FLIGHT frames
     destroyBuffers(renderer);
+
+    VkDevice device = renderer->getDevice();
 
     // Initialize staging buffers to NULL
     m_vertexStagingBuffer = VK_NULL_HANDLE;
@@ -1486,7 +1466,7 @@ bool Chunk::decompressMetadata(const std::vector<uint8_t>& input) {
  * Performance: Checking 6 neighbors = 6 pointer lookups + 6 face scans
  * Benefit: Skip mesh generation + rendering for ~40% of underground chunks
  */
-bool Chunk::isFullyOccluded(World* world) const {
+bool Chunk::isFullyOccluded(World* world, bool callerHoldsLock) const {
     if (!world) return false;
 
     // Helper lambda: Check if a chunk face is completely solid (no gaps)
@@ -1542,13 +1522,13 @@ bool Chunk::isFullyOccluded(World* world) const {
         }
     };
 
-    // Get all 6 neighbors
-    Chunk* neighborPosX = world->getChunkAt(m_x + 1, m_y, m_z);
-    Chunk* neighborNegX = world->getChunkAt(m_x - 1, m_y, m_z);
-    Chunk* neighborPosY = world->getChunkAt(m_x, m_y + 1, m_z);
-    Chunk* neighborNegY = world->getChunkAt(m_x, m_y - 1, m_z);
-    Chunk* neighborPosZ = world->getChunkAt(m_x, m_y, m_z + 1);
-    Chunk* neighborNegZ = world->getChunkAt(m_x, m_y, m_z - 1);
+    // Get all 6 neighbors (use unsafe version if caller holds lock to prevent deadlock)
+    Chunk* neighborPosX = callerHoldsLock ? world->getChunkAtUnsafe(m_x + 1, m_y, m_z) : world->getChunkAt(m_x + 1, m_y, m_z);
+    Chunk* neighborNegX = callerHoldsLock ? world->getChunkAtUnsafe(m_x - 1, m_y, m_z) : world->getChunkAt(m_x - 1, m_y, m_z);
+    Chunk* neighborPosY = callerHoldsLock ? world->getChunkAtUnsafe(m_x, m_y + 1, m_z) : world->getChunkAt(m_x, m_y + 1, m_z);
+    Chunk* neighborNegY = callerHoldsLock ? world->getChunkAtUnsafe(m_x, m_y - 1, m_z) : world->getChunkAt(m_x, m_y - 1, m_z);
+    Chunk* neighborPosZ = callerHoldsLock ? world->getChunkAtUnsafe(m_x, m_y, m_z + 1) : world->getChunkAt(m_x, m_y, m_z + 1);
+    Chunk* neighborNegZ = callerHoldsLock ? world->getChunkAtUnsafe(m_x, m_y, m_z - 1) : world->getChunkAt(m_x, m_y, m_z - 1);
 
     // Check if all 6 neighbors exist and have solid facing faces
     return neighborPosX && isFaceSolid(neighborPosX, 1) &&  // Neighbor's -X face blocks our +X

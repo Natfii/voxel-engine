@@ -1350,6 +1350,10 @@ void VulkanRenderer::endFrame() {
         throw std::runtime_error("failed to present swap chain image!");
     }
 
+    // Increment frame counter and flush old resources
+    m_frameNumber++;
+    flushDeletionQueue();
+
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
@@ -1982,6 +1986,44 @@ void VulkanRenderer::submitBufferCopyBatch() {
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &m_batchCommandBuffer);
     m_batchCommandBuffer = VK_NULL_HANDLE;
+}
+
+// ========== Deferred Deletion (Fence-Based Resource Cleanup) ==========
+
+void VulkanRenderer::queueBufferDeletion(VkBuffer buffer, VkDeviceMemory memory) {
+    // Thread-safe queue operation
+    std::lock_guard<std::mutex> lock(m_deletionQueueMutex);
+
+    // Queue for deletion (will be destroyed after MAX_FRAMES_IN_FLIGHT frames)
+    m_deletionQueue.push_back({m_frameNumber, buffer, memory});
+}
+
+void VulkanRenderer::flushDeletionQueue() {
+    // Thread-safe flush operation
+    std::lock_guard<std::mutex> lock(m_deletionQueueMutex);
+
+    // Delete resources from frames that are at least MAX_FRAMES_IN_FLIGHT old
+    // This ensures the GPU is done using them (fence-based approach)
+    while (!m_deletionQueue.empty()) {
+        const auto& deletion = m_deletionQueue.front();
+
+        // Check if enough frames have passed (GPU is done with this resource)
+        if (m_frameNumber - deletion.frameNumber >= MAX_FRAMES_IN_FLIGHT) {
+            // Safe to destroy - GPU finished rendering frames that used this resource
+            if (deletion.buffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(m_device, deletion.buffer, nullptr);
+            }
+            if (deletion.memory != VK_NULL_HANDLE) {
+                vkFreeMemory(m_device, deletion.memory, nullptr);
+            }
+
+            m_deletionQueue.pop_front();
+        } else {
+            // Too recent - GPU might still be using it
+            // All subsequent entries are also too new (FIFO queue), so stop
+            break;
+        }
+    }
 }
 
 VkCommandBuffer VulkanRenderer::beginSingleTimeCommands() {

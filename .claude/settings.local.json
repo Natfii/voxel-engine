@@ -55,7 +55,9 @@
       "Bash(do sed -i '/ \\* Enhanced API documentation by Claude/d; / \\* Created by.*Claude/d;' \"$file\")",
       "Bash(done)",
       "Bash(for file in chunk.cpp logger.cpp player.cpp)",
-      "Bash(do sed -i '/ \\* Enhanced API documentation by Claude/d; / \\* Created by.*Claude/d; / \\* Created by original author, enhanced documentation by Claude/d;' \"$file\")"
+      "Bash(do sed -i '/ \\* Enhanced API documentation by Claude/d; / \\* Created by.*Claude/d; / \\* Created by original author, enhanced documentation by Claude/d;' \"$file\")",
+      "WebFetch(domain:0fps.net)",
+      "WebFetch(domain:www.seedofandromeda.com)"
     ],
     "deny": [],
     "ask": []

@@ -379,9 +379,10 @@ public:
      * Huge performance win for underground chunks!
      *
      * @param world World instance to query neighbors
+     * @param callerHoldsLock True if caller already holds World::m_chunkMapMutex (prevents deadlock)
      * @return True if chunk is fully occluded (all 6 neighbors are solid)
      */
-    bool isFullyOccluded(class World* world) const;
+    bool isFullyOccluded(class World* world, bool callerHoldsLock = false) const;
 
     // ========== Chunk Pooling ==========
 

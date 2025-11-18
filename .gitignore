@@ -167,3 +167,4 @@ build
 shaders/*.spv
 .claude
 nul
+todo.txt
