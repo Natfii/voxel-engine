@@ -195,16 +195,14 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
     for (auto& chunk : chunksToUpload) {
         if (chunk) {
             try {
-                // Create Vulkan buffers for the chunk
-                chunk->createVertexBuffer(m_renderer);
-
                 // Add chunk to world's chunk map
+                // addStreamedChunk will decorate, light, regenerate mesh, and upload to GPU
                 int chunkX = chunk->getChunkX();
                 int chunkY = chunk->getChunkY();
                 int chunkZ = chunk->getChunkZ();
                 uint32_t vertexCount = chunk->getVertexCount();
 
-                bool added = m_world->addStreamedChunk(std::move(chunk));
+                bool added = m_world->addStreamedChunk(std::move(chunk), m_renderer);
 
                 // Remove from in-flight tracking
                 {

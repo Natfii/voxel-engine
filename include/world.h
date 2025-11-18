@@ -203,11 +203,13 @@ public:
      *
      * Used by WorldStreaming to integrate asynchronously-generated chunks.
      * Performs duplicate checking and thread-safe insertion.
+     * After adding, decorates, lights, regenerates mesh, and uploads to GPU.
      *
      * @param chunk Chunk to add (ownership transferred)
+     * @param renderer Vulkan renderer for buffer creation (after decoration/lighting)
      * @return True if chunk was added, false if duplicate/out of bounds
      */
-    bool addStreamedChunk(std::unique_ptr<Chunk> chunk);
+    bool addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer);
 
     /**
      * @brief Removes a chunk from the world

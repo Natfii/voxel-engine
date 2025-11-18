@@ -872,7 +872,7 @@ Chunk* World::getChunkAtWorldPos(float worldX, float worldY, float worldZ) {
     return getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
 }
 
-bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
+bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer) {
     if (!chunk) {
         return false;  // Null chunk
     }
@@ -899,11 +899,12 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
 
     lock.unlock();  // Release lock before decoration (can be slow)
 
-    // MAIN THREAD: Decorate, Light, Mesh - IN THAT ORDER
+    // MAIN THREAD: Decorate, Light, Mesh, Upload - IN THAT ORDER
     // This is safe because:
     // 1. Chunk is now findable via getChunkAt() for tree placement
     // 2. We're on main thread (no race conditions)
     // 3. Lighting happens AFTER all blocks are placed
+    // 4. GPU upload happens AFTER final mesh is generated
     if (chunkPtr->getChunkY() >= 0) {  // Only decorate surface chunks
         try {
             // Step 1: Add decorations (trees, structures)
@@ -915,6 +916,11 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
 
             // Step 3: Generate final mesh with correct lighting
             chunkPtr->generateMesh(this);
+
+            // Step 4: Upload final mesh to GPU (CRITICAL: after decoration/lighting!)
+            if (renderer) {
+                chunkPtr->createVertexBuffer(renderer);
+            }
         } catch (const std::exception& e) {
             Logger::error() << "Failed to decorate/light chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): " << e.what();
             // Continue anyway - chunk has terrain even without decoration
@@ -924,6 +930,11 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
         initializeChunkLighting(chunkPtr);
         chunkPtr->markLightingDirty();
         chunkPtr->generateMesh(this);
+
+        // Upload to GPU
+        if (renderer) {
+            chunkPtr->createVertexBuffer(renderer);
+        }
     }
 
     Logger::debug() << "Added streamed chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") to world";
