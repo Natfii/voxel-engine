@@ -16,6 +16,7 @@
 #include "terrain_constants.h"
 #include "mesh_buffer_pool.h"
 #include "logger.h"
+#include "debug_state.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
@@ -68,9 +69,10 @@ Chunk::Chunk(int x, int y, int z)
       m_transparentVertexStagingBufferMemory(VK_NULL_HANDLE),
       m_transparentIndexStagingBuffer(VK_NULL_HANDLE),
       m_transparentIndexStagingBufferMemory(VK_NULL_HANDLE),
-      m_visible(false) {
+      m_visible(false),
+      m_lightingDirty(false) {
 
-    // Initialize all blocks to air and metadata to 0
+    // Initialize all blocks to air, metadata to 0, and lighting to darkness
     for (int i = 0; i < WIDTH; i++) {
         for (int j = 0; j < HEIGHT; j++) {
             for (int k = 0; k < DEPTH; k++) {
@@ -79,6 +81,9 @@ Chunk::Chunk(int x, int y, int z)
             }
         }
     }
+
+    // Initialize all light data to 0 (complete darkness)
+    m_lightData.fill(BlockLight(0, 0));
 
     // Calculate world-space bounds for culling
     // Blocks are 1.0 world units in size
@@ -120,6 +125,10 @@ void Chunk::reset(int x, int y, int z) {
             }
         }
     }
+
+    // Reset lighting to darkness
+    m_lightData.fill(BlockLight(0, 0));
+    m_lightingDirty = false;
 
     // Recalculate bounds
     float worldX = m_x * WIDTH;
@@ -679,6 +688,23 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         v.r = cr; v.g = cg; v.b = cb; v.a = ca;
                         v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
                         v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
+
+                        // Calculate dual-channel light levels for this vertex
+                        // Check if lighting is enabled via debug flag
+                        if (DebugState::instance().lightingEnabled.getValue()) {
+                            // Sample both sky and block light separately
+                            uint8_t skyLightValue = getSkyLight(X, Y, Z);
+                            uint8_t blockLightValue = getBlockLight(X, Y, Z);
+
+                            // Normalize to 0.0-1.0 range (separate channels)
+                            v.skyLight = skyLightValue / 15.0f;
+                            v.blockLight = blockLightValue / 15.0f;
+                        } else {
+                            // Lighting disabled - full brightness on both channels
+                            v.skyLight = 1.0f;
+                            v.blockLight = 1.0f;
+                        }
+
                         targetVerts.push_back(v);
                     }
 
@@ -1312,6 +1338,40 @@ void Chunk::setBlockMetadata(int x, int y, int z, uint8_t metadata) {
         return;  // Out of bounds
     }
     m_blockMetadata[x][y][z] = metadata;
+}
+
+// ========== Lighting Accessors ==========
+
+uint8_t Chunk::getSkyLight(int x, int y, int z) const {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return 0;  // Out of bounds
+    }
+    int index = x + y * WIDTH + z * WIDTH * HEIGHT;
+    return m_lightData[index].skyLight;
+}
+
+uint8_t Chunk::getBlockLight(int x, int y, int z) const {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return 0;  // Out of bounds
+    }
+    int index = x + y * WIDTH + z * WIDTH * HEIGHT;
+    return m_lightData[index].blockLight;
+}
+
+void Chunk::setSkyLight(int x, int y, int z, uint8_t value) {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return;  // Out of bounds
+    }
+    int index = x + y * WIDTH + z * WIDTH * HEIGHT;
+    m_lightData[index].skyLight = value & 0x0F;  // Clamp to 4 bits (0-15)
+}
+
+void Chunk::setBlockLight(int x, int y, int z, uint8_t value) {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return;  // Out of bounds
+    }
+    int index = x + y * WIDTH + z * WIDTH * HEIGHT;
+    m_lightData[index].blockLight = value & 0x0F;  // Clamp to 4 bits (0-15)
 }
 
 /**

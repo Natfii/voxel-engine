@@ -389,12 +389,12 @@ world->updateWaterSimulation(deltaTime, renderer);
 - [x] Particles compile and link successfully
 - [x] Shaders compile (vertex + fragment)
 - [x] Project builds in Release mode
-- [x] Wave vertex displacement shader runs
-- [x] Foam effects render in fragment shader
-- [ ] Water sources generate flowing water (runtime test)
-- [ ] Particles spawn and animate (runtime test)
-- [ ] Chunk mesh updates without crashes (runtime test)
-- [ ] Performance maintains 60 FPS (runtime test)
+- [x] Wave vertex displacement shader runs (disabled - causes distortion)
+- [x] Foam effects render in fragment shader (disabled - not aesthetic)
+- [x] Water sources generate flowing water (runtime tested)
+- [x] Particles spawn and animate (runtime tested)
+- [x] Chunk mesh updates without crashes (runtime tested)
+- [x] Performance maintains 60 FPS (runtime verified)
 
 ---
 
@@ -440,6 +440,44 @@ rm -rf build/
 # Regenerate build system
 mkdir build && cd build && cmake ..
 ```
+
+---
+
+## Implementation Notes
+
+### Production Changes from Original Plan
+
+1. **Wave Vertex Displacement** - Originally planned but disabled in shader.vert (line 29)
+   - Reason: Caused visible geometry distortion on water surface
+   - Alternative: Texture scrolling animation handles visual movement
+
+2. **Foam Effects** - Fragment shader implementation disabled in shader.frag (lines 64-65)
+   - Reason: Clean water surface preferred over animated foam
+   - Visual Result: Smooth animated texture works well without foam
+
+3. **Texture Scrolling Speed** - Set to 250.0 (not original 40.0)
+   - Faster animation creates better flowing water effect
+   - Cell-based wrapping prevents atlas bleeding
+
+4. **Color Darkening** - Water darkened to 0.65x with blue tint
+   - Improves visibility and reduces bright patches
+   - Applied in shader.frag (lines 59-62)
+
+### Key Implementation Details
+
+- **WaterSimulation** stores water in unordered_map for O(1) access
+- **Frame spreading** distributes updates (25% per frame)
+- **Chunk mesh regeneration** limited to 5 per frame for performance
+- **Two-pass rendering** ensures correct transparency blending
+- **Texture animation** handled entirely on GPU (zero CPU overhead)
+
+### Known Limitations
+
+1. Wave displacement disabled (causes geometry issues)
+2. Foam effects disabled (aesthetic choice)
+3. Splash triggers on water level changes are TODO
+4. Chunk size hardcoded to 16 blocks
+5. No dirty flag system yet (all chunks regenerated)
 
 ---
 

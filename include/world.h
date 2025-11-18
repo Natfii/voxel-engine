@@ -23,6 +23,7 @@
 // Forward declarations
 class VulkanRenderer;
 class BiomeMap;
+class LightingSystem;
 
 /**
  * @brief Chunk coordinate key for spatial hash map
@@ -376,6 +377,18 @@ public:
     BiomeMap* getBiomeMap() { return m_biomeMap.get(); }
 
     /**
+     * @brief Gets the lighting system
+     * @return Pointer to lighting system
+     */
+    LightingSystem* getLightingSystem() { return m_lightingSystem.get(); }
+
+    /**
+     * @brief Initializes basic sunlight for a newly generated chunk
+     * @param chunk Chunk to initialize lighting for
+     */
+    void initializeChunkLighting(Chunk* chunk);
+
+    /**
      * @brief Checks if chunk coordinates are within world bounds
      *
      * @param chunkX Chunk X coordinate
@@ -600,7 +613,7 @@ private:
     // CHUNK CACHING: RAM cache for unloaded chunks (prevents disk thrashing)
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_unloadedChunksCache;  ///< Cached unloaded chunks (still in RAM)
     std::unordered_set<ChunkCoord> m_dirtyChunks;  ///< Chunks modified since last save (need disk write)
-    size_t m_maxCachedChunks = 2000;  ///< Maximum cached chunks before forced eviction (128MB at 64KB/chunk)
+    size_t m_maxCachedChunks = 5000;  ///< Maximum cached chunks before forced eviction (~490MB at 98KB/chunk)
 
     // CHUNK POOLING: Reuse chunk objects instead of new/delete (100x faster allocation)
     std::vector<std::unique_ptr<Chunk>> m_chunkPool;  ///< Pool of reusable chunk objects
@@ -621,4 +634,7 @@ private:
     // Biome and generation systems
     std::unique_ptr<BiomeMap> m_biomeMap;  ///< Biome map for world generation
     std::unique_ptr<class TreeGenerator> m_treeGenerator;  ///< Procedural tree generation
+
+    // Lighting system
+    std::unique_ptr<LightingSystem> m_lightingSystem;  ///< Voxel lighting system
 };

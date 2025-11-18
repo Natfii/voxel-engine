@@ -23,6 +23,7 @@
 #include "logger.h"
 #include "block_system.h"
 #include "biome_system.h"
+#include "lighting_system.h"
 #include "tree_generator.h"
 #include <glm/glm.hpp>
 #include <thread>
@@ -88,6 +89,10 @@ World::World(int width, int height, int depth, int seed, float tempBias, float m
     m_particleSystem = std::make_unique<ParticleSystem>();
 
     Logger::info() << "Water simulation and particle systems initialized";
+
+    // Initialize lighting system
+    m_lightingSystem = std::make_unique<LightingSystem>(this);
+    Logger::info() << "Lighting system initialized";
 }
 
 World::~World() {
@@ -168,9 +173,26 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
         thread.join();
     }
 
+    Logger::info() << "Decorating " << chunksToGenerate.size() << " spawn chunks with trees...";
+
+    // Step 2: Decorate chunks (add trees, structures, etc.)
+    for (Chunk* chunk : chunksToGenerate) {
+        if (chunk->getChunkY() >= 0) {  // Only decorate surface chunks
+            decorateChunk(chunk);
+        }
+    }
+
+    Logger::info() << "Initializing lighting for spawn chunks...";
+
+    // Step 3: Initialize lighting for all chunks
+    for (Chunk* chunk : chunksToGenerate) {
+        initializeChunkLighting(chunk);
+        chunk->markLightingDirty();  // Let lighting system propagate
+    }
+
     Logger::info() << "Generating meshes for " << chunksToGenerate.size() << " spawn chunks...";
 
-    // Step 2: Generate meshes for all chunks
+    // Step 4: Generate meshes for all chunks (AFTER decoration and lighting!)
     threads.clear();
     for (unsigned int i = 0; i < numThreads; ++i) {
         size_t startIdx = i * chunksPerThread;
@@ -189,7 +211,7 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
         thread.join();
     }
 
-    Logger::info() << "Spawn chunks generated successfully";
+    Logger::info() << "Spawn chunks generated successfully with lighting and decoration";
 }
 
 void World::generateWorld() {
@@ -540,6 +562,63 @@ void World::decorateChunk(Chunk* chunk) {
     }
 }
 
+void World::initializeChunkLighting(Chunk* chunk) {
+    if (!chunk || !m_lightingSystem) return;
+
+    // Smart top-down sunlight initialization that respects transparency
+    // For each (x, z) column, fill with sunlight from top until hitting OPAQUE block
+    for (int localX = 0; localX < Chunk::WIDTH; localX++) {
+        for (int localZ = 0; localZ < Chunk::DEPTH; localZ++) {
+            // Start from top of chunk and work down
+            bool hitOpaque = false;
+            for (int localY = Chunk::HEIGHT - 1; localY >= 0; localY--) {
+                int blockID = chunk->getBlock(localX, localY, localZ);
+
+                // Calculate world coordinates for lighting system
+                int worldX = chunk->getChunkX() * Chunk::WIDTH + localX;
+                int worldY = chunk->getChunkY() * Chunk::HEIGHT + localY;
+                int worldZ = chunk->getChunkZ() * Chunk::DEPTH + localZ;
+
+                if (blockID == 0) {
+                    // Air - set full sunlight (15) if we haven't hit opaque block yet
+                    uint8_t lightValue = hitOpaque ? 0 : 15;
+                    chunk->setSkyLight(localX, localY, localZ, lightValue);
+
+                    // Queue for horizontal propagation if lit
+                    if (lightValue > 0) {
+                        m_lightingSystem->addSkyLightSource(glm::vec3(worldX, worldY, worldZ), lightValue);
+                    }
+                } else {
+                    // Check if block is transparent (water, leaves, etc.)
+                    bool isTransparent = false;
+                    try {
+                        const auto& blockDef = BlockRegistry::instance().get(blockID);
+                        isTransparent = (blockDef.transparency > 0.0f);
+                    } catch (...) {
+                        // Invalid block ID, treat as opaque
+                        isTransparent = false;
+                    }
+
+                    if (isTransparent) {
+                        // Transparent block - light passes through (like leaves, water)
+                        uint8_t lightValue = hitOpaque ? 0 : 15;
+                        chunk->setSkyLight(localX, localY, localZ, lightValue);
+
+                        // CRITICAL: Queue transparent blocks for horizontal propagation!
+                        if (lightValue > 0) {
+                            m_lightingSystem->addSkyLightSource(glm::vec3(worldX, worldY, worldZ), lightValue);
+                        }
+                    } else {
+                        // Opaque block - stops sunlight from going further down
+                        chunk->setSkyLight(localX, localY, localZ, 0);
+                        hitOpaque = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
 void World::registerWaterBlocks() {
     Logger::info() << "Registering water blocks with simulation system...";
 
@@ -808,6 +887,35 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk) {
     m_chunkMap[coord] = std::move(chunk);
     m_chunks.push_back(chunkPtr);
 
+    lock.unlock();  // Release lock before decoration (can be slow)
+
+    // MAIN THREAD: Decorate, Light, Mesh - IN THAT ORDER
+    // This is safe because:
+    // 1. Chunk is now findable via getChunkAt() for tree placement
+    // 2. We're on main thread (no race conditions)
+    // 3. Lighting happens AFTER all blocks are placed
+    if (chunkPtr->getChunkY() >= 0) {  // Only decorate surface chunks
+        try {
+            // Step 1: Add decorations (trees, structures)
+            decorateChunk(chunkPtr);
+
+            // Step 2: Initialize lighting ONCE after all blocks are in place
+            initializeChunkLighting(chunkPtr);
+            chunkPtr->markLightingDirty();
+
+            // Step 3: Generate final mesh with correct lighting
+            chunkPtr->generateMesh(this);
+        } catch (const std::exception& e) {
+            Logger::error() << "Failed to decorate/light chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): " << e.what();
+            // Continue anyway - chunk has terrain even without decoration
+        }
+    } else {
+        // Underground chunks: Light and mesh (no decoration)
+        initializeChunkLighting(chunkPtr);
+        chunkPtr->markLightingDirty();
+        chunkPtr->generateMesh(this);
+    }
+
     Logger::debug() << "Added streamed chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") to world";
 
     return true;
@@ -831,6 +939,12 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
     if (vecIt != m_chunks.end()) {
         std::swap(*vecIt, m_chunks.back());
         m_chunks.pop_back();
+    }
+
+    // CRITICAL: Notify lighting system before destroying chunk
+    // This prevents dangling pointers in the lighting dirty chunks set
+    if (m_lightingSystem) {
+        m_lightingSystem->notifyChunkUnload(chunkPtr);
     }
 
     // Destroy Vulkan buffers (can't keep GPU resources in cache)
@@ -859,12 +973,14 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
         auto evictIt = m_unloadedChunksCache.begin();
         ChunkCoord evictCoord = evictIt->first;
 
-        // Save if dirty before eviction
+        // DISK I/O FIX: Don't save on eviction - let autosave handle it (every 5 min)
+        // This prevents constant disk writes during fast movement
+        // Modified chunks will be saved during next autosave or manual save
+        // If they're modified again before autosave, that's fine - we'll save the latest version
         if (m_dirtyChunks.count(evictCoord) > 0) {
-            if (!m_worldPath.empty()) {
-                evictIt->second->save(m_worldPath);
-                m_dirtyChunks.erase(evictCoord);
-            }
+            Logger::debug() << "Evicted dirty chunk (" << evictCoord.x << ", " << evictCoord.y << ", " << evictCoord.z
+                           << ") - will save during next autosave";
+            // Keep chunk in dirty set for next autosave
         }
 
         // Return evicted chunk to pool for reuse (CHUNK POOLING)

@@ -33,25 +33,21 @@ Shows all available commands, or detailed help for a specific command.
 Toggle noclip mode (fly through walls).
 - Example: `noclip`
 
-### debug render
-Toggle chunk rendering debug information.
-- Example: `debug render`
+### wireframe
+Toggle wireframe rendering mode (shows mesh wireframes instead of solid blocks).
+- Example: `wireframe`
 
-### debug drawfps
-Toggle FPS counter in the corner.
-- Example: `debug drawfps`
+### lighting
+Toggle the voxel lighting system on/off. Regenerate chunks (move around) to see the effect.
+- Example: `lighting`
 
-### debug targetinfo
-Toggle target information display (shows details about the block you're looking at).
-- Example: `debug targetinfo`
+### debug <option>
+Toggle various debug rendering modes.
+- Example: `debug render` - Toggle chunk rendering debug information
+- Example: `debug drawfps` - Toggle FPS counter in the corner
+- Example: `debug targetinfo` - Toggle target information display (shows details about the block you're looking at)
 
-### debug culling
-Toggle frustum culling statistics display (shows chunks rendered/culled).
-- Example: `debug culling`
-
-### debug collision
-Toggle collision detection debug output in console (shows player position, block checks).
-- Example: `debug collision`
+Available options: render, drawfps, targetinfo
 
 ### tp <x> <y> <z>
 Teleport to specific coordinates.
@@ -93,6 +89,13 @@ Set the time progression speed (0=paused, 1=normal, higher=faster).
 **Tab completion:** Press Tab after `timespeed ` to cycle through common values.
 
 See [docs/sky_system.md](sky_system.md) for detailed sky system documentation.
+
+### spawnstructure <name>
+Spawn a structure at the targeted ground position. Look at the ground where you want to place the structure and run this command.
+- Example: `spawnstructure house`
+- Example: `spawnstructure` (list available structures)
+
+**Tab completion:** Press Tab after `spawnstructure ` to cycle through available structure names.
 
 ## Opening Documentation
 

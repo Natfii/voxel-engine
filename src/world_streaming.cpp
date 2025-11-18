@@ -311,7 +311,9 @@ std::unique_ptr<Chunk> WorldStreaming::generateChunk(int chunkX, int chunkY, int
     std::unique_ptr<Chunk> chunk = m_world->getChunkFromCache(chunkX, chunkY, chunkZ);
     if (chunk) {
         Logger::debug() << "Loaded chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from RAM cache (instant)";
-        // Regenerate mesh (GPU buffers were destroyed when cached)
+
+        // DON'T decorate or light in worker thread - will be done on main thread after addStreamedChunk
+        // Generate mesh without lighting for now (will be regenerated with lighting later)
         chunk->generateMesh(m_world);
         return chunk;
     }
@@ -332,13 +334,10 @@ std::unique_ptr<Chunk> WorldStreaming::generateChunk(int chunkX, int chunkY, int
     if (!loadedFromDisk) {
         chunk->generate(m_biomeMap);
         Logger::debug() << "Generated fresh chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
-
-        // FIXED: Decorate freshly generated chunks with trees/features
-        // Uses deterministic seeding so same chunk always gets same trees
-        m_world->decorateChunk(chunk.get());
     }
 
-    // Generate mesh (CPU-only, thread-safe with thread-local pools)
+    // DON'T decorate or light in worker thread - will be done on main thread after addStreamedChunk
+    // Generate mesh without lighting for now (will be regenerated with lighting later)
     chunk->generateMesh(m_world);
 
     return chunk;

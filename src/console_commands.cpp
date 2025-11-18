@@ -49,6 +49,14 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
         s_console->addMessage("Wireframe mode: " + std::string(newValue ? "ON" : "OFF"), ConsoleMessageType::INFO);
     });
 
+    registry.registerCommand("lighting", "Toggle voxel lighting system",
+                           "lighting", [](const std::vector<std::string>& args) {
+        bool newValue = !DebugState::instance().lightingEnabled.getValue();
+        DebugState::instance().lightingEnabled.setValue(newValue);
+        s_console->addMessage("Lighting: " + std::string(newValue ? "ON" : "OFF"), ConsoleMessageType::INFO);
+        s_console->addMessage("Note: Regenerate chunks (move around) to see effect", ConsoleMessageType::INFO);
+    });
+
     registry.registerCommand("debug", "Toggle debug rendering modes (render, drawfps, targetinfo)",
                            "debug <render|drawfps|targetinfo>", [](const std::vector<std::string>& args) {
         if (args.size() < 2) {

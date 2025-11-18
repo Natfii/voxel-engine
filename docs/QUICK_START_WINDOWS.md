@@ -160,8 +160,10 @@ Once running, you can:
 
 **Other Controls:**
 - **N** - Toggle noclip mode
+- **I** - Open inventory
 - **ESC** - Pause menu
 - **Left Click** - Break blocks
+- **Right Click** - Place blocks (creative mode)
 
 ---
 

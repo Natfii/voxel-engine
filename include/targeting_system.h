@@ -58,5 +58,5 @@ private:
 
     // Helper methods
     void updateTargetInfo(World* world);
-    std::vector<float> createOutlineVertices(const glm::vec3& position);
+    std::vector<float> createOutlineVertices(const glm::vec3& position, const glm::vec3& hitNormal);
 };

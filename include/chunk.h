@@ -13,6 +13,7 @@
 #include <glm/glm.hpp>
 #include "voxelmath.h"
 #include "FastNoiseLite.h"
+#include "block_light.h"
 
 // Forward declaration
 class VulkanRenderer;
@@ -27,6 +28,8 @@ struct Vertex {
     float x, y, z;      ///< Position in world space
     float r, g, b, a;   ///< Color and alpha (fallback if texture not available, alpha for transparency)
     float u, v;         ///< Texture coordinates (atlas UV)
+    float skyLight;     ///< Sky light level 0.0-1.0 (affected by sun/moon position)
+    float blockLight;   ///< Block light level 0.0-1.0 (torches, lava - constant)
 
     /**
      * @brief Gets Vulkan binding description for vertex input
@@ -42,10 +45,10 @@ struct Vertex {
 
     /**
      * @brief Gets Vulkan attribute descriptions for vertex attributes
-     * @return Array of attribute descriptions (position, color, texcoord)
+     * @return Array of attribute descriptions (position, color, texcoord, skyLight, blockLight)
      */
-    static inline std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
+    static inline std::array<VkVertexInputAttributeDescription, 5> getAttributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 5> attributeDescriptions{};
 
         // Position attribute (location = 0)
         attributeDescriptions[0].binding = 0;
@@ -64,6 +67,18 @@ struct Vertex {
         attributeDescriptions[2].location = 2;
         attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
         attributeDescriptions[2].offset = offsetof(Vertex, u);
+
+        // Sky light attribute (location = 3)
+        attributeDescriptions[3].binding = 0;
+        attributeDescriptions[3].location = 3;
+        attributeDescriptions[3].format = VK_FORMAT_R32_SFLOAT;
+        attributeDescriptions[3].offset = offsetof(Vertex, skyLight);
+
+        // Block light attribute (location = 4)
+        attributeDescriptions[4].binding = 0;
+        attributeDescriptions[4].location = 4;
+        attributeDescriptions[4].format = VK_FORMAT_R32_SFLOAT;
+        attributeDescriptions[4].offset = offsetof(Vertex, blockLight);
 
         return attributeDescriptions;
     }
@@ -309,6 +324,64 @@ public:
      */
     void setBlockMetadata(int x, int y, int z, uint8_t metadata);
 
+    // ========== Lighting ==========
+
+    /**
+     * @brief Gets the sky light level at local chunk coordinates
+     *
+     * @param x Local X coordinate (0-31)
+     * @param y Local Y coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @return Sky light level (0-15), or 0 if out of bounds
+     */
+    uint8_t getSkyLight(int x, int y, int z) const;
+
+    /**
+     * @brief Gets the block light level at local chunk coordinates
+     *
+     * @param x Local X coordinate (0-31)
+     * @param y Local Y coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @return Block light level (0-15), or 0 if out of bounds
+     */
+    uint8_t getBlockLight(int x, int y, int z) const;
+
+    /**
+     * @brief Sets the sky light level at local chunk coordinates
+     *
+     * @param x Local X coordinate (0-31)
+     * @param y Local Y coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @param value Sky light level (0-15)
+     */
+    void setSkyLight(int x, int y, int z, uint8_t value);
+
+    /**
+     * @brief Sets the block light level at local chunk coordinates
+     *
+     * @param x Local X coordinate (0-31)
+     * @param y Local Y coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @param value Block light level (0-15)
+     */
+    void setBlockLight(int x, int y, int z, uint8_t value);
+
+    /**
+     * @brief Marks this chunk's lighting as dirty (needs mesh regeneration)
+     */
+    void markLightingDirty() { m_lightingDirty = true; }
+
+    /**
+     * @brief Checks if chunk lighting is dirty
+     * @return True if lighting needs mesh regeneration
+     */
+    bool isLightingDirty() const { return m_lightingDirty; }
+
+    /**
+     * @brief Clears the lighting dirty flag
+     */
+    void clearLightingDirty() { m_lightingDirty = false; }
+
     // ========== Chunk Persistence ==========
 
     /**
@@ -410,6 +483,8 @@ private:
     int m_x, m_y, m_z;                      ///< Chunk coordinates in chunk space
     int m_blocks[WIDTH][HEIGHT][DEPTH];    ///< Block ID storage (32 KB)
     uint8_t m_blockMetadata[WIDTH][HEIGHT][DEPTH]; ///< Block metadata (water levels, etc.) (32 KB)
+    std::array<BlockLight, WIDTH * HEIGHT * DEPTH> m_lightData; ///< Light data (sky + block light, 32 KB)
+    bool m_lightingDirty;                   ///< True if lighting changed (needs mesh regen)
 
     // ========== Mesh Data ==========
     std::vector<Vertex> m_vertices;         ///< CPU-side vertex data (opaque)

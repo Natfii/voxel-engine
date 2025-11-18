@@ -206,23 +206,38 @@ if (spawnY < 40.0f) {
 
 ## Technical Notes & Lessons Learned
 
-### Atlas Animation Limitation (Known Issue)
-- Attempted 2x2 atlas allocation for multi-frame animation
+### Atlas Animation Limitation (RESOLVED)
+- Originally attempted 2x2 atlas allocation for multi-frame animation
 - **Problem:** Consecutive indices (5,6,7,8) don't form 2D grid in 4x4 atlas
 - They span across rows instead of forming a square block
-- **Solution Used:** Single-frame with UV scrolling (works perfectly)
-- **Future:** Would need non-consecutive allocation or texture arrays
+- **Solution Used:** Single-frame with cell-based UV scrolling (works perfectly)
+- **Implementation:** UV scrolling now correctly wraps within cell boundaries
+- **Status:** Current implementation is final and performs well
+
+### Wave Effects (DISABLED - INTENTIONAL)
+- Vertex displacement in shader.vert originally implemented
+- **Problem:** Caused visible geometry distortion on water surface faces
+- **Decision:** Animation now handled purely via texture scrolling (cleaner aesthetic)
+- **Current State:** `waveIntensity` set to 0.0 in shader.vert (line 29)
+
+### Foam Effects (DISABLED - INTENTIONAL)
+- Fragment shader foam effect was implemented for shorelines
+- **Decision:** Disabled in production - clean water surface preferred
+- **Visual Result:** Simple animated water texture looks better than foaming
+- **Alternative:** Could be re-enabled if foam effect is refined
 
 ### Critical Gotchas
 1. **Descriptor sets MUST be rebound** when switching pipelines
 2. **Sort transparent geometry back-to-front** for correct blending
 3. **Water detection at head** prevents collision bugs underwater
-4. **Variable name conflicts** - watch for `feetPos` redefinition across scopes
+4. **Water texture scrolling speed** set to 250.0 (faster than initial 40.0)
+5. **Cell-based UV wrapping** prevents atlas bleeding
 
 ### Performance
-- No performance impact from animation (GPU-only)
+- No performance impact from animation (GPU-only, 250x time multiplier)
 - Two-pass rendering is standard practice, negligible cost
 - Chunk sorting is O(n log n) but n is small (visible chunks only)
+- Water transparency darkening at 0.65x with blue tint improves appearance
 
 ---
 

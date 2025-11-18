@@ -13,8 +13,9 @@
 ## Special Modes
 
 - **N** - Toggle noclip mode (fly through walls)
+- **I** - Open/close inventory
 - **F9** - Open/close developer console
-- **ESC** - Open pause menu / Close console
+- **ESC** - Open pause menu / Close console / Close inventory
 
 ## Noclip Mode
 
@@ -28,6 +29,8 @@ When noclip is enabled:
 ## Interaction
 
 - **Left Mouse** - Break block
+- **Right Mouse** - Place block or structure (creative mode)
+- **0-9 Number Keys** - Select items from hotbar (when inventory is open)
 
 ## Console
 

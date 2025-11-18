@@ -297,10 +297,10 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     using namespace PhysicsConstants;
     const float checkDistance = GROUND_CHECK_DISTANCE;
 
-    // First verify player isn't inside a block (center check at feet level)
-    int blockAtCenter = world->getBlockAt(feetPos.x, feetPos.y, feetPos.z);
-
-    if (blockAtCenter == 0) {  // Only check for ground if not inside a block
+    // Check for ground even if feet are slightly inside a block
+    // This prevents bobbing when player is snapped to grid boundaries
+    // We'll check if the block BELOW is solid (not the block at feet level)
+    {
         // Check center first as fallback for edge cases
         int centerBelow = world->getBlockAt(feetPos.x, feetPos.y - checkDistance, feetPos.z);
         if (centerBelow > 0) {

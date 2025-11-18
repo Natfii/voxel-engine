@@ -15,6 +15,7 @@ public:
     ConVar<bool> debugCollision;
     ConVar<bool> debugWorld;  ///< Enable world/chunk debug logging
     ConVar<bool> wireframeMode;
+    ConVar<bool> lightingEnabled;  ///< Enable/disable voxel lighting system
 
     // FPS tracking
     float lastFPS = 0.0f;

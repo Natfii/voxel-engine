@@ -31,6 +31,7 @@
 #include "chunk.h"
 #include "world.h"
 #include "world_streaming.h"
+#include "lighting_system.h"
 #include "block_system.h"
 #include "biome_system.h"
 #include "structure_system.h"
@@ -46,6 +47,8 @@
 #include "input_manager.h"
 #include "inventory.h"
 #include "terrain_constants.h"
+#include "sun_tracker.h"
+#include "frustum.h"
 // BlockIconRenderer is now part of block_system.h
 
 // Game state
@@ -685,7 +688,18 @@ int main() {
         Inventory inventory;
         g_inventory = &inventory;
 
-        // Loading stage 12: Final check - wait for player to be on ground (100%)
+        // Loading stage 12: Initialize world lighting (99%)
+        loadingProgress = 0.98f;
+        loadingMessage = "Initializing lighting";
+        renderLoadingScreen();
+        std::cout << "Initializing world lighting (static sky light values)..." << std::endl;
+
+        // Initialize lighting for ALL spawn chunks with full BFS propagation
+        // This calculates STATIC sky light values that never change
+        // The shader multiplies these by dynamic sun/moon intensity for time-of-day
+        world.getLightingSystem()->initializeWorldLighting();
+
+        // Loading stage 13: Final check - wait for player to be on ground (100%)
         loadingProgress = 0.99f;
         loadingMessage = "Ready";
         renderLoadingScreen();
@@ -717,12 +731,21 @@ int main() {
         float autosaveTimer = 0.0f;
         constexpr float AUTOSAVE_INTERVAL = 300.0f;  // 5 minutes in seconds
 
+        // Viewport-based dynamic lighting system
+        SunTracker sunTracker;
+
         std::cout << "Entering main loop..." << std::endl;
 
         while (!glfwWindowShouldClose(window) && gameState == GameState::IN_GAME) {
             float currentFrame = static_cast<float>(glfwGetTime());
             deltaTime = currentFrame - lastFrame;
             lastFrame = currentFrame;
+
+            // Clamp deltaTime to prevent physics explosions during lag spikes
+            // Max 0.1 seconds (10 FPS minimum) prevents huge jumps when loading chunks
+            if (deltaTime > 0.1f) {
+                deltaTime = 0.1f;
+            }
 
             // Autosave system (RAM cache → disk every 5 min)
             autosaveTimer += deltaTime;
@@ -741,6 +764,10 @@ int main() {
 
             // Update sky time (handles day/night cycle)
             ConsoleCommands::updateSkyTime(deltaTime);
+
+            // Sun tracker removed - shader handles time-of-day by multiplying
+            // static sky light values by dynamic sun/moon intensity
+            // No need to recalculate voxel lighting when sun moves!
 
             // Handle F9 key for console
             if (glfwGetKey(window, GLFW_KEY_F9) == GLFW_PRESS) {
@@ -828,6 +855,11 @@ int main() {
 
             // Update inventory system
             inventory.update(window, deltaTime);
+
+            // Update lighting system (incremental propagation)
+            if (DebugState::instance().lightingEnabled.getValue()) {
+                world.getLightingSystem()->update(deltaTime);
+            }
 
             // Particles disabled for performance
             // world.getParticleSystem()->update(deltaTime);

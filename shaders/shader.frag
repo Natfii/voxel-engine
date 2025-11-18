@@ -17,6 +17,8 @@ layout(location = 0) in vec4 fragColor;  // Now vec4 with alpha
 layout(location = 1) in vec3 fragWorldPos;
 layout(location = 2) in vec2 fragTexCoord;
 layout(location = 3) in float fragWaveIntensity;
+layout(location = 4) in float fragSkyLight;    // Sky light from vertex shader
+layout(location = 5) in float fragBlockLight;  // Block light from vertex shader
 
 layout(location = 0) out vec4 outColor;
 
@@ -115,23 +117,43 @@ void main() {
         finalColor = mix(fogColor, baseColor, fogFactor);
     }
 
-    // Apply time-of-day lighting
-    float ambientLight = 0.3 + 0.7 * sunIntensity + 0.15 * moonIntensity;
+    // VIEWPORT-BASED DUAL-CHANNEL LIGHTING SYSTEM
+    // Sky light: Affected by sun/moon position (recalculated for visible chunks only)
+    // Block light: Constant (torches, lava) regardless of time of day
+
+    // Calculate sun/moon contribution to sky-lit blocks
+    // During day: skyLight=1.0 blocks are BRIGHT (sun)
+    // During night: skyLight=1.0 blocks are DIM (moon is weak)
+    float sunContribution = sunIntensity;              // 1.0 at noon, 0.0 at night
+    float moonContribution = moonIntensity * 0.25;     // Moon is much dimmer than sun
+    float skyLightIntensity = sunContribution + moonContribution;
+
+    // Apply time-of-day modulation to sky light only
+    float skyLightFinal = fragSkyLight * skyLightIntensity;
+
+    // Block light is constant (torches don't care about time of day)
+    float blockLightFinal = fragBlockLight;
+
+    // Ambient light prevents pure darkness (starlight, eye adjustment)
+    float ambientLight = 0.05;  // Minimal ambient (5% even in total darkness)
+
+    // Combine using MAX (not add, to avoid over-brightening when torch + sunlight)
+    float finalLight = max(max(skyLightFinal, blockLightFinal), ambientLight);
 
     // Underwater lighting - use dynamic liquid properties
     if (cameraUnderwater) {
-        // Reduce ambient light underwater using custom darken factor
-        ambientLight *= ubo.liquidTint.a;  // Custom darken factor from YAML
+        // Reduce all light underwater using custom darken factor
+        finalLight *= ubo.liquidTint.a;  // Custom darken factor from YAML
 
         // Add depth-based darkening (deeper = darker)
         float depthFactor = clamp(distance / 10.0, 0.0, 0.8);
-        ambientLight *= (1.0 - depthFactor * 0.5);
+        finalLight *= (1.0 - depthFactor * 0.5);
 
         // Apply custom tint color that increases with depth
         finalColor = mix(finalColor, finalColor * ubo.liquidTint.rgb, depthFactor);
     }
 
-    finalColor *= ambientLight;
+    finalColor *= finalLight;
 
     // Output with alpha from vertex color (for liquid transparency)
     outColor = vec4(finalColor, fragColor.a);

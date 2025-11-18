@@ -858,10 +858,10 @@ void VulkanRenderer::createLinePipeline() {
     rasterizer.lineWidth = 2.0f; // Thin black outline (Minecraft-style)
     rasterizer.cullMode = VK_CULL_MODE_NONE; // No culling for lines
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    // Enable depth bias to prevent z-fighting with block geometry
-    rasterizer.depthBiasEnable = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = -1.0f;  // Push outline away from camera
-    rasterizer.depthBiasSlopeFactor = -1.0f;     // Adjust for slope
+    // No depth bias needed - we disable depth test for outlines
+    rasterizer.depthBiasEnable = VK_FALSE;
+    rasterizer.depthBiasConstantFactor = 0.0f;
+    rasterizer.depthBiasSlopeFactor = 0.0f;
     rasterizer.depthBiasClamp = 0.0f;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
@@ -871,9 +871,9 @@ void VulkanRenderer::createLinePipeline() {
 
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE; // Enable depth test to respect occlusion
+    depthStencil.depthTestEnable = VK_FALSE; // DISABLED - outline always visible (Minecraft-style)
     depthStencil.depthWriteEnable = VK_FALSE; // Don't write to depth buffer for outlines
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL; // Render if at same depth or closer
+    depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS; // Always render outline on top
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
 

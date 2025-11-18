@@ -24,7 +24,7 @@ TargetingSystem::~TargetingSystem() {
 
 void TargetingSystem::init(VulkanRenderer* renderer) {
     // Create initial outline buffer with dummy data
-    std::vector<float> dummyVerts = createOutlineVertices(glm::vec3(0, 0, 0));
+    std::vector<float> dummyVerts = createOutlineVertices(glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
 
     VkDeviceSize bufferSize = sizeof(float) * dummyVerts.size();
 
@@ -53,7 +53,7 @@ void TargetingSystem::init(VulkanRenderer* renderer) {
     vkDestroyBuffer(renderer->getDevice(), stagingBuffer, nullptr);
     vkFreeMemory(renderer->getDevice(), stagingBufferMemory, nullptr);
 
-    m_outlineVertexCount = dummyVerts.size() / 8; // 8 floats per vertex (xyz rgb uv)
+    m_outlineVertexCount = dummyVerts.size() / 11; // 11 floats per vertex (xyz rgba uv skyLight blockLight)
 }
 
 void TargetingSystem::cleanup(VulkanRenderer* renderer) {
@@ -189,8 +189,8 @@ void TargetingSystem::updateOutlineBuffer(VulkanRenderer* renderer) {
         return;
     }
 
-    // Create new vertex data for current target position
-    std::vector<float> verts = createOutlineVertices(m_currentTarget.blockPosition);
+    // Create new vertex data for current target position and hit normal
+    std::vector<float> verts = createOutlineVertices(m_currentTarget.blockPosition, m_currentTarget.hitNormal);
 
     VkDeviceSize bufferSize = sizeof(float) * verts.size();
 
@@ -215,13 +215,13 @@ void TargetingSystem::updateOutlineBuffer(VulkanRenderer* renderer) {
     vkFreeMemory(renderer->getDevice(), stagingBufferMemory, nullptr);
 }
 
-std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& position) {
-    // Create a wireframe cube with 12 edges (24 vertices for lines)
+std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& position, const glm::vec3& hitNormal) {
+    // Create outline for only the hit face (4 edges, 8 vertices for lines)
     const float size = 1.0f;
     const float offset = 0.003f; // Minimal offset (Minecraft-style thin outline)
 
     std::vector<float> vertices;
-    vertices.reserve(24 * 9); // 24 vertices * 9 floats per vertex (x,y,z,r,g,b,a,u,v)
+    vertices.reserve(8 * 11); // 8 vertices * 11 floats per vertex (x,y,z,r,g,b,a,u,v,skyLight,blockLight)
 
     // Helper lambda to add a line (2 vertices)
     auto addLine = [&](float x1, float y1, float z1, float x2, float y2, float z2) {
@@ -235,6 +235,8 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
         vertices.push_back(1.0f); // Alpha (fully opaque)
         vertices.push_back(0.0f); // UV coordinates
         vertices.push_back(0.0f);
+        vertices.push_back(1.0f); // skyLight (full bright)
+        vertices.push_back(0.0f); // blockLight (no torch)
 
         // Second vertex
         vertices.push_back(x2);
@@ -246,9 +248,11 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
         vertices.push_back(1.0f); // Alpha (fully opaque)
         vertices.push_back(0.0f); // UV coordinates
         vertices.push_back(0.0f);
+        vertices.push_back(1.0f); // skyLight (full bright)
+        vertices.push_back(0.0f); // blockLight (no torch)
     };
 
-    // Slightly expand the outline outward for cartoonish effect
+    // Expand outline outward for visibility
     float x0 = position.x - offset;
     float y0 = position.y - offset;
     float z0 = position.z - offset;
@@ -256,23 +260,44 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
     float y1 = position.y + size + offset;
     float z1 = position.z + size + offset;
 
-    // Bottom face edges
-    addLine(x0, y0, z0, x1, y0, z0); // Front
-    addLine(x1, y0, z0, x1, y0, z1); // Right
-    addLine(x1, y0, z1, x0, y0, z1); // Back
-    addLine(x0, y0, z1, x0, y0, z0); // Left
-
-    // Top face edges
-    addLine(x0, y1, z0, x1, y1, z0); // Front
-    addLine(x1, y1, z0, x1, y1, z1); // Right
-    addLine(x1, y1, z1, x0, y1, z1); // Back
-    addLine(x0, y1, z1, x0, y1, z0); // Left
-
-    // Vertical edges
-    addLine(x0, y0, z0, x0, y1, z0); // Front-left
-    addLine(x1, y0, z0, x1, y1, z0); // Front-right
-    addLine(x1, y0, z1, x1, y1, z1); // Back-right
-    addLine(x0, y0, z1, x0, y1, z1); // Back-left
+    // Draw only the face that was hit (based on normal)
+    if (hitNormal.y > 0.5f) {
+        // Top face (+Y)
+        addLine(x0, y1, z0, x1, y1, z0);
+        addLine(x1, y1, z0, x1, y1, z1);
+        addLine(x1, y1, z1, x0, y1, z1);
+        addLine(x0, y1, z1, x0, y1, z0);
+    } else if (hitNormal.y < -0.5f) {
+        // Bottom face (-Y)
+        addLine(x0, y0, z0, x1, y0, z0);
+        addLine(x1, y0, z0, x1, y0, z1);
+        addLine(x1, y0, z1, x0, y0, z1);
+        addLine(x0, y0, z1, x0, y0, z0);
+    } else if (hitNormal.x > 0.5f) {
+        // Right face (+X)
+        addLine(x1, y0, z0, x1, y1, z0);
+        addLine(x1, y1, z0, x1, y1, z1);
+        addLine(x1, y1, z1, x1, y0, z1);
+        addLine(x1, y0, z1, x1, y0, z0);
+    } else if (hitNormal.x < -0.5f) {
+        // Left face (-X)
+        addLine(x0, y0, z0, x0, y1, z0);
+        addLine(x0, y1, z0, x0, y1, z1);
+        addLine(x0, y1, z1, x0, y0, z1);
+        addLine(x0, y0, z1, x0, y0, z0);
+    } else if (hitNormal.z > 0.5f) {
+        // Back face (+Z)
+        addLine(x0, y0, z1, x1, y0, z1);
+        addLine(x1, y0, z1, x1, y1, z1);
+        addLine(x1, y1, z1, x0, y1, z1);
+        addLine(x0, y1, z1, x0, y0, z1);
+    } else {
+        // Front face (-Z)
+        addLine(x0, y0, z0, x1, y0, z0);
+        addLine(x1, y0, z0, x1, y1, z0);
+        addLine(x1, y1, z0, x0, y1, z0);
+        addLine(x0, y1, z0, x0, y0, z0);
+    }
 
     return vertices;
 }

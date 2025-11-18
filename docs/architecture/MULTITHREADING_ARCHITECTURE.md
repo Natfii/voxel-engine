@@ -76,171 +76,199 @@ world->getBlockAt()  // Calls world->getChunkAt()
 ### Threading Model
 
 ```
-Main Thread (Rendering)              Generator Threads (Background)
+Main Thread (Rendering)              Worker Threads (Background)
 ═══════════════════════              ════════════════════════════════
-    Frame Loop                            Generator Loop
-    ┌──────────────┐                      ┌─────────────────┐
-    │ Update input │                      │ Wait for work   │
-    └──────┬───────┘                      └────────┬────────┘
-           │                                       │
-    ┌──────▼───────┐                      ┌────────▼─────────────┐
-    │ Request      │ ChunkRequest Queue   │ Dequeue request     │
-    │ chunks       ├────────────────────>│ (Non-blocking pop)   │
-    └──────┬───────┘                      └────────┬─────────────┘
-           │                                       │
-    ┌──────▼───────────────┐            ┌──────────▼──────────────┐
-    │ Process completed    │            │ Generate terrain       │
-    │ chunks               │  GeneratedChunkQueue   (temp Chunk)        │
-    │ (Non-blocking pop)   │<──────────┤                        │
-    └──────┬───────────────┘            └──────────┬──────────────┘
-           │                                       │
-    ┌──────▼───────────────┐            ┌──────────▼──────────────┐
-    │ Upload to GPU        │            │ Generate mesh          │
-    │ (createBuffers)      │            │ (uses neighbor copy)   │
-    └──────┬───────────────┘            └──────────┬──────────────┘
-           │                                       │
-    ┌──────▼───────────────┐            ┌──────────▼──────────────┐
-    │ Render               │            │ Copy result to shared_ │
-    │ (no blocking)        │            │ ptr<GeneratedChunk>    │
-    └──────────────────────┘            └──────────────────────────┘
-           │                                       │
-           └───────────┬──────────────────────────┘
-                   Loop
+    Frame Loop                            Generator Loop (N threads)
+    ┌──────────────┐                      ┌──────────────────────────┐
+    │ Update input │                      │ Wait for work or exit    │
+    └──────┬───────┘                      │ (condition_variable)     │
+           │                              └──────────┬───────────────┘
+    ┌──────▼──────────────┐                         │
+    │ updatePlayerPos()   │ LoadQueue (Priority)    │
+    │ Enqueue new chunks  ├────────────────────────>│ Dequeue request
+    │ (non-blocking)      │                         │ (blocking wait)
+    └──────┬──────────────┘                         │
+           │                              ┌─────────▼────────────────┐
+    ┌──────▼──────────────┐                │ THREE-TIER LOADING:     │
+    │ processCompleted()  │                │ 1. RAM cache (instant)  │
+    │ Pop GPU-ready       │ CompletedQueue │ 2. Disk load            │
+    │ chunks from queue   │<───────────────│ 3. Fresh generation     │
+    │ (non-blocking pop)  │                │                         │
+    └──────┬──────────────┘                │ Decorate + Lighting     │
+           │                               │ Mesh generation         │
+    ┌──────▼──────────────┐                │ (thread-local pools)    │
+    │ createVertexBuffer()│                │                         │
+    │ addStreamedChunk()  │                └─────────┬───────────────┘
+    │ (batch 2/frame)     │                         │
+    └──────┬──────────────┘                         │
+           │                                         │
+    ┌──────▼──────────────┐                         │
+    │ Render visible      │ (CompletedChunks queue)
+    │ chunks             │<────────────────────────┘
+    │ (no blocking)      │
+    └─────────────────────┘
+           │
+           └─ Loop continues
 ```
 
-### Queue Architecture
+### Queue Architecture (IMPLEMENTED)
 
-#### 1. ChunkRequestQueue (Main → Generator)
+#### 1. LoadQueue (Main → Workers) - Priority Queue
 
-**Purpose:** Main thread submits work, generators pick it up
+**Purpose:** Main thread submits work with priority, workers pick highest-priority chunks first
 
 ```cpp
-class ChunkRequestQueue {
-    std::queue<ChunkRequest> m_queue;        // Actual work queue
-    std::mutex m_mutex;                       // SINGLE LOCK for queue + size
-    std::condition_variable m_cv;             // Sleep generators when empty
-};
+// In WorldStreaming class
+std::priority_queue<ChunkLoadRequest> m_loadQueue;  // Priority by distance
+std::mutex m_loadQueueMutex;                         // SINGLE LOCK for queue
+std::condition_variable m_loadQueueCV;               // Sleeps workers when empty
+std::set<ChunkCoord> m_chunksInFlight;               // Prevents duplicate requests
 ```
 
 **Design Principles:**
-- Single mutex protects both queue AND size tracking
-- Generators sleep on `condition_variable` when empty
-- Main thread never blocks (always use non-blocking dequeue for stress testing)
-- Max 512 requests to prevent unbounded memory growth
+- Single mutex protects queue, size, and in-flight tracking
+- Workers sleep on `condition_variable` when empty
+- Main thread never blocks during enqueue (non-blocking with deduplication)
+- Priority by distance to player (calculated via calculateChunkPriority)
+- In-flight set prevents duplicate requests while generating
 
-**Thread-Safe Operations:**
+**Actual Implementation (from world_streaming.cpp):**
 ```cpp
-// Main thread: Submit work (non-blocking)
-bool enqueue(const ChunkRequest& req) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_queue.size() >= MAX_SIZE) return false;  // Full
-    m_queue.push(req);
-    m_cv.notify_one();  // Wake sleeping generator
-    return true;
+// Main thread: Submit work (non-blocking with deduplication)
+for (const auto& request : newRequests) {
+    ChunkCoord coord{request.chunkX, request.chunkY, request.chunkZ};
+
+    // Check if chunk already in flight
+    if (m_chunksInFlight.find(coord) == m_chunksInFlight.end()) {
+        m_chunksInFlight.insert(coord);
+        m_loadQueue.push(request);  // Priority queue sorts by distance
+    }
 }
 
-// Generator thread: Get work (blocking on empty)
-bool dequeue(ChunkRequest& req, bool blocking) {
-    std::unique_lock<std::mutex> lock(m_mutex);
+m_loadQueueCV.notify_all();  // Wake up workers
 
-    if (blocking) {
-        // Sleep until work available OR shutdown signal
-        m_cv.wait(lock, [this] {
-            return !m_queue.empty() || m_shutdown;
-        });
+// Worker thread: Get work (blocking on empty)
+{
+    std::unique_lock<std::mutex> lock(m_loadQueueMutex);
+
+    m_loadQueueCV.wait(lock, [this]() {
+        return !m_loadQueue.empty() || !m_running.load();
+    });
+
+    if (!m_running.load()) break;  // Exit signal
+
+    if (!m_loadQueue.empty()) {
+        request = m_loadQueue.top();  // Priority queue: best first
+        m_loadQueue.pop();
+        hasWork = true;
+    }
+}
+```
+
+#### 2. CompletedChunks Queue (Workers → Main) - Vector-based
+
+**Purpose:** Workers submit generated chunks, main thread collects them for GPU upload
+
+```cpp
+// In WorldStreaming class
+std::vector<std::unique_ptr<Chunk>> m_completedChunks;  // Dynamic vector
+std::mutex m_completedMutex;                             // SINGLE LOCK
+// NO condition_variable: main thread polls at fixed frame rate
+```
+
+**Design Principles:**
+- Simple vector for dynamic sizing (chunks queued until processed)
+- Main thread ALWAYS non-blocking (polling model, not blocking)
+- Batches GPU uploads: max 2-4 chunks per frame
+- No condition variable (main thread polls every frame anyway)
+
+**Actual Implementation (from world_streaming.cpp):**
+```cpp
+// Worker thread: Submit completed work (non-blocking, may fail)
+{
+    std::lock_guard<std::mutex> lock(m_completedMutex);
+    m_completedChunks.push_back(std::move(chunk));  // Append to vector
+}
+
+// Main thread: Collect results (non-blocking poll, batched)
+std::vector<std::unique_ptr<Chunk>> chunksToUpload;
+{
+    std::lock_guard<std::mutex> lock(m_completedMutex);
+
+    int count = std::min(maxChunksPerFrame, (int)m_completedChunks.size());
+    for (int i = 0; i < count; ++i) {
+        chunksToUpload.push_back(std::move(m_completedChunks[i]));
     }
 
-    if (m_queue.empty()) return false;  // Still empty (shutdown)
-    req = m_queue.front();
-    m_queue.pop();
-    return true;
-}
-```
-
-#### 2. GeneratedChunkQueue (Generator → Main)
-
-**Purpose:** Generators submit results, main thread collects them
-
-```cpp
-class GeneratedChunkQueue {
-    std::queue<std::shared_ptr<GeneratedChunkData>> m_queue;
-    std::mutex m_mutex;  // SINGLE LOCK for queue
-    // NO condition_variable: main thread polls in update loop
-};
-```
-
-**Design Principles:**
-- Shared pointers transfer ownership generator → main
-- Main thread ALWAYS non-blocking (polling model)
-- Smaller limit (128) since fewer completed chunks waiting
-- No condition variable (main thread polls at frame rate)
-
-**Thread-Safe Operations:**
-```cpp
-// Generator thread: Submit completed work (non-blocking)
-bool enqueue(std::shared_ptr<GeneratedChunkData> data) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_queue.size() >= MAX_SIZE) return false;  // Drop if queue full
-    m_queue.push(std::move(data));
-    return true;
+    m_completedChunks.erase(m_completedChunks.begin(),
+                           m_completedChunks.begin() + count);
 }
 
-// Main thread: Collect results (non-blocking poll)
-bool dequeue(std::shared_ptr<GeneratedChunkData>& data) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_queue.empty()) return false;
-    data = std::move(m_queue.front());
-    m_queue.pop();
-    return true;
+// Upload to GPU (main thread only - Vulkan not thread-safe)
+for (auto& chunk : chunksToUpload) {
+    chunk->createVertexBuffer(m_renderer);
+    m_world->addStreamedChunk(std::move(chunk));
 }
 ```
 
 ---
 
-## Part 3: Critical Thread Safety Issues & Solutions
+## Part 3: Critical Thread Safety Issues & Solutions (ACTUAL IMPLEMENTATION)
 
 ### Issue #1: World::m_chunkMap Access During Mesh Generation
 
-**Problem:**
+**Problem (Still Relevant):**
 ```cpp
-// Current: Chunk::generateMesh() calls world->getBlockAt()
+// In Chunk::generateMesh() - called by worker threads
+// Which calls world->getBlockAt(worldPos)
 // Which does:
-auto it = m_chunkMap.find(ChunkCoord{x, y, z});  // NO LOCK!
+auto it = m_chunkMap.find(ChunkCoord{x, y, z});  // MUST BE LOCKED
 ```
 
-Multiple generator threads can simultaneously:
-- Read m_chunkMap for neighbor lookups
-- Cause memory allocator contention
-- Trigger hash map rehashing (undefined behavior)
+Multiple worker threads access m_chunkMap simultaneously during mesh generation for neighbor lookups.
 
-**Solution: Copy-On-Generation Pattern**
+**Actual Solution Implemented: shared_mutex with Careful Locking**
 
-Generator thread works with PRIVATE data, no World access:
+The implementation uses `std::shared_mutex` on World class to allow:
+- Multiple readers (all workers can read chunk map simultaneously)
+- Single exclusive writer (only main thread adds/removes chunks)
 
 ```cpp
-// New: Chunk data is copied BEFORE mesh generation
-std::shared_ptr<GeneratedChunkData> generateChunk(ChunkRequest req) {
-    auto data = std::make_shared<GeneratedChunkData>();
+// In world.h
+class World {
+private:
+    mutable std::shared_mutex m_chunkMapMutex;
+    std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_chunkMap;
 
-    // Phase 1: Terrain generation (uses BiomeMap only - thread-safe)
-    Chunk tempChunk(req.x, req.y, req.z);
-    tempChunk.generate(m_biomeMap);  // NO WORLD ACCESS
+public:
+    Chunk* getChunkAt(int chunkX, int chunkY, int chunkZ) {
+        std::shared_lock lock(m_chunkMapMutex);  // Multiple workers can read!
+        auto it = m_chunkMap.find(ChunkCoord{chunkX, chunkY, chunkZ});
+        return it != m_chunkMap.end() ? it->second.get() : nullptr;
+    }
 
-    // Phase 2: Collect neighbor blocks BEFORE mesh gen
-    // CRITICAL: Copy neighbor blocks while holding World lock (brief)
-    NeighborBlockData neighborData = copyNeighborBlocks();
-
-    // Phase 3: Mesh generation (uses local copies only)
-    tempChunk.generateMeshLocal(neighborData);  // NO WORLD ACCESS
-
-    // Phase 4: Copy result to output struct
-    copyChunkDataToOutput(tempChunk, data);
-
-    return data;
-}
+    bool addStreamedChunk(std::unique_ptr<Chunk> chunk) {
+        std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);  // Exclusive
+        // Add to map...
+        return true;
+    }
+};
 ```
 
-**Key Point:** Generator thread holds World lock for ~1ms to copy neighbors, then releases immediately.
+**How Workers Use It (from world_streaming.cpp):**
+```cpp
+// In worker thread's generateChunk()
+auto chunk = std::make_unique<Chunk>(chunkX, chunkY, chunkZ);
+chunk->generate(m_biomeMap);
+
+// Mesh generation calls world->getBlockAt() multiple times
+// Each call briefly acquires shared_lock (non-exclusive!)
+chunk->generateMesh(m_world);  // Allows concurrent reads
+
+return chunk;
+```
+
+**Key Point:** `shared_mutex` allows multiple workers to read m_chunkMap simultaneously while preventing race conditions.
 
 ### Issue #2: Neighbor Access During Mesh Generation
 
