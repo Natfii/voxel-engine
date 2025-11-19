@@ -53,19 +53,7 @@ namespace std {
             return h1 ^ (h2 << 1) ^ (h3 << 2);
         }
     };
-
-    /**
-     * @brief Hash function for glm::ivec3 (for water dirty list)
-     */
-    template<>
-    struct hash<glm::ivec3> {
-        size_t operator()(const glm::ivec3& v) const noexcept {
-            size_t h1 = hash<int>()(v.x);
-            size_t h2 = hash<int>()(v.y);
-            size_t h3 = hash<int>()(v.z);
-            return h1 ^ (h2 << 1) ^ (h3 << 2);
-        }
-    };
+    // Note: hash<glm::ivec3> is already defined in water_simulation.h
 }
 
 /**
