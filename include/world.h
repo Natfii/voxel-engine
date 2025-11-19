@@ -425,7 +425,7 @@ public:
      * @param chunk Chunk to check
      * @return True if all 4 horizontal neighbors exist
      */
-    bool hasHorizontalNeighbors(Chunk* chunk) const;
+    bool hasHorizontalNeighbors(Chunk* chunk);
 
     /**
      * @brief Attempts to decorate pending chunks that now have neighbors

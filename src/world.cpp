@@ -498,7 +498,7 @@ void World::decorateWorld() {
                    << m_chunks.size() << " total chunks)";
 }
 
-bool World::hasHorizontalNeighbors(Chunk* chunk) const {
+bool World::hasHorizontalNeighbors(Chunk* chunk) {
     if (!chunk) return false;
 
     int chunkX = chunk->getChunkX();
