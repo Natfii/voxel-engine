@@ -576,38 +576,45 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
 
     // SMOOTH LIGHTING: Helper to get light at a vertex by sampling 4 adjacent blocks
     // This creates smooth gradients between different light levels (Minecraft-style)
-    auto getSmoothLight = [this, world, &localToWorldPos, callerHoldsLock](
-        int x, int y, int z, int dx1, int dy1, int dz1, int dx2, int dy2, int dz2, bool isSky) -> float {
+    // Uses WORLD-SPACE vertex position to ensure consistent lighting across block boundaries
+    auto getSmoothLight = [this, world, callerHoldsLock](
+        float vx, float vy, float vz, int dx1, int dy1, int dz1, int dx2, int dy2, int dz2, bool isSky) -> float {
 
-        // Sample 4 blocks around this vertex
-        // Example for top face vertex: sample NW, N, W, and center blocks
+        // Convert vertex world position to block coordinates
+        int blockX = static_cast<int>(std::floor(vx));
+        int blockY = static_cast<int>(std::floor(vy));
+        int blockZ = static_cast<int>(std::floor(vz));
+
+        // Sample 4 blocks around this vertex in world space
         uint8_t light1, light2, light3, light4;
 
-        auto getLight = [&](int lx, int ly, int lz) -> uint8_t {
-            if (lx >= 0 && lx < WIDTH && ly >= 0 && ly < HEIGHT && lz >= 0 && lz < DEPTH) {
-                // Inside chunk
-                return isSky ? getSkyLight(lx, ly, lz) : getBlockLight(lx, ly, lz);
-            } else {
-                // Outside chunk - query world
-                glm::vec3 worldPos = localToWorldPos(lx, ly, lz);
-                if (callerHoldsLock) {
-                    // Can't safely query lighting from other chunks while holding lock
-                    // Use block's own lighting as fallback
-                    return isSky ? getSkyLight(x, y, z) : getBlockLight(x, y, z);
+        auto getLightAtWorldPos = [&](int worldX, int worldY, int worldZ) -> uint8_t {
+            if (callerHoldsLock) {
+                // Can't safely query other chunks while holding lock
+                // Convert to chunk-local coordinates
+                int localX = worldX - (m_chunkX * WIDTH);
+                int localY = worldY - (m_chunkY * HEIGHT);
+                int localZ = worldZ - (m_chunkZ * DEPTH);
+                if (localX >= 0 && localX < WIDTH && localY >= 0 && localY < HEIGHT && localZ >= 0 && localZ < DEPTH) {
+                    return isSky ? getSkyLight(localX, localY, localZ) : getBlockLight(localX, localY, localZ);
                 }
-                Chunk* chunk = world->getChunkAtWorldPos(worldPos.x, worldPos.y, worldPos.z);
-                if (!chunk) return 0;
-                int localX = static_cast<int>(worldPos.x) - (chunk->getChunkX() * WIDTH);
-                int localY = static_cast<int>(worldPos.y) - (chunk->getChunkY() * HEIGHT);
-                int localZ = static_cast<int>(worldPos.z) - (chunk->getChunkZ() * DEPTH);
-                return isSky ? chunk->getSkyLight(localX, localY, localZ) : chunk->getBlockLight(localX, localY, localZ);
+                return 0; // Fallback for out-of-chunk
             }
+
+            Chunk* chunk = world->getChunkAtWorldPos(worldX, worldY, worldZ);
+            if (!chunk) return 0;
+
+            int localX = worldX - (chunk->getChunkX() * WIDTH);
+            int localY = worldY - (chunk->getChunkY() * HEIGHT);
+            int localZ = worldZ - (chunk->getChunkZ() * DEPTH);
+            return isSky ? chunk->getSkyLight(localX, localY, localZ) : chunk->getBlockLight(localX, localY, localZ);
         };
 
-        light1 = getLight(x + dx1 + dx2, y + dy1 + dy2, z + dz1 + dz2);  // Diagonal
-        light2 = getLight(x + dx1, y + dy1, z + dz1);                     // Side 1
-        light3 = getLight(x + dx2, y + dy2, z + dz2);                     // Side 2
-        light4 = getLight(x, y, z);                                       // Center
+        // Sample 4 blocks around the vertex position
+        light1 = getLightAtWorldPos(blockX + dx1 + dx2, blockY + dy1 + dy2, blockZ + dz1 + dz2);  // Diagonal
+        light2 = getLightAtWorldPos(blockX + dx1, blockY + dy1, blockZ + dz1);                     // Side 1
+        light3 = getLightAtWorldPos(blockX + dx2, blockY + dy2, blockZ + dz2);                     // Side 2
+        light4 = getLightAtWorldPos(blockX, blockY, blockZ);                                       // Center
 
         // Average the 4 samples and normalize to 0.0-1.0
         return (light1 + light2 + light3 + light4) / 4.0f / 15.0f;
@@ -781,11 +788,11 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                                 dy2 = (vertexIndex == 2 || vertexIndex == 3) ? -1 : 0;
                             }
 
-                            // Get smooth lighting (average of 4 adjacent blocks)
-                            v.skyLight = getSmoothLight(X, Y, Z, dx1, dy1, dz1, dx2, dy2, dz2, true);
-                            v.blockLight = getSmoothLight(X, Y, Z, dx1, dy1, dz1, dx2, dy2, dz2, false);
+                            // Get smooth lighting using VERTEX WORLD POSITION for consistent lighting across blocks
+                            v.skyLight = getSmoothLight(v.x, v.y, v.z, dx1, dy1, dz1, dx2, dy2, dz2, true);
+                            v.blockLight = getSmoothLight(v.x, v.y, v.z, dx1, dy1, dz1, dx2, dy2, dz2, false);
 
-                            // Calculate ambient occlusion
+                            // Calculate ambient occlusion (still uses block position)
                             v.ao = calculateAO(X, Y, Z, dx1, dy1, dz1, dx2, dy2, dz2);
                         } else {
                             // Lighting disabled - full brightness
