@@ -329,9 +329,8 @@ std::unique_ptr<Chunk> WorldStreaming::generateChunk(int chunkX, int chunkY, int
     if (chunk) {
         Logger::debug() << "Loaded chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from RAM cache (instant)";
 
-        // DON'T decorate or light in worker thread - will be done on main thread after addStreamedChunk
-        // Generate mesh without lighting for now (will be regenerated with lighting later)
-        chunk->generateMesh(m_world);
+        // DON'T generate mesh in worker thread - addStreamedChunk will do it after decoration/lighting
+        // Meshing requires neighbors which might not be loaded yet in worker thread
         return chunk;
     }
 
@@ -353,9 +352,12 @@ std::unique_ptr<Chunk> WorldStreaming::generateChunk(int chunkX, int chunkY, int
         Logger::debug() << "Generated fresh chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
     }
 
-    // DON'T decorate or light in worker thread - will be done on main thread after addStreamedChunk
-    // Generate mesh without lighting for now (will be regenerated with lighting later)
-    chunk->generateMesh(m_world);
+    // DON'T generate mesh in worker thread - addStreamedChunk will do it after decoration/lighting
+    // Meshing requires:
+    // 1. Decoration to be complete (so trees/structures are included in lighting calculation)
+    // 2. Lighting to be initialized (so vertices have correct light values)
+    // 3. Neighbor chunks to exist (for proper face culling and occlusion detection)
+    // All of these happen on the main thread, so mesh generation must happen there too!
 
     return chunk;
 }

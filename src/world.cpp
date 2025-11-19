@@ -905,8 +905,11 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
     // 2. We're on main thread (no race conditions)
     // 3. Lighting happens AFTER all blocks are placed
     // 4. GPU upload happens AFTER final mesh is generated
+    // 5. Mesh generation happens AFTER neighbors are loaded (for occlusion culling)
     if (chunkPtr->getChunkY() >= 0) {  // Only decorate surface chunks
         try {
+            Logger::debug() << "Processing surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): decorate → light → mesh → upload";
+
             // Step 1: Add decorations (trees, structures)
             decorateChunk(chunkPtr);
 
@@ -914,11 +917,13 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
             initializeChunkLighting(chunkPtr);
             chunkPtr->markLightingDirty();
 
-            // Step 3: Generate final mesh with correct lighting
+            // Step 3: Generate final mesh with correct lighting (FIRST TIME - worker didn't mesh)
             chunkPtr->generateMesh(this);
 
             // Step 4: Upload final mesh to GPU (CRITICAL: after decoration/lighting!)
             if (renderer) {
+                Logger::info() << "Uploaded surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                               << ") with " << chunkPtr->getVertexCount() << " vertices (lit+decorated)";
                 chunkPtr->createVertexBuffer(renderer);
             }
         } catch (const std::exception& e) {
@@ -927,12 +932,16 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         }
     } else {
         // Underground chunks: Light and mesh (no decoration)
+        Logger::debug() << "Processing underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): light → mesh → upload";
+
         initializeChunkLighting(chunkPtr);
         chunkPtr->markLightingDirty();
         chunkPtr->generateMesh(this);
 
         // Upload to GPU
         if (renderer) {
+            Logger::info() << "Uploaded underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                           << ") with " << chunkPtr->getVertexCount() << " vertices (lit)";
             chunkPtr->createVertexBuffer(renderer);
         }
     }
