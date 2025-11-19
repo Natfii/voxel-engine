@@ -841,7 +841,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                     }
 
                     if (shouldRender) {
-                        renderFace(frontTex, 0, 0, waterHeightAdjust, true, isCurrentTransparent);
+                        renderFace(frontTex, 0, 0, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(0, 0, -1));
                     }
                 }
 
@@ -862,7 +862,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         shouldRender = !neighborIsSolid;
                     }
                     if (shouldRender) {
-                        renderFace(backTex, 12, 8, waterHeightAdjust, true, isCurrentTransparent);
+                        renderFace(backTex, 12, 8, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(0, 0, 1));
                     }
                 }
 
@@ -883,7 +883,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         shouldRender = !neighborIsSolid;
                     }
                     if (shouldRender) {
-                        renderFace(leftTex, 24, 16, waterHeightAdjust, true, isCurrentTransparent);
+                        renderFace(leftTex, 24, 16, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(-1, 0, 0));
                     }
                 }
 
@@ -904,7 +904,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         shouldRender = !neighborIsSolid;
                     }
                     if (shouldRender) {
-                        renderFace(rightTex, 36, 24, waterHeightAdjust, true, isCurrentTransparent);
+                        renderFace(rightTex, 36, 24, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(1, 0, 0));
                     }
                 }
 
@@ -915,7 +915,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                     bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
                         // Apply water height adjustment to entire top face for flowing water effect
-                        renderFace(topTex, 48, 32, waterHeightAdjust, false, isCurrentTransparent);
+                        renderFace(topTex, 48, 32, waterHeightAdjust, false, isCurrentTransparent, glm::ivec3(0, 1, 0));
                     }
                 }
 
@@ -933,7 +933,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         shouldRender = !neighborIsSolid;
                     }
                     if (shouldRender) {
-                        renderFace(bottomTex, 60, 40, 0.0f, false, isCurrentTransparent);
+                        renderFace(bottomTex, 60, 40, 0.0f, false, isCurrentTransparent, glm::ivec3(0, -1, 0));
                     }
                 }
             }

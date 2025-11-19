@@ -19,6 +19,7 @@ layout(location = 2) in vec2 fragTexCoord;
 layout(location = 3) in float fragWaveIntensity;
 layout(location = 4) in float fragSkyLight;    // Sky light from vertex shader
 layout(location = 5) in float fragBlockLight;  // Block light from vertex shader
+layout(location = 6) in float fragAO;          // Ambient occlusion from vertex shader
 
 layout(location = 0) out vec4 outColor;
 
@@ -153,7 +154,8 @@ void main() {
         finalColor = mix(finalColor, finalColor * ubo.liquidTint.rgb, depthFactor);
     }
 
-    finalColor *= finalLight;
+    // Apply lighting and ambient occlusion
+    finalColor *= finalLight * fragAO;
 
     // Output with alpha from vertex color (for liquid transparency)
     outColor = vec4(finalColor, fragColor.a);
