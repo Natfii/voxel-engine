@@ -1304,23 +1304,20 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
     markChunkDirtyUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
 
-    // LIGHTING FIX: Update lighting when block is broken
+    // LIGHTING FIX: Store lighting info BEFORE calling lighting system
+    // (we'll call lighting methods AFTER releasing the lock to avoid deadlock)
+    bool needsLightingUpdate = false;
+    bool wasEmissive = false;
+    uint8_t lightLevel = 0;
+    bool wasOpaque = false;
+    glm::ivec3 blockPos(static_cast<int>(worldX), static_cast<int>(worldY), static_cast<int>(worldZ));
+
     if (blockID > 0 && blockID < registry.count()) {
         const auto& blockDef = registry.get(blockID);
-
-        // If broken block was emissive (torch, lava), remove its light source
-        if (blockDef.isEmissive && blockDef.lightLevel > 0) {
-            glm::ivec3 blockPos(static_cast<int>(worldX), static_cast<int>(worldY), static_cast<int>(worldZ));
-            m_lightingSystem->removeLightSource(glm::vec3(blockPos));
-        }
-
-        // If broken block was opaque, light can now pass through (air is transparent)
-        bool wasOpaque = (blockDef.transparency < 0.5f);  // Opaque if transparency < 50%
-        bool isOpaque = false;  // Air is transparent
-        if (wasOpaque != isOpaque) {
-            glm::ivec3 blockPos(static_cast<int>(worldX), static_cast<int>(worldY), static_cast<int>(worldZ));
-            m_lightingSystem->onBlockChanged(blockPos, wasOpaque, isOpaque);
-        }
+        wasEmissive = blockDef.isEmissive && blockDef.lightLevel > 0;
+        lightLevel = blockDef.lightLevel;
+        wasOpaque = (blockDef.transparency < 0.5f);  // Opaque if transparency < 50%
+        needsLightingUpdate = wasEmissive || wasOpaque;  // Need update if emissive or opaque block removed
     }
 
     // Update the affected chunk and all adjacent chunks
@@ -1373,6 +1370,24 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
             }
         }
     }
+
+    // IMPORTANT: Release lock before calling lighting system to avoid deadlock
+    lock.unlock();
+
+    // LIGHTING FIX: Update lighting AFTER releasing lock
+    // The lighting system methods call getChunkAtWorldPos() which acquires locks
+    if (needsLightingUpdate) {
+        // If broken block was emissive (torch, lava), remove its light source
+        if (wasEmissive) {
+            m_lightingSystem->removeLightSource(glm::vec3(blockPos));
+        }
+
+        // If broken block was opaque, light can now pass through (air is transparent)
+        if (wasOpaque) {
+            bool isOpaque = false;  // Air is transparent
+            m_lightingSystem->onBlockChanged(blockPos, wasOpaque, isOpaque);
+        }
+    }
 }
 
 void World::breakBlock(const glm::vec3& position, VulkanRenderer* renderer) {
@@ -1423,21 +1438,15 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
         );
     }
 
-    // LIGHTING FIX: Update lighting when block is placed
+    // LIGHTING FIX: Store lighting info BEFORE calling lighting system
+    // (we'll call lighting methods AFTER releasing the lock to avoid deadlock)
     const auto& blockDef = registry.get(blockID);
     glm::ivec3 blockPos(static_cast<int>(worldX), static_cast<int>(worldY), static_cast<int>(worldZ));
-
-    // If placed block is emissive (torch, lava), add its light source
-    if (blockDef.isEmissive && blockDef.lightLevel > 0) {
-        m_lightingSystem->addLightSource(glm::vec3(blockPos), blockDef.lightLevel);
-    }
-
-    // If placing opaque block where there was air, lighting needs update
+    bool isEmissive = blockDef.isEmissive && blockDef.lightLevel > 0;
+    uint8_t lightLevel = blockDef.lightLevel;
     bool wasOpaque = false;  // Air (existingBlock == 0) was transparent
     bool isOpaque = (blockDef.transparency < 0.5f);  // Opaque if transparency < 50%
-    if (wasOpaque != isOpaque) {
-        m_lightingSystem->onBlockChanged(blockPos, wasOpaque, isOpaque);
-    }
+    bool needsOpacityUpdate = (wasOpaque != isOpaque);
 
     // Update the affected chunk and all adjacent chunks
     // Must regenerate MESH (not just vertex buffer) because face culling needs updating
@@ -1487,6 +1496,21 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
                 }
             }
         }
+    }
+
+    // IMPORTANT: Release lock before calling lighting system to avoid deadlock
+    lock.unlock();
+
+    // LIGHTING FIX: Update lighting AFTER releasing lock
+    // The lighting system methods call getChunkAtWorldPos() which acquires locks
+    // If placed block is emissive (torch, lava), add its light source
+    if (isEmissive) {
+        m_lightingSystem->addLightSource(glm::vec3(blockPos), lightLevel);
+    }
+
+    // If placing opaque block where there was air, lighting needs update
+    if (needsOpacityUpdate) {
+        m_lightingSystem->onBlockChanged(blockPos, wasOpaque, isOpaque);
     }
 }
 
