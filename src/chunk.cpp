@@ -594,9 +594,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
             if (callerHoldsLock) {
                 // Can't safely query other chunks while holding lock
                 // Convert to chunk-local coordinates
-                int localX = worldX - (m_chunkX * WIDTH);
-                int localY = worldY - (m_chunkY * HEIGHT);
-                int localZ = worldZ - (m_chunkZ * DEPTH);
+                int localX = worldX - (m_x * WIDTH);
+                int localY = worldY - (m_y * HEIGHT);
+                int localZ = worldZ - (m_z * DEPTH);
                 if (localX >= 0 && localX < WIDTH && localY >= 0 && localY < HEIGHT && localZ >= 0 && localZ < DEPTH) {
                     return isSky ? getInterpolatedSkyLight(localX, localY, localZ) : getInterpolatedBlockLight(localX, localY, localZ);
                 }
