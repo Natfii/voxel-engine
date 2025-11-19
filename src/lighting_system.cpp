@@ -67,7 +67,7 @@ void LightingSystem::initializeWorldLighting() {
 
 // ========== Update (Incremental) ==========
 
-void LightingSystem::update(float deltaTime) {
+void LightingSystem::update(float deltaTime, VulkanRenderer* renderer) {
     // Process light additions (new torches, sunlight spread, etc.)
     int addCount = 0;
     while (!m_lightAddQueue.empty() && addCount < MAX_LIGHT_ADDS_PER_FRAME) {
@@ -87,8 +87,8 @@ void LightingSystem::update(float deltaTime) {
     }
 
     // Regenerate dirty chunk meshes (batched to avoid frame drops)
-    if (!m_dirtyChunks.empty()) {
-        regenerateDirtyChunks(MAX_MESH_REGEN_PER_FRAME);
+    if (!m_dirtyChunks.empty() && renderer != nullptr) {
+        regenerateDirtyChunks(MAX_MESH_REGEN_PER_FRAME, renderer);
     }
 }
 
@@ -333,19 +333,33 @@ void LightingSystem::markNeighborChunksDirty(Chunk* chunk, int localX, int local
     }
 }
 
-void LightingSystem::regenerateDirtyChunks(int maxPerFrame) {
+void LightingSystem::regenerateDirtyChunks(int maxPerFrame, VulkanRenderer* renderer) {
     int regenerated = 0;
     auto it = m_dirtyChunks.begin();
 
     while (it != m_dirtyChunks.end() && regenerated < maxPerFrame) {
         Chunk* chunk = *it;
 
-        // Regenerate mesh with lighting (we'll implement this later)
-        // For now, just clear the dirty flag
-        chunk->clearLightingDirty();
+        // LIGHTING FIX: Actually regenerate mesh with updated lighting values
+        try {
+            // Regenerate mesh with new lighting data
+            chunk->generateMesh(m_world, false);  // Don't hold lock
 
-        it = m_dirtyChunks.erase(it);
-        regenerated++;
+            // Upload mesh to GPU
+            if (renderer != nullptr) {
+                chunk->createVertexBuffer(renderer);
+            }
+
+            // Clear the dirty flag
+            chunk->clearLightingDirty();
+
+            it = m_dirtyChunks.erase(it);
+            regenerated++;
+        } catch (const std::exception& e) {
+            // Log error but continue processing other chunks
+            Logger::error() << "Failed to regenerate chunk mesh for lighting: " << e.what();
+            it = m_dirtyChunks.erase(it);  // Remove from queue anyway to prevent infinite retry
+        }
     }
 }
 

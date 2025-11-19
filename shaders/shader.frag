@@ -135,7 +135,7 @@ void main() {
     float blockLightFinal = fragBlockLight;
 
     // Ambient light prevents pure darkness (starlight, eye adjustment)
-    float ambientLight = 0.05;  // Minimal ambient (5% even in total darkness)
+    float ambientLight = 0.15;  // LIGHTING FIX: Increased from 0.05 to 0.15 (15% ambient)
 
     // Combine using MAX (not add, to avoid over-brightening when torch + sunlight)
     float finalLight = max(max(skyLightFinal, blockLightFinal), ambientLight);

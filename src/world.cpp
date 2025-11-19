@@ -498,6 +498,75 @@ void World::decorateWorld() {
                    << m_chunks.size() << " total chunks)";
 }
 
+bool World::hasHorizontalNeighbors(Chunk* chunk) const {
+    if (!chunk) return false;
+
+    int chunkX = chunk->getChunkX();
+    int chunkY = chunk->getChunkY();
+    int chunkZ = chunk->getChunkZ();
+
+    // Check all 4 horizontal neighbors (same Y level)
+    Chunk* neighborNorth = getChunkAt(chunkX, chunkY, chunkZ + 1);  // +Z
+    Chunk* neighborSouth = getChunkAt(chunkX, chunkY, chunkZ - 1);  // -Z
+    Chunk* neighborEast = getChunkAt(chunkX + 1, chunkY, chunkZ);   // +X
+    Chunk* neighborWest = getChunkAt(chunkX - 1, chunkY, chunkZ);   // -X
+
+    // All 4 neighbors must exist for safe decoration
+    return (neighborNorth != nullptr) &&
+           (neighborSouth != nullptr) &&
+           (neighborEast != nullptr) &&
+           (neighborWest != nullptr);
+}
+
+void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
+    if (m_pendingDecorations.empty()) return;
+
+    int processed = 0;
+    auto it = m_pendingDecorations.begin();
+
+    while (it != m_pendingDecorations.end() && processed < maxChunks) {
+        Chunk* chunk = *it;
+
+        // Check if chunk is still valid and now has all neighbors
+        if (chunk && hasHorizontalNeighbors(chunk)) {
+            try {
+                Logger::info() << "Decorating pending chunk (" << chunk->getChunkX()
+                              << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ()
+                              << ") - neighbors now available";
+
+                // Decorate the chunk now that neighbors are ready
+                decorateChunk(chunk);
+
+                // Reinitialize lighting after adding decorations
+                initializeChunkLighting(chunk);
+                chunk->markLightingDirty();
+
+                // Regenerate mesh with new decorations
+                chunk->generateMesh(this);
+
+                // Upload to GPU
+                if (renderer) {
+                    chunk->createVertexBuffer(renderer);
+                }
+
+                processed++;
+                it = m_pendingDecorations.erase(it);
+            } catch (const std::exception& e) {
+                Logger::error() << "Failed to decorate pending chunk: " << e.what();
+                it = m_pendingDecorations.erase(it);  // Remove anyway to prevent infinite retry
+            }
+        } else {
+            // Still waiting for neighbors, keep in queue
+            ++it;
+        }
+    }
+
+    if (processed > 0) {
+        Logger::info() << "Processed " << processed << " pending decorations ("
+                      << m_pendingDecorations.size() << " still pending)";
+    }
+}
+
 void World::decorateChunk(Chunk* chunk) {
     using namespace TerrainGeneration;
 
@@ -910,8 +979,18 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         try {
             Logger::debug() << "Processing surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): decorate → light → mesh → upload";
 
-            // Step 1: Add decorations (trees, structures)
-            decorateChunk(chunkPtr);
+            // DECORATION FIX: Only decorate if all horizontal neighbors are loaded
+            // This prevents trees from being placed with missing neighbor data
+            if (hasHorizontalNeighbors(chunkPtr)) {
+                // Step 1: Add decorations (trees, structures)
+                decorateChunk(chunkPtr);
+            } else {
+                // Neighbors not ready yet - defer decoration until later
+                m_pendingDecorations.insert(chunkPtr);
+                Logger::debug() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                               << ") waiting for neighbors before decoration (pending: "
+                               << m_pendingDecorations.size() << ")";
+            }
 
             // Step 2: Initialize lighting ONCE after all blocks are in place
             initializeChunkLighting(chunkPtr);
@@ -965,6 +1044,9 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
 
     // Remove from vector (order doesn't matter, so use swap-and-pop for O(1))
     Chunk* chunkPtr = it->second.get();
+
+    // DECORATION FIX: Remove from pending decorations if present
+    m_pendingDecorations.erase(chunkPtr);
     auto vecIt = std::find(m_chunks.begin(), m_chunks.end(), chunkPtr);
     if (vecIt != m_chunks.end()) {
         std::swap(*vecIt, m_chunks.back());
@@ -1222,6 +1304,25 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
     markChunkDirtyUnsafe(coords.chunkX, coords.chunkY, coords.chunkZ);
 
+    // LIGHTING FIX: Update lighting when block is broken
+    if (blockID > 0 && blockID < registry.count()) {
+        const auto& blockDef = registry.get(blockID);
+
+        // If broken block was emissive (torch, lava), remove its light source
+        if (blockDef.isEmissive && blockDef.lightLevel > 0) {
+            glm::ivec3 blockPos(static_cast<int>(worldX), static_cast<int>(worldY), static_cast<int>(worldZ));
+            m_lightingSystem->removeLightSource(glm::vec3(blockPos));
+        }
+
+        // If broken block was opaque, light can now pass through (air is transparent)
+        bool wasOpaque = (blockDef.transparency < 0.5f);  // Opaque if transparency < 50%
+        bool isOpaque = false;  // Air is transparent
+        if (wasOpaque != isOpaque) {
+            glm::ivec3 blockPos(static_cast<int>(worldX), static_cast<int>(worldY), static_cast<int>(worldZ));
+            m_lightingSystem->onBlockChanged(blockPos, wasOpaque, isOpaque);
+        }
+    }
+
     // Update the affected chunk and all adjacent chunks
     // Must regenerate MESH (not just vertex buffer) because face culling needs updating
     Chunk* affectedChunk = getChunkAtWorldPosUnsafe(worldX, worldY, worldZ);
@@ -1320,6 +1421,22 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
             255,  // Full water level (source block)
             1     // Fluid type: 1=water, 2=lava
         );
+    }
+
+    // LIGHTING FIX: Update lighting when block is placed
+    const auto& blockDef = registry.get(blockID);
+    glm::ivec3 blockPos(static_cast<int>(worldX), static_cast<int>(worldY), static_cast<int>(worldZ));
+
+    // If placed block is emissive (torch, lava), add its light source
+    if (blockDef.isEmissive && blockDef.lightLevel > 0) {
+        m_lightingSystem->addLightSource(glm::vec3(blockPos), blockDef.lightLevel);
+    }
+
+    // If placing opaque block where there was air, lighting needs update
+    bool wasOpaque = false;  // Air (existingBlock == 0) was transparent
+    bool isOpaque = (blockDef.transparency < 0.5f);  // Opaque if transparency < 50%
+    if (wasOpaque != isOpaque) {
+        m_lightingSystem->onBlockChanged(blockPos, wasOpaque, isOpaque);
     }
 
     // Update the affected chunk and all adjacent chunks

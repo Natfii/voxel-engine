@@ -80,8 +80,9 @@ public:
      * This prevents lighting updates from freezing the game.
      *
      * @param deltaTime Time elapsed since last frame (seconds)
+     * @param renderer Vulkan renderer for mesh buffer updates (optional, but required for visual updates)
      */
-    void update(float deltaTime);
+    void update(float deltaTime, class VulkanRenderer* renderer = nullptr);
 
     // ========== Viewport-Based Lighting (Dynamic Time-of-Day Updates) ==========
 
@@ -284,8 +285,9 @@ private:
      * @brief Regenerates meshes for dirty chunks (batched)
      *
      * @param maxPerFrame Maximum chunks to regenerate this frame
+     * @param renderer Vulkan renderer for vertex buffer updates
      */
-    void regenerateDirtyChunks(int maxPerFrame);
+    void regenerateDirtyChunks(int maxPerFrame, class VulkanRenderer* renderer);
 
     /**
      * @brief Checks if a block is transparent (allows light to pass)

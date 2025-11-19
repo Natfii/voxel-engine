@@ -858,7 +858,15 @@ int main() {
 
             // Update lighting system (incremental propagation)
             if (DebugState::instance().lightingEnabled.getValue()) {
-                world.getLightingSystem()->update(deltaTime);
+                world.getLightingSystem()->update(deltaTime, &renderer);
+            }
+
+            // DECORATION FIX: Process pending decorations (chunks waiting for neighbors)
+            static float decorationRetryTimer = 0.0f;
+            decorationRetryTimer += deltaTime;
+            if (decorationRetryTimer >= 1.0f) {  // Retry every 1 second
+                world.processPendingDecorations(&renderer, 5);  // Process up to 5 per second
+                decorationRetryTimer = 0.0f;
             }
 
             // Particles disabled for performance

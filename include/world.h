@@ -417,6 +417,28 @@ public:
     void decorateChunk(Chunk* chunk);
 
     /**
+     * @brief Checks if a chunk has all horizontal neighbors loaded (needed for decoration)
+     *
+     * Decorations like trees can extend into neighboring chunks, so we need to ensure
+     * all 4 horizontal neighbors (at the same Y level) exist before decorating.
+     *
+     * @param chunk Chunk to check
+     * @return True if all 4 horizontal neighbors exist
+     */
+    bool hasHorizontalNeighbors(Chunk* chunk) const;
+
+    /**
+     * @brief Attempts to decorate pending chunks that now have neighbors
+     *
+     * Called periodically to retry decoration on chunks that were skipped
+     * because their neighbors weren't loaded yet.
+     *
+     * @param renderer Vulkan renderer for mesh/buffer updates
+     * @param maxChunks Maximum chunks to process this call (default: 5)
+     */
+    void processPendingDecorations(VulkanRenderer* renderer, int maxChunks = 5);
+
+    /**
      * @brief Scans all generated chunks and registers water blocks with simulation
      * Should be called after chunk generation to initialize water flow physics
      */
@@ -640,4 +662,7 @@ private:
 
     // Lighting system
     std::unique_ptr<LightingSystem> m_lightingSystem;  ///< Voxel lighting system
+
+    // DECORATION FIX: Track chunks waiting for neighbors before decoration
+    std::unordered_set<Chunk*> m_pendingDecorations;  ///< Chunks waiting for neighbors to be decorated
 };
