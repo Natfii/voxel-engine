@@ -86,6 +86,9 @@ Chunk::Chunk(int x, int y, int z)
     // Initialize all light data to 0 (complete darkness)
     m_lightData.fill(BlockLight(0, 0));
 
+    // Initialize interpolated lighting to 0 (prevents accessing uninitialized memory)
+    m_interpolatedLightData.fill(InterpolatedLight());
+
     // Calculate world-space bounds for culling
     // Blocks are 1.0 world units in size
     float worldX = m_x * WIDTH;
@@ -129,6 +132,7 @@ void Chunk::reset(int x, int y, int z) {
 
     // Reset lighting to darkness
     m_lightData.fill(BlockLight(0, 0));
+    m_interpolatedLightData.fill(InterpolatedLight());
     m_lightingDirty = false;
 
     // Recalculate bounds
