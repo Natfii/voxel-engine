@@ -30,6 +30,7 @@ struct Vertex {
     float u, v;         ///< Texture coordinates (atlas UV)
     float skyLight;     ///< Sky light level 0.0-1.0 (affected by sun/moon position)
     float blockLight;   ///< Block light level 0.0-1.0 (torches, lava - constant)
+    float ao;           ///< Ambient occlusion 0.0-1.0 (darkens corners where blocks meet)
 
     /**
      * @brief Gets Vulkan binding description for vertex input
@@ -45,10 +46,10 @@ struct Vertex {
 
     /**
      * @brief Gets Vulkan attribute descriptions for vertex attributes
-     * @return Array of attribute descriptions (position, color, texcoord, skyLight, blockLight)
+     * @return Array of attribute descriptions (position, color, texcoord, skyLight, blockLight, ao)
      */
-    static inline std::array<VkVertexInputAttributeDescription, 5> getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 5> attributeDescriptions{};
+    static inline std::array<VkVertexInputAttributeDescription, 6> getAttributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 6> attributeDescriptions{};
 
         // Position attribute (location = 0)
         attributeDescriptions[0].binding = 0;
@@ -79,6 +80,12 @@ struct Vertex {
         attributeDescriptions[4].location = 4;
         attributeDescriptions[4].format = VK_FORMAT_R32_SFLOAT;
         attributeDescriptions[4].offset = offsetof(Vertex, blockLight);
+
+        // Ambient occlusion attribute (location = 5)
+        attributeDescriptions[5].binding = 0;
+        attributeDescriptions[5].location = 5;
+        attributeDescriptions[5].format = VK_FORMAT_R32_SFLOAT;
+        attributeDescriptions[5].offset = offsetof(Vertex, ao);
 
         return attributeDescriptions;
     }

@@ -574,6 +574,64 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
         return registry.get(blockID).isLiquid;
     };
 
+    // SMOOTH LIGHTING: Helper to get light at a vertex by sampling 4 adjacent blocks
+    // This creates smooth gradients between different light levels (Minecraft-style)
+    auto getSmoothLight = [this, world, &localToWorldPos, callerHoldsLock](
+        int x, int y, int z, int dx1, int dy1, int dz1, int dx2, int dy2, int dz2, bool isSky) -> float {
+
+        // Sample 4 blocks around this vertex
+        // Example for top face vertex: sample NW, N, W, and center blocks
+        uint8_t light1, light2, light3, light4;
+
+        auto getLight = [&](int lx, int ly, int lz) -> uint8_t {
+            if (lx >= 0 && lx < WIDTH && ly >= 0 && ly < HEIGHT && lz >= 0 && lz < DEPTH) {
+                // Inside chunk
+                return isSky ? getSkyLight(lx, ly, lz) : getBlockLight(lx, ly, lz);
+            } else {
+                // Outside chunk - query world
+                glm::vec3 worldPos = localToWorldPos(lx, ly, lz);
+                if (callerHoldsLock) {
+                    // Can't safely query lighting from other chunks while holding lock
+                    // Use block's own lighting as fallback
+                    return isSky ? getSkyLight(x, y, z) : getBlockLight(x, y, z);
+                }
+                Chunk* chunk = world->getChunkAtWorldPos(worldPos.x, worldPos.y, worldPos.z);
+                if (!chunk) return 0;
+                int localX = static_cast<int>(worldPos.x) - (chunk->getChunkX() * WIDTH);
+                int localY = static_cast<int>(worldPos.y) - (chunk->getChunkY() * HEIGHT);
+                int localZ = static_cast<int>(worldPos.z) - (chunk->getChunkZ() * DEPTH);
+                return isSky ? chunk->getSkyLight(localX, localY, localZ) : chunk->getBlockLight(localX, localY, localZ);
+            }
+        };
+
+        light1 = getLight(x + dx1 + dx2, y + dy1 + dy2, z + dz1 + dz2);  // Diagonal
+        light2 = getLight(x + dx1, y + dy1, z + dz1);                     // Side 1
+        light3 = getLight(x + dx2, y + dy2, z + dz2);                     // Side 2
+        light4 = getLight(x, y, z);                                       // Center
+
+        // Average the 4 samples and normalize to 0.0-1.0
+        return (light1 + light2 + light3 + light4) / 4.0f / 15.0f;
+    };
+
+    // AMBIENT OCCLUSION: Darken vertices where 3 blocks meet (corners)
+    // Creates depth perception and more realistic shadows (Minecraft-style)
+    auto calculateAO = [&isSolid](int x, int y, int z, int dx1, int dy1, int dz1, int dx2, int dy2, int dz2) -> float {
+        // Check 3 blocks adjacent to this vertex
+        bool side1 = isSolid(x + dx1, y + dy1, z + dz1);
+        bool side2 = isSolid(x + dx2, y + dy2, z + dz2);
+        bool corner = isSolid(x + dx1 + dx2, y + dy1 + dy2, z + dz1 + dz2);
+
+        // If both sides are blocked, full occlusion
+        if (side1 && side2) {
+            return 0.0f;
+        }
+
+        // Calculate AO based on number of adjacent solid blocks
+        // 3 = no occlusion, 0 = full occlusion
+        int blockCount = (side1 ? 1 : 0) + (side2 ? 1 : 0) + (corner ? 1 : 0);
+        return (3 - blockCount) / 3.0f;
+    };
+
     // Iterate over every block in the chunk (optimized order for cache locality)
     for(int X = 0; X < WIDTH;  ++X) {
         for(int Y = 0; Y < HEIGHT; ++Y) {
@@ -651,8 +709,10 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                 // heightAdjust: Optional Y-offset for water level rendering
                 // adjustTopOnly: If true, only apply heightAdjust to vertices with y=0.5 (top of block)
                 // useTransparent: If true, adds to transparent buffers; if false, adds to opaque buffers
+                // faceNormal: Direction the face is facing (for smooth lighting calculation)
                 auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart,
-                                      float heightAdjust = 0.0f, bool adjustTopOnly = false, bool useTransparent = false) {
+                                      float heightAdjust = 0.0f, bool adjustTopOnly = false, bool useTransparent = false,
+                                      glm::ivec3 faceNormal = glm::ivec3(0, 0, 0)) {
                     auto [uMin, vMin] = getUVsForFace(faceTexture);
                     float uvScaleZoomed = uvScale;
 
@@ -689,20 +749,49 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
                         v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
 
-                        // Calculate dual-channel light levels for this vertex
-                        // Check if lighting is enabled via debug flag
+                        // SMOOTH LIGHTING + AMBIENT OCCLUSION
                         if (DebugState::instance().lightingEnabled.getValue()) {
-                            // Sample both sky and block light separately
-                            uint8_t skyLightValue = getSkyLight(X, Y, Z);
-                            uint8_t blockLightValue = getBlockLight(X, Y, Z);
+                            // Determine which corner of the face this vertex is at
+                            // Each face has 4 vertices (corners), we sample 4 blocks per corner
+                            int vertexIndex = (i - cubeStart) / 3;
 
-                            // Normalize to 0.0-1.0 range (separate channels)
-                            v.skyLight = skyLightValue / 15.0f;
-                            v.blockLight = blockLightValue / 15.0f;
+                            // Calculate smooth lighting offsets based on face normal and vertex position
+                            // These offsets determine which 4 blocks to sample around this vertex
+                            int dx1 = 0, dy1 = 0, dz1 = 0;  // First perpendicular direction
+                            int dx2 = 0, dy2 = 0, dz2 = 0;  // Second perpendicular direction
+
+                            // Determine perpendicular directions based on face normal
+                            if (faceNormal.y != 0) {
+                                // Top/bottom face: perpendiculars are X and Z
+                                dx1 = (vertexIndex == 0 || vertexIndex == 3) ? -1 : 0;
+                                dz1 = (vertexIndex == 0 || vertexIndex == 1) ? -1 : 0;
+                                dx2 = (vertexIndex == 1 || vertexIndex == 2) ? 1 : 0;
+                                dz2 = (vertexIndex == 2 || vertexIndex == 3) ? 1 : 0;
+                            } else if (faceNormal.x != 0) {
+                                // Left/right face: perpendiculars are Y and Z
+                                dy1 = (vertexIndex == 0 || vertexIndex == 3) ? 1 : 0;
+                                dz1 = (vertexIndex == 0 || vertexIndex == 1) ? -1 : 0;
+                                dy2 = (vertexIndex == 1 || vertexIndex == 2) ? -1 : 0;
+                                dz2 = (vertexIndex == 2 || vertexIndex == 3) ? 1 : 0;
+                            } else {
+                                // Front/back face: perpendiculars are X and Y
+                                dx1 = (vertexIndex == 0 || vertexIndex == 3) ? -1 : 0;
+                                dy1 = (vertexIndex == 0 || vertexIndex == 1) ? 1 : 0;
+                                dx2 = (vertexIndex == 1 || vertexIndex == 2) ? 1 : 0;
+                                dy2 = (vertexIndex == 2 || vertexIndex == 3) ? -1 : 0;
+                            }
+
+                            // Get smooth lighting (average of 4 adjacent blocks)
+                            v.skyLight = getSmoothLight(X, Y, Z, dx1, dy1, dz1, dx2, dy2, dz2, true);
+                            v.blockLight = getSmoothLight(X, Y, Z, dx1, dy1, dz1, dx2, dy2, dz2, false);
+
+                            // Calculate ambient occlusion
+                            v.ao = calculateAO(X, Y, Z, dx1, dy1, dz1, dx2, dy2, dz2);
                         } else {
-                            // Lighting disabled - full brightness on both channels
+                            // Lighting disabled - full brightness
                             v.skyLight = 1.0f;
                             v.blockLight = 1.0f;
+                            v.ao = 1.0f;
                         }
 
                         targetVerts.push_back(v);

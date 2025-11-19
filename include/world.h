@@ -53,6 +53,19 @@ namespace std {
             return h1 ^ (h2 << 1) ^ (h3 << 2);
         }
     };
+
+    /**
+     * @brief Hash function for glm::ivec3 (for water dirty list)
+     */
+    template<>
+    struct hash<glm::ivec3> {
+        size_t operator()(const glm::ivec3& v) const noexcept {
+            size_t h1 = hash<int>()(v.x);
+            size_t h2 = hash<int>()(v.y);
+            size_t h3 = hash<int>()(v.z);
+            return h1 ^ (h2 << 1) ^ (h3 << 2);
+        }
+    };
 }
 
 /**
@@ -665,4 +678,7 @@ private:
 
     // DECORATION FIX: Track chunks waiting for neighbors before decoration
     std::unordered_set<Chunk*> m_pendingDecorations;  ///< Chunks waiting for neighbors to be decorated
+
+    // WATER PERFORMANCE FIX: Track water blocks that need flow updates (dirty list)
+    std::unordered_set<glm::ivec3> m_dirtyWaterBlocks;  ///< Water blocks that changed and need flow update
 };
