@@ -859,6 +859,9 @@ int main() {
             // Update lighting system (incremental propagation)
             if (DebugState::instance().lightingEnabled.getValue()) {
                 world.getLightingSystem()->update(deltaTime, &renderer);
+
+                // NATURAL TIME-BASED LIGHTING: Smoothly interpolate lighting values
+                world.updateInterpolatedLighting(deltaTime);
             }
 
             // DECORATION FIX: Process pending decorations (chunks waiting for neighbors)

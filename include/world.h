@@ -440,6 +440,15 @@ public:
     void processPendingDecorations(VulkanRenderer* renderer, int maxChunks = 5);
 
     /**
+     * @brief Updates interpolated lighting for all loaded chunks
+     *
+     * Creates smooth, natural lighting transitions over time.
+     *
+     * @param deltaTime Time since last frame in seconds
+     */
+    void updateInterpolatedLighting(float deltaTime);
+
+    /**
      * @brief Scans all generated chunks and registers water blocks with simulation
      * Should be called after chunk generation to initialize water flow physics
      */

@@ -23,6 +23,7 @@
 #include <mutex>
 #include <fstream>
 #include <filesystem>
+#include <cmath>
 
 // Static member initialization
 std::unique_ptr<FastNoiseLite> Chunk::s_noise = nullptr;
@@ -577,6 +578,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
     // SMOOTH LIGHTING: Helper to get light at a vertex by sampling 4 adjacent blocks
     // This creates smooth gradients between different light levels (Minecraft-style)
     // Uses WORLD-SPACE vertex position to ensure consistent lighting across block boundaries
+    // Uses INTERPOLATED lighting values for smooth time-based transitions
     auto getSmoothLight = [this, world, callerHoldsLock](
         float vx, float vy, float vz, int dx1, int dy1, int dz1, int dx2, int dy2, int dz2, bool isSky) -> float {
 
@@ -586,9 +588,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
         int blockZ = static_cast<int>(std::floor(vz));
 
         // Sample 4 blocks around this vertex in world space
-        uint8_t light1, light2, light3, light4;
+        float light1, light2, light3, light4;
 
-        auto getLightAtWorldPos = [&](int worldX, int worldY, int worldZ) -> uint8_t {
+        auto getLightAtWorldPos = [&](int worldX, int worldY, int worldZ) -> float {
             if (callerHoldsLock) {
                 // Can't safely query other chunks while holding lock
                 // Convert to chunk-local coordinates
@@ -596,18 +598,18 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                 int localY = worldY - (m_chunkY * HEIGHT);
                 int localZ = worldZ - (m_chunkZ * DEPTH);
                 if (localX >= 0 && localX < WIDTH && localY >= 0 && localY < HEIGHT && localZ >= 0 && localZ < DEPTH) {
-                    return isSky ? getSkyLight(localX, localY, localZ) : getBlockLight(localX, localY, localZ);
+                    return isSky ? getInterpolatedSkyLight(localX, localY, localZ) : getInterpolatedBlockLight(localX, localY, localZ);
                 }
-                return 0; // Fallback for out-of-chunk
+                return 0.0f; // Fallback for out-of-chunk
             }
 
             Chunk* chunk = world->getChunkAtWorldPos(worldX, worldY, worldZ);
-            if (!chunk) return 0;
+            if (!chunk) return 0.0f;
 
             int localX = worldX - (chunk->getChunkX() * WIDTH);
             int localY = worldY - (chunk->getChunkY() * HEIGHT);
             int localZ = worldZ - (chunk->getChunkZ() * DEPTH);
-            return isSky ? chunk->getSkyLight(localX, localY, localZ) : chunk->getBlockLight(localX, localY, localZ);
+            return isSky ? chunk->getInterpolatedSkyLight(localX, localY, localZ) : chunk->getInterpolatedBlockLight(localX, localY, localZ);
         };
 
         // Sample 4 blocks around the vertex position
@@ -1460,6 +1462,60 @@ void Chunk::setSkyLight(int x, int y, int z, uint8_t value) {
     }
     int index = x + y * WIDTH + z * WIDTH * HEIGHT;
     m_lightData[index].skyLight = value & 0x0F;  // Clamp to 4 bits (0-15)
+}
+
+float Chunk::getInterpolatedSkyLight(int x, int y, int z) const {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return 0.0f;  // Out of bounds
+    }
+    int index = x + y * WIDTH + z * WIDTH * HEIGHT;
+    return m_interpolatedLightData[index].skyLight;
+}
+
+float Chunk::getInterpolatedBlockLight(int x, int y, int z) const {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return 0.0f;  // Out of bounds
+    }
+    int index = x + y * WIDTH + z * WIDTH * HEIGHT;
+    return m_interpolatedLightData[index].blockLight;
+}
+
+void Chunk::updateInterpolatedLighting(float deltaTime, float speed) {
+    // Smoothly interpolate current lighting toward target lighting values
+    // This creates natural, gradual lighting transitions over time
+    const float lerpFactor = 1.0f - std::exp(-speed * deltaTime);  // Exponential smoothing
+
+    for (int i = 0; i < WIDTH * HEIGHT * DEPTH; ++i) {
+        const BlockLight& target = m_lightData[i];
+        InterpolatedLight& current = m_interpolatedLightData[i];
+
+        // Interpolate toward target values
+        float targetSky = static_cast<float>(target.skyLight);
+        float targetBlock = static_cast<float>(target.blockLight);
+
+        current.skyLight += (targetSky - current.skyLight) * lerpFactor;
+        current.blockLight += (targetBlock - current.blockLight) * lerpFactor;
+
+        // Snap to target if very close (prevents infinite asymptotic approach)
+        if (std::abs(current.skyLight - targetSky) < 0.01f) {
+            current.skyLight = targetSky;
+        }
+        if (std::abs(current.blockLight - targetBlock) < 0.01f) {
+            current.blockLight = targetBlock;
+        }
+    }
+}
+
+void Chunk::initializeInterpolatedLighting() {
+    // Initialize interpolated values to match target values immediately
+    // This prevents fade-in effect when chunks are first loaded
+    for (int i = 0; i < WIDTH * HEIGHT * DEPTH; ++i) {
+        const BlockLight& target = m_lightData[i];
+        InterpolatedLight& current = m_interpolatedLightData[i];
+
+        current.skyLight = static_cast<float>(target.skyLight);
+        current.blockLight = static_cast<float>(target.blockLight);
+    }
 }
 
 void Chunk::setBlockLight(int x, int y, int z, uint8_t value) {

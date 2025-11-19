@@ -3,7 +3,9 @@
     "allow": [
       "WebFetch(domain:raw.githubusercontent.com)",
       "mcp__ide__getDiagnostics",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []

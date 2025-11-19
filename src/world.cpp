@@ -696,6 +696,22 @@ void World::initializeChunkLighting(Chunk* chunk) {
             }
         }
     }
+
+    // Initialize interpolated lighting values to match target values
+    // This prevents fade-in effect on newly loaded chunks
+    chunk->initializeInterpolatedLighting();
+}
+
+void World::updateInterpolatedLighting(float deltaTime) {
+    // Update interpolated lighting for all loaded chunks
+    // This creates smooth, natural lighting transitions over time
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    for (auto& chunk : m_chunks) {
+        if (chunk) {
+            chunk->updateInterpolatedLighting(deltaTime);
+        }
+    }
 }
 
 void World::registerWaterBlocks() {
