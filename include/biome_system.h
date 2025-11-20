@@ -152,6 +152,18 @@ public:
     std::vector<const Biome*> getBiomesInRange(int temp_min, int temp_max,
                                                  int moisture_min, int moisture_max) const;
 
+    /**
+     * Get the temperature range used by all loaded biomes
+     * Returns [min, max] where min/max are the lowest/highest temperature values
+     */
+    std::pair<int, int> getTemperatureRange() const { return {m_minTemperature, m_maxTemperature}; }
+
+    /**
+     * Get the moisture range used by all loaded biomes
+     * Returns [min, max] where min/max are the lowest/highest moisture values
+     */
+    std::pair<int, int> getMoistureRange() const { return {m_minMoisture, m_maxMoisture}; }
+
 private:
     BiomeRegistry() = default;
 
@@ -180,4 +192,11 @@ private:
     std::vector<std::unique_ptr<Biome>> m_biomes;
     std::unordered_map<std::string, int> m_biomeNameToIndex;  // name -> index lookup
     mutable std::mutex m_registryMutex;  // Protects access to biome data during multi-threaded chunk generation
+
+    // Temperature and moisture ranges used by all loaded biomes
+    // Calculated at load time to ensure noise generation covers all biomes
+    int m_minTemperature = 100;
+    int m_maxTemperature = 0;
+    int m_minMoisture = 100;
+    int m_maxMoisture = 0;
 };

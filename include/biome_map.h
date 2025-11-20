@@ -14,7 +14,8 @@
  */
 class BiomeMap {
 public:
-    BiomeMap(int seed, float tempBias = 0.0f, float moistBias = 0.0f, float ageBias = 0.0f);
+    BiomeMap(int seed, float tempBias = 0.0f, float moistBias = 0.0f, float ageBias = 0.0f,
+             int minTemp = 0, int maxTemp = 100, int minMoisture = 0, int maxMoisture = 100);
     ~BiomeMap() = default;
 
     /**
@@ -98,4 +99,11 @@ private:
     float m_temperatureBias;
     float m_moistureBias;
     float m_ageBias;
+
+    // Temperature and moisture ranges (from biome registry)
+    // Ensures noise generation covers all biomes evenly
+    int m_minTemperature;
+    int m_maxTemperature;
+    int m_minMoisture;
+    int m_maxMoisture;
 };

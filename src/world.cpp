@@ -72,9 +72,16 @@ World::World(int width, int height, int depth, int seed, float tempBias, float m
         throw std::runtime_error("BiomeRegistry is empty! Call BiomeRegistry::loadBiomes() before creating a World.");
     }
 
-    // Initialize biome map with seed and biases
-    m_biomeMap = std::make_unique<BiomeMap>(seed, tempBias, moistBias, ageBias);
-    Logger::info() << "Biome map initialized with " << BiomeRegistry::getInstance().getBiomeCount() << " biomes";
+    // Initialize biome map with seed, biases, and biome temperature/moisture ranges
+    // This ensures noise generation covers all biomes evenly
+    auto& biomeRegistry = BiomeRegistry::getInstance();
+    auto [minTemp, maxTemp] = biomeRegistry.getTemperatureRange();
+    auto [minMoisture, maxMoisture] = biomeRegistry.getMoistureRange();
+
+    m_biomeMap = std::make_unique<BiomeMap>(seed, tempBias, moistBias, ageBias,
+                                             minTemp, maxTemp, minMoisture, maxMoisture);
+    Logger::info() << "Biome map initialized with " << biomeRegistry.getBiomeCount() << " biomes "
+                  << "(temp: " << minTemp << "-" << maxTemp << ", moisture: " << minMoisture << "-" << maxMoisture << ")";
 
     // Initialize tree generator
     m_treeGenerator = std::make_unique<TreeGenerator>(seed);

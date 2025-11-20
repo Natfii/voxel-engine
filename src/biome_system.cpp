@@ -214,6 +214,12 @@ bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
             biome->ore_spawn_rates = parseOreSpawnRates(doc["ore_spawn_rates"].as<std::string>());
         }
 
+        // Track temperature and moisture ranges for noise scaling
+        m_minTemperature = std::min(m_minTemperature, biome->temperature);
+        m_maxTemperature = std::max(m_maxTemperature, biome->temperature);
+        m_minMoisture = std::min(m_minMoisture, biome->moisture);
+        m_maxMoisture = std::max(m_maxMoisture, biome->moisture);
+
         // Add to registry
         int index = static_cast<int>(m_biomes.size());
         m_biomeNameToIndex[biome->name] = index;
