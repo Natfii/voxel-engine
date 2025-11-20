@@ -553,9 +553,11 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
                 // Regenerate mesh with new decorations
                 chunk->generateMesh(this);
 
-                // Upload to GPU
+                // Upload to GPU (async to prevent frame stalls)
                 if (renderer) {
-                    chunk->createVertexBuffer(renderer);
+                    renderer->beginAsyncChunkUpload();
+                    chunk->createVertexBufferBatched(renderer);
+                    renderer->submitAsyncChunkUpload(chunk);
                 }
 
                 processed++;
@@ -1054,9 +1056,11 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
 
             // Step 4: Upload final mesh to GPU (CRITICAL: after decoration/lighting!)
             if (renderer) {
-                Logger::info() << "Uploaded surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                Logger::info() << "Uploading surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                                << ") with " << chunkPtr->getVertexCount() << " vertices (lit+decorated)";
-                chunkPtr->createVertexBuffer(renderer);
+                renderer->beginAsyncChunkUpload();
+                chunkPtr->createVertexBufferBatched(renderer);
+                renderer->submitAsyncChunkUpload(chunkPtr);
             }
         } catch (const std::exception& e) {
             Logger::error() << "Failed to decorate/light chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): " << e.what();
@@ -1070,11 +1074,13 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         chunkPtr->markLightingDirty();
         chunkPtr->generateMesh(this);
 
-        // Upload to GPU
+        // Upload to GPU (async to prevent frame stalls)
         if (renderer) {
-            Logger::info() << "Uploaded underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+            Logger::info() << "Uploading underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                            << ") with " << chunkPtr->getVertexCount() << " vertices (lit)";
-            chunkPtr->createVertexBuffer(renderer);
+            renderer->beginAsyncChunkUpload();
+            chunkPtr->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(chunkPtr);
         }
     } else {
         // SKIP MODE: Just mesh and upload (no decoration, no lighting for FPS test)
@@ -1097,7 +1103,9 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
 
         if (renderer) {
             auto uploadStart = std::chrono::high_resolution_clock::now();
-            chunkPtr->createVertexBuffer(renderer);
+            renderer->beginAsyncChunkUpload();
+            chunkPtr->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(chunkPtr);
             auto uploadEnd = std::chrono::high_resolution_clock::now();
 
             auto lightMs = std::chrono::duration_cast<std::chrono::milliseconds>(meshGenStart - meshStart).count();
@@ -1413,7 +1421,11 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
         try {
             // Pass true to indicate we already hold the lock (prevents deadlock)
             affectedChunk->generateMesh(this, true);
-            affectedChunk->createVertexBuffer(renderer);
+
+            // Upload to GPU (async to prevent frame stalls)
+            renderer->beginAsyncChunkUpload();
+            affectedChunk->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(affectedChunk);
         } catch (const std::exception& e) {
             Logger::error() << "Failed to update chunk after breaking block: " << e.what();
             // Mesh is already generated, just buffer creation failed
@@ -1448,7 +1460,11 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
                 try {
                     // Pass true to indicate we already hold the lock (prevents deadlock)
                     neighbors[i]->generateMesh(this, true);
-                    neighbors[i]->createVertexBuffer(renderer);
+
+                    // Upload to GPU (async to prevent frame stalls)
+                    renderer->beginAsyncChunkUpload();
+                    neighbors[i]->createVertexBufferBatched(renderer);
+                    renderer->submitAsyncChunkUpload(neighbors[i]);
                 } catch (const std::exception& e) {
                     Logger::error() << "Failed to update neighbor chunk: " << e.what();
                     // Continue updating other chunks even if one fails
@@ -1541,7 +1557,11 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
         try {
             // Pass true to indicate we already hold the lock (prevents deadlock)
             affectedChunk->generateMesh(this, true);
-            affectedChunk->createVertexBuffer(renderer);
+
+            // Upload to GPU (async to prevent frame stalls)
+            renderer->beginAsyncChunkUpload();
+            affectedChunk->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(affectedChunk);
         } catch (const std::exception& e) {
             Logger::error() << "Failed to update chunk after placing block: " << e.what();
             // Mesh is already generated, just buffer creation failed
@@ -1575,7 +1595,11 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
                 try {
                     // Pass true to indicate we already hold the lock (prevents deadlock)
                     neighbors[i]->generateMesh(this, true);
-                    neighbors[i]->createVertexBuffer(renderer);
+
+                    // Upload to GPU (async to prevent frame stalls)
+                    renderer->beginAsyncChunkUpload();
+                    neighbors[i]->createVertexBufferBatched(renderer);
+                    renderer->submitAsyncChunkUpload(neighbors[i]);
                 } catch (const std::exception& e) {
                     Logger::error() << "Failed to update neighbor chunk: " << e.what();
                     // Continue updating other chunks even if one fails
@@ -1783,7 +1807,12 @@ void World::updateWaterSimulation(float deltaTime, VulkanRenderer* renderer, con
         if (chunk) {
             // Regenerate mesh for this chunk (water levels changed)
             chunk->generateMesh(this);
-            chunk->createVertexBuffer(renderer);
+
+            // Upload to GPU (async to prevent frame stalls)
+            renderer->beginAsyncChunkUpload();
+            chunk->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(chunk);
+
             updatesThisFrame++;
         }
     }

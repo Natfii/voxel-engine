@@ -345,9 +345,11 @@ void LightingSystem::regenerateDirtyChunks(int maxPerFrame, VulkanRenderer* rend
             // Regenerate mesh with new lighting data
             chunk->generateMesh(m_world, false);  // Don't hold lock
 
-            // Upload mesh to GPU
+            // Upload mesh to GPU (async to prevent frame stalls)
             if (renderer != nullptr) {
-                chunk->createVertexBuffer(renderer);
+                renderer->beginAsyncChunkUpload();
+                chunk->createVertexBufferBatched(renderer);
+                renderer->submitAsyncChunkUpload(chunk);
             }
 
             // Clear the dirty flag
