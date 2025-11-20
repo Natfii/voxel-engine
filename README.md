@@ -115,35 +115,6 @@ height = 600
 
 Note: World dimensions are handled dynamically through the infinite world streaming system.
 
-## Project Structure
-
-```
-voxel-engine/
-├── src/                # Source code
-│   ├── main.cpp
-│   ├── vulkan_renderer.cpp
-│   ├── chunk.cpp
-│   ├── world.cpp
-│   ├── player.cpp
-│   ├── console.cpp
-│   └── ...
-├── include/            # Headers
-├── shaders/            # GLSL shaders
-│   ├── shader.vert
-│   └── shader.frag
-├── assets/             # Game assets
-│   └── blocks/         # Block definitions
-├── docs/               # Documentation
-│   ├── console.md
-│   ├── controls.md
-│   └── ...
-├── external/           # Third-party libraries
-│   ├── imgui/
-│   ├── glfw/
-│   └── yaml-cpp/
-└── build/              # Build output
-```
-
 ## Technical Details
 
 **Graphics API**: Vulkan 1.0
