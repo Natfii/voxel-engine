@@ -198,8 +198,8 @@ Set the time of day instantly.
 ### `timespeed <value>`
 Control time progression speed.
 - `timespeed 0` - Pause time
-- `timespeed 1` - Normal (20 min cycle) - default
-- `timespeed 10` - 10x faster (2 min cycle)
+- `timespeed 1` - Normal (20 minute cycle) - default
+- `timespeed 10` - 10x faster (2 minute cycle)
 - `timespeed` - Show current speed
 
 ## Quick Start
@@ -231,8 +231,7 @@ Control time progression speed.
    ```
 
 4. **Read the full guide**:
-   - In console: `docs/sky_system.md`
-   - Or open: [docs/sky_system.md](sky_system.md)
+   - See [sky_system.md](sky_system.md) for complete documentation
 
 ## Recent Optimizations Completed (2025-11-14 to 2025-11-18)
 

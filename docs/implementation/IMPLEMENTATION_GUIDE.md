@@ -269,7 +269,7 @@ void ChunkLoadingManager::generatorThreadMain() {
         ChunkRequest request;
 
         // Wait for work or shutdown
-        if (!m_inputQueue.dequeue(request, blocking=true)) {
+        if (!m_inputQueue.dequeue(request, true)) {
             // Shutdown signal received
             break;
         }
@@ -413,8 +413,8 @@ void gameLoop() {
         // CRITICAL: Update chunk loading
         {
             glm::vec3 playerPos = player.getPosition();
-            int playerChunkX = (int)(playerPos.x / 16);  // 16 = chunk size
-            int playerChunkZ = (int)(playerPos.z / 16);
+            int playerChunkX = (int)(playerPos.x / 32);  // 32 = chunk size
+            int playerChunkZ = (int)(playerPos.z / 32);
 
             // Request nearby chunks
             const int LOAD_RADIUS = 3;

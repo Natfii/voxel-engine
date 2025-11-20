@@ -39,9 +39,13 @@ compile.bat
 
 You should see:
 ```
-SUCCESS! Shaders compiled:
+SUCCESS! All shaders compiled:
   - vert.spv
   - frag.spv
+  - line_vert.spv
+  - line_frag.spv
+  - skybox_vert.spv
+  - skybox_frag.spv
 ```
 
 ### 4. Configure VS Code (Optional but Recommended)
@@ -81,35 +85,35 @@ voxel-engine.exe
 ## Troubleshooting
 
 ### "VULKAN_SDK not found"
-→ You didn't restart your computer after installing Vulkan SDK
-→ Restart and try again
+- You didn't restart your computer after installing Vulkan SDK
+- Restart and try again
 
 ### "glslc.exe is not recognized"
-→ Open a **new** Command Prompt (must be after restart)
-→ Verify: `echo %VULKAN_SDK%` shows a path
+- Open a **new** Command Prompt (must be after restart)
+- Verify: `echo %VULKAN_SDK%` shows a path
 
 ### "failed to find suitable GPU"
-→ Your GPU needs Vulkan support - update your graphics drivers:
+Your GPU needs Vulkan support - update your graphics drivers:
 - **NVIDIA**: https://www.nvidia.com/Download/index.aspx
 - **AMD**: https://www.amd.com/en/support
 - **Intel**: https://www.intel.com/content/www/us/en/download-center/home.html
 
 ### VS Code still shows red squiggles
-→ Copy `.vscode/c_cpp_properties.json.example` to `.vscode/c_cpp_properties.json`
-→ Edit the `compilerPath` to match your Visual Studio installation
-→ Restart VS Code (`Ctrl+Shift+P` → "Reload Window")
+- Copy `.vscode/c_cpp_properties.json.example` to `.vscode/c_cpp_properties.json`
+- Edit the `compilerPath` to match your Visual Studio installation
+- Restart VS Code (`Ctrl+Shift+P` → "Reload Window")
 
 ### CMake can't find Vulkan
-→ Check that `VULKAN_SDK` environment variable exists:
+Check that `VULKAN_SDK` environment variable exists:
 ```cmd
 echo %VULKAN_SDK%
 ```
-→ If not set, manually set it in System Environment Variables and restart
+If not set, manually set it in System Environment Variables and restart
 
 ### Build succeeds but crashes on startup
-→ Make sure you compiled the shaders (`shaders/compile.bat`)
-→ Check that `shaders/vert.spv` and `shaders/frag.spv` exist
-→ These files are copied to the build directory automatically by CMake
+- Make sure you compiled the shaders (`shaders/compile.bat`)
+- Check that shader files exist in `shaders/` directory
+- These files are copied to the build directory automatically by CMake
 
 ## Check Your GPU Supports Vulkan
 
@@ -139,7 +143,7 @@ cd build\Release
 voxel-engine.exe
 ```
 
-And see a window with your voxel terrain rendered using Vulkan! 🎉
+And see a window with your voxel terrain rendered using Vulkan!
 
 ## Using the Game
 
@@ -156,7 +160,7 @@ Once running, you can:
 - Type `help` to see all commands
 - Try `noclip` to fly around
 - Type `debug drawfps` for FPS counter
-- Type `docs/console.md` to read console documentation
+- See `docs/console.md` for full console documentation
 
 **Other Controls:**
 - **N** - Toggle noclip mode

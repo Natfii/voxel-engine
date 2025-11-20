@@ -19,16 +19,20 @@ m_vertices.clear(); m_vertices.shrink_to_fit();  // Good
 
 **Missing:** Block data never freed ❌
 ```cpp
-// int m_blocks[32][32][32]  ← 128 KB stays in RAM forever!
+// int m_blocks[32][32][32]           ← 128 KB stays in RAM forever!
+// uint8_t m_blockMetadata[32][32][32] ← 32 KB stays in RAM forever!
+// BlockLight m_lightData[32*32*32]    ← 32 KB stays in RAM forever!
+// Total: 192 KB block data never freed
 ```
 
 **Answer:** Free block data ONLY when unloading to disk:
 ```cpp
 void Chunk::unload() {
     // 1. Serialize to disk
-    char* data = new char[160*1024];
+    char* data = new char[192*1024];
     memcpy(data, m_blocks, 128*1024);
     memcpy(data+128*1024, m_blockMetadata, 32*1024);
+    memcpy(data+160*1024, m_lightData.data(), 32*1024);
     disk_cache.save(this->coord, compress(data));
 
     // 2. Mark as unloaded
@@ -36,7 +40,7 @@ void Chunk::unload() {
 }
 ```
 
-**Priority:** CRITICAL - You lose 160 KB per unloaded chunk without this
+**Priority:** CRITICAL - You lose 192 KB per unloaded chunk without this
 
 ---
 
@@ -146,25 +150,25 @@ System/OS reserve:    -1,000 MB (OS, drivers, etc)
 Game assets:          -1,000 MB (textures, shaders, audio)
 Safety margin:        -1,000 MB (prevent thrashing)
                       ─────────
-Available:             4,000 MB
+Available:             5,000 MB
 
-Per-chunk cost:           420 KB (160 block + 260 GPU)
-Max chunks:          4,000 / 0.42 = 9,500 chunks
+Per-chunk cost:           452 KB (192 block + 260 GPU)
+Max chunks:          5,000 / 0.452 = 11,061 chunks
 
 Radius formula:
   Sphere volume = (4/3)π r³ = chunks
-  9,500 = (4/3)π r³
-  r ≈ 10 chunks
+  11,061 = (4/3)π r³
+  r ≈ 13.6 chunks
 ```
 
 **Recommended limits:**
 
 | RAM   | Safe Budget | Chunk Count | Radius |
 |-------|-------------|-------------|--------|
-| 4 GB  | 2 GB        | 4,700       | 7      |
-| 8 GB  | 4 GB        | 9,500       | 10     |
-| 16 GB | 9 GB        | 21,000      | 15     |
-| 32 GB | 18 GB       | 42,000      | 21     |
+| 4 GB  | 2 GB        | 4,425       | 10     |
+| 8 GB  | 5 GB        | 11,061      | 13     |
+| 16 GB | 10 GB       | 22,123      | 17     |
+| 32 GB | 20 GB       | 44,247      | 21     |
 
 **Implementation:**
 ```cpp
@@ -173,7 +177,7 @@ class ChunkManager {
     size_t m_currentMemory = 0;
 
     bool canLoad(Chunk* chunk) {
-        size_t cost = 160 * 1024;  // Block data
+        size_t cost = 192 * 1024;  // Block data (blocks + metadata + lighting)
         cost += (chunk->vertexCount + chunk->transVertexCount) * sizeof(Vertex);
         return (m_currentMemory + cost) <= MAX_MEMORY;
     }
@@ -198,12 +202,12 @@ class ChunkManager {
 
 **Compression benefit:**
 ```
-Uncompressed chunk:  160 KB (128 KB blocks + 32 KB metadata)
-Compressed (zstd):   30-40 KB (4-5× reduction!)
+Uncompressed chunk:  192 KB (128 KB blocks + 32 KB metadata + 32 KB lighting)
+Compressed (zstd):   35-50 KB (4-5× reduction!)
 
 For 100,000 chunks:
-  Without compression:  16 GB disk (not practical)
-  With compression:     3-4 GB disk (reasonable)
+  Without compression:  19.2 GB disk (not practical)
+  With compression:     3.5-5 GB disk (reasonable)
 ```
 
 **When to compress:**
@@ -224,6 +228,7 @@ void saveChunkToDisk(Chunk* chunk) {
     data.x = chunk->x; data.y = chunk->y; data.z = chunk->z;
     memcpy(data.blocks, chunk->m_blocks, 128*1024);
     memcpy(data.metadata, chunk->m_blockMetadata, 32*1024);
+    memcpy(data.lighting, chunk->m_lightData.data(), 32*1024);
 
     // Compress with zstd
     std::string compressed = zstd_compress(data);
@@ -250,14 +255,15 @@ Chunk* loadChunkFromDisk(int x, int y, int z) {
     Chunk* chunk = pool.acquire(x, y, z);
     memcpy(chunk->m_blocks, data.blocks, 128*1024);
     memcpy(chunk->m_blockMetadata, data.metadata, 32*1024);
+    memcpy(chunk->m_lightData.data(), data.lighting, 32*1024);
 
     return chunk;
 }
 ```
 
 **Latency impact:**
-- NVME: 5 ms load + 2 ms decompress = 7 ms total
-- HDD: 15 ms load + 2 ms decompress = 17 ms total
+- NVME: 5 ms load + 3 ms decompress = 8 ms total
+- HDD: 15 ms load + 3 ms decompress = 18 ms total
 - Acceptable for seamless streaming
 
 **Priority:** MEDIUM - Nice-to-have for large worlds
@@ -325,7 +331,7 @@ SHUTDOWN:
 - **Effort:** 4 hours
 - **Impact:** Unblock streaming (CRITICAL for large worlds)
 - **Code:** 200 lines
-- **Memory savings:** 160 KB per unloaded chunk
+- **Memory savings:** 192 KB per unloaded chunk
 
 ### 4. Streaming Detection (Zone System)
 - **Effort:** 5 hours
@@ -346,7 +352,7 @@ SHUTDOWN:
 ### Without Pooling
 ```cpp
 // Chunk fragmentation over 100,000 allocations
-// Each chunk: 160 KB
+// Each chunk: 192 KB
 // Total waste: 5-20% of heap unused
 
 // Stream 100 chunks/sec for 10 hours
@@ -359,9 +365,9 @@ Result: Game becomes increasingly slow as heap fragments
 ### Without Serialization
 ```cpp
 // Load 10,000 chunks into RAM
-// Each chunk: 160 KB × 10,000 = 1.6 GB
+// Each chunk: 192 KB × 10,000 = 1.92 GB
 // But you only see ~500 chunks at once!
-// Wasted: 1.1 GB per 10K chunks
+// Wasted: 1.3 GB per 10K chunks
 
 // Try to unload chunks but block data persists
 // Memory never freed
@@ -373,13 +379,13 @@ Result: Game crashes after 1-2 hours of play
 ### Without Streaming
 ```cpp
 // Try to load entire 12×512×12 world
-// = 73,728 chunks × 420 KB = 31 GB RAM required
+// = 73,728 chunks × 452 KB = 33.3 GB RAM required
 
 // PC with 16 GB RAM:
 // - System/OS: 2 GB
 // - Game textures: 2 GB
-// - Chunks: 31 GB
-// Total needed: 35 GB (but only 16 GB available)
+// - Chunks: 33.3 GB
+// Total needed: 37.3 GB (but only 16 GB available)
 
 Result: Immediate crash on startup
 ```
@@ -458,12 +464,12 @@ Your understanding is solid! The gaps are implementation details, not conceptual
 
 **Your 12×512×12 world requires:**
 
-| Without Streaming | With Streaming (10-chunk radius) |
+| Without Streaming | With Streaming (13-chunk radius) |
 |------------------|----------------------------------|
-| 31 GB RAM        | 2 GB RAM                        |
-| 30-60 sec load   | 2-5 sec load                    |
-| No gameplay      | Seamless play                   |
-| OOM crash        | Unlimited exploration           |
+| 33.3 GB RAM      | 2.3 GB RAM                       |
+| 30-60 sec load   | 2-5 sec load                     |
+| No gameplay      | Seamless play                    |
+| OOM crash        | Unlimited exploration            |
 
 **To achieve this you need:**
 1. Chunk pooling (reuse objects)
@@ -473,5 +479,5 @@ Your understanding is solid! The gaps are implementation details, not conceptual
 5. Disk caching (optional but recommended)
 
 **Estimated effort:** 30-40 hours spread over 5 weeks
-**Expected outcome:** 15× memory reduction, unlimited world size
+**Expected outcome:** 14.5× memory reduction, unlimited world size
 

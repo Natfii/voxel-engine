@@ -4,7 +4,7 @@
 
 **For safe shipping, you need 4 critical test categories:**
 1. **Correctness Tests** (Most Important - prevents silent bugs)
-2. **Memory Leak Detection** (Critical - ships with sustained memory leaks)
+2. **Memory Leak Detection** (Critical - prevents shipping with sustained memory leaks)
 3. **Performance Gates** (Important - determines if user experience is acceptable)
 4. **Stress/Edge Case Tests** (Nice-to-have - finds corner cases)
 

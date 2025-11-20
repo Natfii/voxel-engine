@@ -90,7 +90,7 @@ valgrind --leak-check=full ./voxel-engine
 
 ## Emergency Fixes
 
-**Race condition detected?** → See CONCURRENCY_ANALYSIS.md
+**Race condition detected?** → See `/docs/architecture/CONCURRENCY_ANALYSIS.md`
 **Mesh generation crashed?** → Check neighbor chunks exist
 **Memory leak on unload?** → Call `destroyBuffers()` before erase
 **FPS drops?** → Use `perf` to find bottleneck
@@ -99,5 +99,5 @@ valgrind --leak-check=full ./voxel-engine
 
 See main documents:
 - `REFACTORING_STRATEGY.md` - Full strategy
-- `CONCURRENCY_ANALYSIS.md` - Threading details
-- `STREAMING_REFACTORING_SUMMARY.md` - Executive summary
+- `/docs/architecture/CONCURRENCY_ANALYSIS.md` - Threading details
+- `/docs/summaries/STREAMING_REFACTORING_SUMMARY.md` - Executive summary

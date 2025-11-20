@@ -75,6 +75,8 @@ struct WaterBody {
 
 ## Phase 2: Wave Rendering Effects ✅ COMPLETE
 
+**Note:** Wave vertex displacement and foam effects were implemented but are currently disabled in production (see Implementation Notes section). Water animation is handled purely through texture scrolling for better visual quality.
+
 ### Vertex Shader Displacement (`shaders/shader.vert`)
 
 **Wave System:**
@@ -111,7 +113,7 @@ if (foamBand > 0.7 && fragWaveIntensity > 0.3) {
 - Creates realistic shoreline effect
 
 #### Existing Water Effects (Preserved)
-- **UV Scrolling**: Diagonal flowing animation (40x speed)
+- **UV Scrolling**: Diagonal flowing animation (250x speed)
 - **Transparency**: 25% alpha for see-through effect
 - **Color Brightening**: [1.5, 1.8, 2.0] multiplier for better visibility
 
@@ -229,9 +231,9 @@ struct Ivec3Compare {
 - `m_frameOffset` - Distributes updates across frames (0-3)
 
 **Wave Rendering:**
-- Wave amplitude: ±0.10 units
-- Wave frequency: 0.5-1.2 cycles per world unit
-- Animation speed: 50x time multiplier
+- Wave amplitude: ±0.10 units (DISABLED - caused geometry distortion)
+- Wave frequency: 0.5-1.2 cycles per world unit (DISABLED)
+- Texture scroll speed: 250x time multiplier
 
 **Particle System:**
 - Max particles: 1000
@@ -447,11 +449,11 @@ mkdir build && cd build && cmake ..
 
 ### Production Changes from Original Plan
 
-1. **Wave Vertex Displacement** - Originally planned but disabled in shader.vert (line 29)
+1. **Wave Vertex Displacement** - Originally planned but disabled in shader.vert (line 33)
    - Reason: Caused visible geometry distortion on water surface
    - Alternative: Texture scrolling animation handles visual movement
 
-2. **Foam Effects** - Fragment shader implementation disabled in shader.frag (lines 64-65)
+2. **Foam Effects** - Fragment shader implementation disabled in shader.frag (lines 66-67)
    - Reason: Clean water surface preferred over animated foam
    - Visual Result: Smooth animated texture works well without foam
 
@@ -461,7 +463,7 @@ mkdir build && cd build && cmake ..
 
 4. **Color Darkening** - Water darkened to 0.65x with blue tint
    - Improves visibility and reduces bright patches
-   - Applied in shader.frag (lines 59-62)
+   - Applied in shader.frag (lines 60-64)
 
 ### Key Implementation Details
 
@@ -497,6 +499,6 @@ mkdir build && cd build && cmake ..
 
 ---
 
-**Status:** Core water system complete and production-ready! 🌊✨
+**Status:** Core water system complete and production-ready!
 
 **Next Steps:** Runtime testing, performance profiling, and implementing advanced effects (reflections, refraction, underwater fog).

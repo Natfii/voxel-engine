@@ -99,18 +99,21 @@ For more details, see [docs/controls.md](docs/controls.md)
 ## Configuration
 
 Edit `config.ini` to customize:
-- World seed
-- World dimensions (width, height, depth)
-- Rendering settings
+- World seed (for procedural generation)
+- Control settings (keybindings, mouse sensitivity)
+- Window settings (resolution)
 
 Example:
 ```ini
 [World]
-seed = 1124345
-world_width = 12
-world_height = 3
-world_depth = 12
+seed = 1124
+
+[Window]
+width = 800
+height = 600
 ```
+
+Note: World dimensions are handled dynamically through the infinite world streaming system.
 
 ## Project Structure
 
@@ -143,11 +146,16 @@ voxel-engine/
 
 ## Technical Details
 
-**Graphics API**: Vulkan 1.3
+**Graphics API**: Vulkan 1.0
+
 **Math Library**: GLM
+
 **Window/Input**: GLFW 3.4
+
 **UI**: Dear ImGui 1.91.9b
+
 **Noise Generation**: FastNoiseLite
+
 **Configuration**: yaml-cpp
 
 ## System Requirements

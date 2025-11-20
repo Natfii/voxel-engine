@@ -35,7 +35,7 @@ When noclip is enabled:
 ## Console
 
 Press **F9** to open the console and type commands.
-See `docs/console.md` for console usage.
+See [console.md](console.md) for console usage.
 
 ## Configuration
 

@@ -378,8 +378,8 @@ voxel-engine/
 ├── src/
 │   └── lighting_system.cpp      [NEW] Implementation
 ├── shaders/
-│   ├── chunk.vert               [MODIFY] Add light attributes
-│   └── chunk.frag               [MODIFY] Apply lighting
+│   ├── shader.vert              [MODIFY] Add light attributes
+│   └── shader.frag              [MODIFY] Apply lighting
 └── tests/
     └── test_lighting.cpp        [NEW] Unit tests
 ```
@@ -506,7 +506,7 @@ float Chunk::calculateVertexLight(const glm::vec3& pos, const glm::vec3& normal)
 ### Shader Integration
 
 ```glsl
-// MODIFY: shaders/chunk.vert
+// MODIFY: shaders/shader.vert
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inTexCoord;
@@ -529,7 +529,7 @@ void main() {
 ```
 
 ```glsl
-// MODIFY: shaders/chunk.frag
+// MODIFY: shaders/shader.frag
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec2 fragTexCoord;
 layout(location = 2) in float fragLightLevel;     // NEW

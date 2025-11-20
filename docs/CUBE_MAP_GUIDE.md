@@ -351,29 +351,14 @@ The cube map system has minimal performance impact:
 - **Runtime**: No additional overhead - same vertex data structure
 - **Memory**: Slightly larger BlockDefinition structure (negligible)
 
-## Texture Variation
-
-Cube maps fully support texture variation (random zoom/offset per block):
-
-```yaml
-cube_map:
-  top: "grass.png"
-  bottom: "dirt.png"
-  sides: "grass.png"
-texture_variation: 1.5  # Applies to all faces
-```
-
-Each face gets a random portion of its texture based on the block's world position.
-
 ## Future Enhancements
 
 Potential additions to the cube map system:
 
-1. **Per-face texture variation**: Different zoom factors for different faces
-2. **Texture rotation**: Rotate textures for specific faces
-3. **Animated textures**: Frame-based animation support
-4. **Normal maps**: Per-face normal mapping
-5. **Block states**: Different cube maps based on block state (e.g., furnace on/off)
+1. **Texture rotation**: Rotate textures for specific faces
+2. **Animated textures**: Frame-based animation support
+3. **Normal maps**: Per-face normal mapping
+4. **Block states**: Different cube maps based on block state (e.g., furnace on/off)
 
 ## Troubleshooting
 

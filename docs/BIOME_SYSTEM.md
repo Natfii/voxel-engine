@@ -318,6 +318,8 @@ primary_log_block: 15  # Birch logs
 **Default:** `-1` (Use default leaves)
 **Description:** The block used for tree leaves in this biome.
 
+**Note:** The property is named `primary_leave_block` (not "leaf") to match the implementation. This is the correct property name to use.
+
 Set to `-1` to use the default leaf type.
 
 **Example:**

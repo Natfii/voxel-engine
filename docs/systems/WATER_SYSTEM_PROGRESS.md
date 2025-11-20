@@ -12,7 +12,7 @@ Implemented complete animated water system with proper transparency rendering, f
 ## 1. Animated Water Texture (✅ Complete)
 
 ### Implementation
-- **File:** `shaders/shader.frag` (lines 22-45)
+- **File:** `shaders/shader.frag` (lines 29-52)
 - **Method:** Shader-based UV scrolling within atlas cell (industry standard)
 - **No multiple texture frames needed** - animation happens purely in shader
 
@@ -20,9 +20,9 @@ Implemented complete animated water system with proper transparency rendering, f
 ```glsl
 // Detects transparent blocks (water) by alpha < 0.99
 // Scrolls UVs within the 0.25x0.25 atlas cell
-float scrollSpeed = 40.0;  // Fast, noticeable flow
-localUV.y += time * scrollSpeed;      // Downward flow
-localUV.x += time * scrollSpeed * 0.6; // Diagonal drift (60% of vertical)
+float scrollSpeed = 250.0;  // Fast, smooth flow
+localUV.y -= time * scrollSpeed;      // Downward flow (subtract to flow down)
+localUV.x += time * scrollSpeed * 0.5; // Diagonal drift (50% of vertical)
 ```
 
 ### Benefits
@@ -33,8 +33,8 @@ localUV.x += time * scrollSpeed * 0.6; // Diagonal drift (60% of vertical)
 - ✅ Diagonal flow for realistic water movement
 
 ### Configuration
-- Speed: `40.0` (2x faster than initial 20.0)
-- Diagonal ratio: `0.6` (60% horizontal vs vertical)
+- Speed: `250.0` (fast, smooth flow - significantly faster than initial 20.0)
+- Diagonal ratio: `0.5` (50% horizontal vs vertical)
 - Animation source: `ubo.skyTimeData.x` (time of day 0-1)
 
 ---
@@ -218,13 +218,13 @@ if (spawnY < 40.0f) {
 - Vertex displacement in shader.vert originally implemented
 - **Problem:** Caused visible geometry distortion on water surface faces
 - **Decision:** Animation now handled purely via texture scrolling (cleaner aesthetic)
-- **Current State:** `waveIntensity` set to 0.0 in shader.vert (line 29)
+- **Current State:** `waveIntensity` set to 0.0 in shader.vert (line 33)
 
 ### Foam Effects (DISABLED - INTENTIONAL)
 - Fragment shader foam effect was implemented for shorelines
 - **Decision:** Disabled in production - clean water surface preferred
 - **Visual Result:** Simple animated water texture looks better than foaming
-- **Alternative:** Could be re-enabled if foam effect is refined
+- **Current State:** Foam code commented at shader.frag (lines 66-67)
 
 ### Critical Gotchas
 1. **Descriptor sets MUST be rebound** when switching pipelines
@@ -234,7 +234,7 @@ if (spawnY < 40.0f) {
 5. **Cell-based UV wrapping** prevents atlas bleeding
 
 ### Performance
-- No performance impact from animation (GPU-only, 250x time multiplier)
+- No performance impact from animation (GPU-only, scrollSpeed=250.0)
 - Two-pass rendering is standard practice, negligible cost
 - Chunk sorting is O(n log n) but n is small (visible chunks only)
 - Water transparency darkening at 0.65x with blue tint improves appearance
@@ -298,12 +298,12 @@ if (spawnY < 40.0f) {
 ## How Water Works Now (Summary)
 
 1. **Rendering:** Two-pass system (opaque first, then transparent back-to-front)
-2. **Animation:** GPU-based UV scrolling at 40x speed with diagonal drift
+2. **Animation:** GPU-based UV scrolling at 250x speed with diagonal drift
 3. **Physics:** Head-based detection, no collision when swimming, powerful jumps
 4. **Transparency:** 25% transparent with proper depth handling
 5. **Visual:** Brightened color multiplier, visible from all angles
 
-**Result:** Minecraft-style water that looks good and feels natural to interact with!
+**Result:** Minecraft-style water that looks good and feels natural to interact with.
 
 ---
 
@@ -335,4 +335,4 @@ cmake --build build --config Release
 
 ---
 
-**Status:** Water system is complete and production-ready! 🌊✨
+**Status:** Water system is complete and production-ready!

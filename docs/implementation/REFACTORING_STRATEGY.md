@@ -523,7 +523,7 @@ struct ChunkResources {
 | `World world(12,64,12); world.generateWorld();` | ✅ Full gen | ✅ Full gen | ✅ Full gen | ✅ Full gen (optional streaming) |
 | `renderWorld()` | ✅ Renders all | ✅ Renders all | ✅ Renders all | ✅ Renders visible |
 | `breakBlock(pos, renderer)` | ✅ Works | ✅ Works | ✅ Works | ✅ Works if chunk loaded |
-| `placeBlock(pos, blockID, renderer)| ✅ Works | ✅ Works | ✅ Works | ✅ Works if chunk loaded |
+| `placeBlock(pos, blockID, renderer)` | ✅ Works | ✅ Works | ✅ Works | ✅ Works if chunk loaded |
 | Performance | 10-30s load | 10-30s load | 10-30s load | <2s load + streaming |
 
 **Key**: All phases can be disabled via compile-time flags or runtime options.

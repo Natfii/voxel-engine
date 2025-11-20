@@ -82,13 +82,13 @@ Set the time of day (0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset).
 ### timespeed <value>
 Set the time progression speed (0=paused, 1=normal, higher=faster).
 - Example: `timespeed 0` (pause time)
-- Example: `timespeed 1` (normal speed, 24 minute cycle)
-- Example: `timespeed 10` (10x faster, 2.4 minute cycle)
+- Example: `timespeed 1` (normal speed, 20 minute cycle)
+- Example: `timespeed 10` (10x faster, 2 minute cycle)
 - Example: `timespeed` (show current speed)
 
 **Tab completion:** Press Tab after `timespeed ` to cycle through common values.
 
-See [docs/sky_system.md](sky_system.md) for detailed sky system documentation.
+See [sky_system.md](sky_system.md) for detailed sky system documentation.
 
 ### spawnstructure <name>
 Spawn a structure at the targeted ground position. Look at the ground where you want to place the structure and run this command.

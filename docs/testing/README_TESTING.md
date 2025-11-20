@@ -1,7 +1,7 @@
 # Chunk Streaming Testing Strategy - Complete Implementation
 
 **Status:** Ready to integrate
-**Date:** November 13, 2025
+**Date:** November 20, 2025
 **Files Created:** 14 total (7 test files + 7 documentation files)
 
 ## What You're Getting
@@ -185,24 +185,26 @@ EDGE CASE - May be acceptable
 
 ```
 /home/user/voxel-engine/
-├── tests/                           # Test directory
-│   ├── CMakeLists.txt              # Test build config
-│   ├── test_utils.h                # Shared test utilities
-│   ├── test_utils.cpp              # Mock implementations
-│   ├── chunk_correctness_test.cpp  # Correctness tests (6)
-│   ├── memory_leak_test.cpp        # Memory tests (6)
-│   ├── performance_test.cpp        # Performance tests (7)
-│   └── stress_test.cpp             # Stress tests (8)
+├── docs/
+│   └── testing/                         # Documentation directory
+│       ├── README_TESTING.md            # ← You are here
+│       ├── TESTING_STRATEGY.md          # Design document
+│       ├── TESTING_INTEGRATION.md       # Setup guide
+│       ├── TESTING_ARCHITECTURE.txt     # Visual architecture
+│       ├── TESTING_QUICK_REFERENCE.md   # Command cheatsheet
+│       ├── TESTING_IMPLEMENTATION_SUMMARY.md  # What's included
+│       └── TESTING_CHECKLIST.md         # Ship checklist
 │
-├── README_TESTING.md               # ← You are here
-├── TESTING_STRATEGY.md             # Design document
-├── TESTING_INTEGRATION.md          # Setup guide
-├── TESTING_ARCHITECTURE.txt        # Visual architecture
-├── TESTING_QUICK_REFERENCE.md      # Command cheatsheet
-├── TESTING_IMPLEMENTATION_SUMMARY.md  # What's included
-├── TESTING_CHECKLIST.md            # Ship checklist
+├── tests/                               # Test directory
+│   ├── CMakeLists.txt                   # Test build config
+│   ├── test_utils.h                     # Shared test utilities
+│   ├── test_utils.cpp                   # Mock implementations
+│   ├── chunk_correctness_test.cpp       # Correctness tests (6)
+│   ├── memory_leak_test.cpp             # Memory tests (6)
+│   ├── performance_test.cpp             # Performance tests (7)
+│   └── stress_test.cpp                  # Stress tests (8)
 │
-└── CMakeLists.txt                  # ← Update with add_subdirectory(tests)
+└── CMakeLists.txt                       # ← Update with add_subdirectory(tests)
 ```
 
 ---
@@ -362,7 +364,7 @@ perf record ./tests/test_performance && perf report
 
 ---
 
-**Last Updated:** November 13, 2025
+**Last Updated:** November 20, 2025
 **Status:** ✓ Ready to integrate
 **Contact:** See TESTING_STRATEGY.md for team details
 
