@@ -2002,9 +2002,15 @@ void VulkanRenderer::flushDeletionQueue() {
     // Thread-safe flush operation
     std::lock_guard<std::mutex> lock(m_deletionQueueMutex);
 
+    // CRITICAL FIX: Limit deletions per frame to prevent massive stalls
+    // Deleting 200+ buffers at once causes 400ms frame stall (vkDestroyBuffer is ~1ms each)
+    // Spread deletions over multiple frames (10 per frame = 20ms overhead max)
+    const int MAX_DELETIONS_PER_FRAME = 10;
+    int deletionsThisFrame = 0;
+
     // Delete resources from frames that are at least MAX_FRAMES_IN_FLIGHT old
     // This ensures the GPU is done using them (fence-based approach)
-    while (!m_deletionQueue.empty()) {
+    while (!m_deletionQueue.empty() && deletionsThisFrame < MAX_DELETIONS_PER_FRAME) {
         const auto& deletion = m_deletionQueue.front();
 
         // Check if enough frames have passed (GPU is done with this resource)
@@ -2018,6 +2024,7 @@ void VulkanRenderer::flushDeletionQueue() {
             }
 
             m_deletionQueue.pop_front();
+            deletionsThisFrame++;
         } else {
             // Too recent - GPU might still be using it
             // All subsequent entries are also too new (FIFO queue), so stop
