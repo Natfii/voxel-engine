@@ -991,6 +991,10 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
 
     lock.unlock();  // Release lock before decoration (can be slow)
 
+    // PERFORMANCE DEBUG: Skip heavy operations during streaming to isolate bottleneck
+    // TODO: Remove this and do proper async decoration/lighting
+    const bool SKIP_DECORATION_FOR_FPS = true;
+
     // MAIN THREAD: Decorate, Light, Mesh, Upload - IN THAT ORDER
     // This is safe because:
     // 1. Chunk is now findable via getChunkAt() for tree placement
@@ -998,7 +1002,7 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
     // 3. Lighting happens AFTER all blocks are placed
     // 4. GPU upload happens AFTER final mesh is generated
     // 5. Mesh generation happens AFTER neighbors are loaded (for occlusion culling)
-    if (chunkPtr->getChunkY() >= 0) {  // Only decorate surface chunks
+    if (chunkPtr->getChunkY() >= 0 && !SKIP_DECORATION_FOR_FPS) {  // Only decorate surface chunks
         try {
             Logger::debug() << "Processing surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): decorate → light → mesh → upload";
 
@@ -1032,7 +1036,7 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
             Logger::error() << "Failed to decorate/light chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): " << e.what();
             // Continue anyway - chunk has terrain even without decoration
         }
-    } else {
+    } else if (!SKIP_DECORATION_FOR_FPS) {
         // Underground chunks: Light and mesh (no decoration)
         Logger::debug() << "Processing underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): light → mesh → upload";
 
@@ -1044,6 +1048,25 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         if (renderer) {
             Logger::info() << "Uploaded underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                            << ") with " << chunkPtr->getVertexCount() << " vertices (lit)";
+            chunkPtr->createVertexBuffer(renderer);
+        }
+    } else {
+        // SKIP MODE: Just mesh and upload (no decoration, no lighting for FPS test)
+        Logger::debug() << "FAST MODE: Quick mesh+upload for chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
+
+        // Set basic lighting (all blocks lit)
+        for (int x = 0; x < Chunk::WIDTH; x++) {
+            for (int y = 0; y < Chunk::HEIGHT; y++) {
+                for (int z = 0; z < Chunk::DEPTH; z++) {
+                    chunkPtr->setSkyLight(x, y, z, 15);
+                    chunkPtr->setBlockLight(x, y, z, 0);
+                }
+            }
+        }
+        chunkPtr->initializeInterpolatedLighting();
+
+        chunkPtr->generateMesh(this);
+        if (renderer) {
             chunkPtr->createVertexBuffer(renderer);
         }
     }
