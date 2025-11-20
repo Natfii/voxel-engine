@@ -30,6 +30,7 @@ struct Vertex {
     float u, v;         ///< Texture coordinates (atlas UV)
     float skyLight;     ///< Sky light level 0.0-1.0 (affected by sun/moon position)
     float blockLight;   ///< Block light level 0.0-1.0 (torches, lava - constant)
+    float ao;           ///< Ambient occlusion 0.0-1.0 (darkens corners where blocks meet)
 
     /**
      * @brief Gets Vulkan binding description for vertex input
@@ -45,10 +46,10 @@ struct Vertex {
 
     /**
      * @brief Gets Vulkan attribute descriptions for vertex attributes
-     * @return Array of attribute descriptions (position, color, texcoord, skyLight, blockLight)
+     * @return Array of attribute descriptions (position, color, texcoord, skyLight, blockLight, ao)
      */
-    static inline std::array<VkVertexInputAttributeDescription, 5> getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 5> attributeDescriptions{};
+    static inline std::array<VkVertexInputAttributeDescription, 6> getAttributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 6> attributeDescriptions{};
 
         // Position attribute (location = 0)
         attributeDescriptions[0].binding = 0;
@@ -79,6 +80,12 @@ struct Vertex {
         attributeDescriptions[4].location = 4;
         attributeDescriptions[4].format = VK_FORMAT_R32_SFLOAT;
         attributeDescriptions[4].offset = offsetof(Vertex, blockLight);
+
+        // Ambient occlusion attribute (location = 5)
+        attributeDescriptions[5].binding = 0;
+        attributeDescriptions[5].location = 5;
+        attributeDescriptions[5].format = VK_FORMAT_R32_SFLOAT;
+        attributeDescriptions[5].offset = offsetof(Vertex, ao);
 
         return attributeDescriptions;
     }
@@ -357,6 +364,44 @@ public:
     void setSkyLight(int x, int y, int z, uint8_t value);
 
     /**
+     * @brief Gets interpolated sky light (smooth time-based transitions)
+     *
+     * @param x Local X coordinate (0-31)
+     * @param y Local Y coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @return Interpolated sky light level (0.0-15.0)
+     */
+    float getInterpolatedSkyLight(int x, int y, int z) const;
+
+    /**
+     * @brief Gets interpolated block light (smooth time-based transitions)
+     *
+     * @param x Local X coordinate (0-31)
+     * @param y Local Y coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @return Interpolated block light level (0.0-15.0)
+     */
+    float getInterpolatedBlockLight(int x, int y, int z) const;
+
+    /**
+     * @brief Updates interpolated lighting values toward target values
+     *
+     * Smoothly transitions lighting over time for natural-looking changes.
+     *
+     * @param deltaTime Time since last frame in seconds
+     * @param speed Interpolation speed multiplier (higher = faster transitions)
+     */
+    void updateInterpolatedLighting(float deltaTime, float speed = 5.0f);
+
+    /**
+     * @brief Initializes interpolated lighting to match current target values
+     *
+     * Call this after initial lighting calculation to avoid fade-in effect.
+     * Sets interpolated values = target values immediately (no transition).
+     */
+    void initializeInterpolatedLighting();
+
+    /**
      * @brief Sets the block light level at local chunk coordinates
      *
      * @param x Local X coordinate (0-31)
@@ -485,6 +530,14 @@ private:
     uint8_t m_blockMetadata[WIDTH][HEIGHT][DEPTH]; ///< Block metadata (water levels, etc.) (32 KB)
     std::array<BlockLight, WIDTH * HEIGHT * DEPTH> m_lightData; ///< Light data (sky + block light, 32 KB)
     bool m_lightingDirty;                   ///< True if lighting changed (needs mesh regen)
+
+    // ========== Interpolated Lighting (Smooth Time-Based Transitions) ==========
+    struct InterpolatedLight {
+        float skyLight;    // Current interpolated sky light (0.0-15.0)
+        float blockLight;  // Current interpolated block light (0.0-15.0)
+        InterpolatedLight() : skyLight(0.0f), blockLight(0.0f) {}
+    };
+    std::array<InterpolatedLight, WIDTH * HEIGHT * DEPTH> m_interpolatedLightData; ///< Smooth lighting values (256 KB)
 
     // ========== Mesh Data ==========
     std::vector<Vertex> m_vertices;         ///< CPU-side vertex data (opaque)

@@ -858,7 +858,18 @@ int main() {
 
             // Update lighting system (incremental propagation)
             if (DebugState::instance().lightingEnabled.getValue()) {
-                world.getLightingSystem()->update(deltaTime);
+                world.getLightingSystem()->update(deltaTime, &renderer);
+
+                // NATURAL TIME-BASED LIGHTING: Smoothly interpolate lighting values
+                world.updateInterpolatedLighting(deltaTime);
+            }
+
+            // DECORATION FIX: Process pending decorations (chunks waiting for neighbors)
+            static float decorationRetryTimer = 0.0f;
+            decorationRetryTimer += deltaTime;
+            if (decorationRetryTimer >= 0.05f) {  // Retry every 50ms (20 times per second)
+                world.processPendingDecorations(&renderer, 20);  // Process up to 20 chunks per check (400/sec max)
+                decorationRetryTimer = 0.0f;
             }
 
             // Particles disabled for performance

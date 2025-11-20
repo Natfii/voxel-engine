@@ -374,17 +374,3 @@ cmake --build build
   - Create new world dialog
   - World deletion support
 
-## Commit Messages (Recent)
-
-**Most Recent Commits:**
-- `beac18e` - planning
-- `aac74cb` - ;
-- `ec6eed1` - s
-- `d16ca66` - Fix duplicate VkDevice declaration in createVertexBufferBatched
-- `9e1ba96` - Fix performance bottleneck: throttle chunk streaming updates
-- `8137eae` - Fix critical crashes in block place/break system
-- `86f48b0` - Implement comprehensive memory and performance optimizations
-- `bedab2d` - Implement RAM cache + autosave system for chunk streaming
-- `6487bbc` - Add load-from-disk to chunk streaming system
-- `ae2ffe2` - Implement save-on-unload for chunk streaming persistence
-- `27464a0` - Fix ground bobbing physics and tree loading issues

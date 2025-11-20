@@ -13,6 +13,7 @@ layout(location = 1) in vec4 inColor;  // Now vec4 with alpha channel
 layout(location = 2) in vec2 inTexCoord;
 layout(location = 3) in float inSkyLight;    // Sky light (0.0-1.0, affected by sun/moon)
 layout(location = 4) in float inBlockLight;  // Block light (0.0-1.0, torches/lava)
+layout(location = 5) in float inAO;          // Ambient occlusion (0.0-1.0, darkens corners)
 
 layout(location = 0) out vec4 fragColor;  // Now vec4 with alpha
 layout(location = 1) out vec3 fragWorldPos;
@@ -20,6 +21,7 @@ layout(location = 2) out vec2 fragTexCoord;
 layout(location = 3) out float fragWaveIntensity;  // For wave effects
 layout(location = 4) out float fragSkyLight;    // Pass sky light to fragment shader
 layout(location = 5) out float fragBlockLight;  // Pass block light to fragment shader
+layout(location = 6) out float fragAO;          // Pass ambient occlusion to fragment shader
 
 void main() {
     // Calculate world position
@@ -34,6 +36,7 @@ void main() {
     fragWaveIntensity = waveIntensity;
     fragSkyLight = inSkyLight;
     fragBlockLight = inBlockLight;
+    fragAO = inAO;  // Pass ambient occlusion to fragment shader
 
     gl_Position = ubo.projection * ubo.view * vec4(finalPosition, 1.0);
     fragColor = inColor;

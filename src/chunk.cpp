@@ -23,6 +23,7 @@
 #include <mutex>
 #include <fstream>
 #include <filesystem>
+#include <cmath>
 
 // Static member initialization
 std::unique_ptr<FastNoiseLite> Chunk::s_noise = nullptr;
@@ -85,6 +86,9 @@ Chunk::Chunk(int x, int y, int z)
     // Initialize all light data to 0 (complete darkness)
     m_lightData.fill(BlockLight(0, 0));
 
+    // Initialize interpolated lighting to 0 (prevents accessing uninitialized memory)
+    m_interpolatedLightData.fill(InterpolatedLight());
+
     // Calculate world-space bounds for culling
     // Blocks are 1.0 world units in size
     float worldX = m_x * WIDTH;
@@ -128,6 +132,7 @@ void Chunk::reset(int x, int y, int z) {
 
     // Reset lighting to darkness
     m_lightData.fill(BlockLight(0, 0));
+    m_interpolatedLightData.fill(InterpolatedLight());
     m_lightingDirty = false;
 
     // Recalculate bounds
@@ -574,6 +579,75 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
         return registry.get(blockID).isLiquid;
     };
 
+    // SMOOTH LIGHTING: Helper to get light at a vertex by sampling 4 adjacent blocks
+    // This creates smooth gradients between different light levels (Minecraft-style)
+    // Uses WORLD-SPACE vertex position to ensure consistent lighting across block boundaries
+    // Uses INTERPOLATED lighting values for smooth time-based transitions
+    auto getSmoothLight = [this, world, callerHoldsLock](
+        float vx, float vy, float vz, int dx1, int dy1, int dz1, int dx2, int dy2, int dz2, bool isSky) -> float {
+
+        // Convert vertex world position to block coordinates
+        int blockX = static_cast<int>(std::floor(vx));
+        int blockY = static_cast<int>(std::floor(vy));
+        int blockZ = static_cast<int>(std::floor(vz));
+
+        // Sample 4 blocks around this vertex in world space
+        float light1, light2, light3, light4;
+
+        auto getLightAtWorldPos = [&](int worldX, int worldY, int worldZ) -> float {
+            if (callerHoldsLock) {
+                // Can't safely query other chunks while holding lock
+                // Convert to chunk-local coordinates
+                int localX = worldX - (m_x * WIDTH);
+                int localY = worldY - (m_y * HEIGHT);
+                int localZ = worldZ - (m_z * DEPTH);
+                if (localX >= 0 && localX < WIDTH && localY >= 0 && localY < HEIGHT && localZ >= 0 && localZ < DEPTH) {
+                    return isSky ? getInterpolatedSkyLight(localX, localY, localZ) : getInterpolatedBlockLight(localX, localY, localZ);
+                }
+                // Fallback for out-of-chunk: assume full sunlight (15.0) for sky, no block light (0.0)
+                // This prevents harsh dark edges at chunk boundaries
+                return isSky ? 15.0f : 0.0f;
+            }
+
+            Chunk* chunk = world->getChunkAtWorldPos(worldX, worldY, worldZ);
+            // If chunk doesn't exist, assume full sunlight for sky, no block light
+            if (!chunk) return isSky ? 15.0f : 0.0f;
+
+            int localX = worldX - (chunk->getChunkX() * WIDTH);
+            int localY = worldY - (chunk->getChunkY() * HEIGHT);
+            int localZ = worldZ - (chunk->getChunkZ() * DEPTH);
+            return isSky ? chunk->getInterpolatedSkyLight(localX, localY, localZ) : chunk->getInterpolatedBlockLight(localX, localY, localZ);
+        };
+
+        // Sample 4 blocks around the vertex position
+        light1 = getLightAtWorldPos(blockX + dx1 + dx2, blockY + dy1 + dy2, blockZ + dz1 + dz2);  // Diagonal
+        light2 = getLightAtWorldPos(blockX + dx1, blockY + dy1, blockZ + dz1);                     // Side 1
+        light3 = getLightAtWorldPos(blockX + dx2, blockY + dy2, blockZ + dz2);                     // Side 2
+        light4 = getLightAtWorldPos(blockX, blockY, blockZ);                                       // Center
+
+        // Average the 4 samples and normalize to 0.0-1.0
+        return (light1 + light2 + light3 + light4) / 4.0f / 15.0f;
+    };
+
+    // AMBIENT OCCLUSION: Darken vertices where 3 blocks meet (corners)
+    // Creates depth perception and more realistic shadows (Minecraft-style)
+    auto calculateAO = [&isSolid](int x, int y, int z, int dx1, int dy1, int dz1, int dx2, int dy2, int dz2) -> float {
+        // Check 3 blocks adjacent to this vertex
+        bool side1 = isSolid(x + dx1, y + dy1, z + dz1);
+        bool side2 = isSolid(x + dx2, y + dy2, z + dz2);
+        bool corner = isSolid(x + dx1 + dx2, y + dy1 + dy2, z + dz1 + dz2);
+
+        // If both sides are blocked, full occlusion
+        if (side1 && side2) {
+            return 0.0f;
+        }
+
+        // Calculate AO based on number of adjacent solid blocks
+        // 3 = no occlusion, 0 = full occlusion
+        int blockCount = (side1 ? 1 : 0) + (side2 ? 1 : 0) + (corner ? 1 : 0);
+        return (3 - blockCount) / 3.0f;
+    };
+
     // Iterate over every block in the chunk (optimized order for cache locality)
     for(int X = 0; X < WIDTH;  ++X) {
         for(int Y = 0; Y < HEIGHT; ++Y) {
@@ -651,8 +725,10 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                 // heightAdjust: Optional Y-offset for water level rendering
                 // adjustTopOnly: If true, only apply heightAdjust to vertices with y=0.5 (top of block)
                 // useTransparent: If true, adds to transparent buffers; if false, adds to opaque buffers
+                // faceNormal: Direction the face is facing (for smooth lighting calculation)
                 auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart,
-                                      float heightAdjust = 0.0f, bool adjustTopOnly = false, bool useTransparent = false) {
+                                      float heightAdjust = 0.0f, bool adjustTopOnly = false, bool useTransparent = false,
+                                      glm::ivec3 faceNormal = glm::ivec3(0, 0, 0)) {
                     auto [uMin, vMin] = getUVsForFace(faceTexture);
                     float uvScaleZoomed = uvScale;
 
@@ -689,26 +765,57 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
                         v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
 
-                        // Calculate dual-channel light levels for this vertex
-                        // Check if lighting is enabled via debug flag
+                        // CLASSIC RETRO LIGHTING - Per-face uniform lighting
+                        // Sample light from the block adjacent to this face (not per-vertex)
+                        // This gives consistent, blocky lighting like classic Minecraft
                         if (DebugState::instance().lightingEnabled.getValue()) {
-                            // Sample both sky and block light separately
-                            uint8_t skyLightValue = getSkyLight(X, Y, Z);
-                            uint8_t blockLightValue = getBlockLight(X, Y, Z);
+                            // Sample the light from the block in the direction this face is pointing
+                            // Use the face normal to determine which neighbor to sample
+                            int sampleX = X + faceNormal.x;
+                            int sampleY = Y + faceNormal.y;
+                            int sampleZ = Z + faceNormal.z;
 
-                            // Normalize to 0.0-1.0 range (separate channels)
-                            v.skyLight = skyLightValue / 15.0f;
-                            v.blockLight = blockLightValue / 15.0f;
+                            // Get light at the sampled position (may be in neighboring chunk)
+                            glm::vec3 sampleWorldPos = localToWorldPos(sampleX, sampleY, sampleZ);
+
+                            float skyLight = 15.0f;  // Default full sunlight
+                            float blockLight = 0.0f;  // Default no block light
+
+                            if (callerHoldsLock) {
+                                // Can't query other chunks - use local data if available
+                                if (sampleX >= 0 && sampleX < WIDTH && sampleY >= 0 && sampleY < HEIGHT && sampleZ >= 0 && sampleZ < DEPTH) {
+                                    skyLight = getInterpolatedSkyLight(sampleX, sampleY, sampleZ);
+                                    blockLight = getInterpolatedBlockLight(sampleX, sampleY, sampleZ);
+                                }
+                            } else {
+                                // Query world for neighbor chunks
+                                Chunk* chunk = world->getChunkAtWorldPos(sampleWorldPos.x, sampleWorldPos.y, sampleWorldPos.z);
+                                if (chunk) {
+                                    int localX = static_cast<int>(sampleWorldPos.x) - (chunk->getChunkX() * WIDTH);
+                                    int localY = static_cast<int>(sampleWorldPos.y) - (chunk->getChunkY() * HEIGHT);
+                                    int localZ = static_cast<int>(sampleWorldPos.z) - (chunk->getChunkZ() * DEPTH);
+                                    skyLight = chunk->getInterpolatedSkyLight(localX, localY, localZ);
+                                    blockLight = chunk->getInterpolatedBlockLight(localX, localY, localZ);
+                                }
+                            }
+
+                            // Normalize to 0-1 range
+                            v.skyLight = skyLight / 15.0f;
+                            v.blockLight = blockLight / 15.0f;
+                            v.ao = 1.0f;  // No AO for classic look
                         } else {
-                            // Lighting disabled - full brightness on both channels
+                            // Lighting disabled - full brightness
                             v.skyLight = 1.0f;
                             v.blockLight = 1.0f;
+                            v.ao = 1.0f;
                         }
 
                         targetVerts.push_back(v);
                     }
 
-                    // Create 6 indices for 2 triangles (0,1,2 and 0,2,3)
+                    // SIMPLIFIED TRIANGLE SPLIT FOR CLASSIC LIGHTING
+                    // Use consistent diagonal (0-2) for all faces
+                    // This ensures adjacent blocks have matching gradients (retro aesthetic)
                     targetIndices.push_back(baseIndex + 0);
                     targetIndices.push_back(baseIndex + 1);
                     targetIndices.push_back(baseIndex + 2);
@@ -752,7 +859,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                     }
 
                     if (shouldRender) {
-                        renderFace(frontTex, 0, 0, waterHeightAdjust, true, isCurrentTransparent);
+                        renderFace(frontTex, 0, 0, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(0, 0, -1));
                     }
                 }
 
@@ -773,7 +880,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         shouldRender = !neighborIsSolid;
                     }
                     if (shouldRender) {
-                        renderFace(backTex, 12, 8, waterHeightAdjust, true, isCurrentTransparent);
+                        renderFace(backTex, 12, 8, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(0, 0, 1));
                     }
                 }
 
@@ -794,7 +901,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         shouldRender = !neighborIsSolid;
                     }
                     if (shouldRender) {
-                        renderFace(leftTex, 24, 16, waterHeightAdjust, true, isCurrentTransparent);
+                        renderFace(leftTex, 24, 16, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(-1, 0, 0));
                     }
                 }
 
@@ -815,7 +922,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         shouldRender = !neighborIsSolid;
                     }
                     if (shouldRender) {
-                        renderFace(rightTex, 36, 24, waterHeightAdjust, true, isCurrentTransparent);
+                        renderFace(rightTex, 36, 24, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(1, 0, 0));
                     }
                 }
 
@@ -826,7 +933,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                     bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
                     if (shouldRender) {
                         // Apply water height adjustment to entire top face for flowing water effect
-                        renderFace(topTex, 48, 32, waterHeightAdjust, false, isCurrentTransparent);
+                        renderFace(topTex, 48, 32, waterHeightAdjust, false, isCurrentTransparent, glm::ivec3(0, 1, 0));
                     }
                 }
 
@@ -844,7 +951,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         shouldRender = !neighborIsSolid;
                     }
                     if (shouldRender) {
-                        renderFace(bottomTex, 60, 40, 0.0f, false, isCurrentTransparent);
+                        renderFace(bottomTex, 60, 40, 0.0f, false, isCurrentTransparent, glm::ivec3(0, -1, 0));
                     }
                 }
             }
@@ -1364,6 +1471,60 @@ void Chunk::setSkyLight(int x, int y, int z, uint8_t value) {
     }
     int index = x + y * WIDTH + z * WIDTH * HEIGHT;
     m_lightData[index].skyLight = value & 0x0F;  // Clamp to 4 bits (0-15)
+}
+
+float Chunk::getInterpolatedSkyLight(int x, int y, int z) const {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return 0.0f;  // Out of bounds
+    }
+    int index = x + y * WIDTH + z * WIDTH * HEIGHT;
+    return m_interpolatedLightData[index].skyLight;
+}
+
+float Chunk::getInterpolatedBlockLight(int x, int y, int z) const {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
+        return 0.0f;  // Out of bounds
+    }
+    int index = x + y * WIDTH + z * WIDTH * HEIGHT;
+    return m_interpolatedLightData[index].blockLight;
+}
+
+void Chunk::updateInterpolatedLighting(float deltaTime, float speed) {
+    // Smoothly interpolate current lighting toward target lighting values
+    // This creates natural, gradual lighting transitions over time
+    const float lerpFactor = 1.0f - std::exp(-speed * deltaTime);  // Exponential smoothing
+
+    for (int i = 0; i < WIDTH * HEIGHT * DEPTH; ++i) {
+        const BlockLight& target = m_lightData[i];
+        InterpolatedLight& current = m_interpolatedLightData[i];
+
+        // Interpolate toward target values
+        float targetSky = static_cast<float>(target.skyLight);
+        float targetBlock = static_cast<float>(target.blockLight);
+
+        current.skyLight += (targetSky - current.skyLight) * lerpFactor;
+        current.blockLight += (targetBlock - current.blockLight) * lerpFactor;
+
+        // Snap to target if very close (prevents infinite asymptotic approach)
+        if (std::abs(current.skyLight - targetSky) < 0.01f) {
+            current.skyLight = targetSky;
+        }
+        if (std::abs(current.blockLight - targetBlock) < 0.01f) {
+            current.blockLight = targetBlock;
+        }
+    }
+}
+
+void Chunk::initializeInterpolatedLighting() {
+    // Initialize interpolated values to match target values immediately
+    // This prevents fade-in effect when chunks are first loaded
+    for (int i = 0; i < WIDTH * HEIGHT * DEPTH; ++i) {
+        const BlockLight& target = m_lightData[i];
+        InterpolatedLight& current = m_interpolatedLightData[i];
+
+        current.skyLight = static_cast<float>(target.skyLight);
+        current.blockLight = static_cast<float>(target.blockLight);
+    }
 }
 
 void Chunk::setBlockLight(int x, int y, int z, uint8_t value) {

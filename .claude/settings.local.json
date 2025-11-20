@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "WebFetch(domain:raw.githubusercontent.com)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(ctest:*)",
+      "Bash(python:*)",
+      "Bash(./test_chunk_correctness.exe:*)",
+      "Bash(./build/tests/Release/test_chunk_correctness.exe:*)",
+      "Bash(nm:*)",
+      "Bash(cmake --build:*)",
+      "Bash(compile_shaders.bat)",
+      "Bash(cmd /c compile_shaders.bat)"
     ],
     "deny": [],
     "ask": []

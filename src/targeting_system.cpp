@@ -53,7 +53,7 @@ void TargetingSystem::init(VulkanRenderer* renderer) {
     vkDestroyBuffer(renderer->getDevice(), stagingBuffer, nullptr);
     vkFreeMemory(renderer->getDevice(), stagingBufferMemory, nullptr);
 
-    m_outlineVertexCount = dummyVerts.size() / 11; // 11 floats per vertex (xyz rgba uv skyLight blockLight)
+    m_outlineVertexCount = dummyVerts.size() / 6; // 6 floats per vertex (xyz rgb) - matches line shader
 }
 
 void TargetingSystem::cleanup(VulkanRenderer* renderer) {
@@ -221,35 +221,25 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
     const float offset = 0.003f; // Minimal offset (Minecraft-style thin outline)
 
     std::vector<float> vertices;
-    vertices.reserve(8 * 11); // 8 vertices * 11 floats per vertex (x,y,z,r,g,b,a,u,v,skyLight,blockLight)
+    vertices.reserve(24 * 6); // 24 vertices (12 edges * 2 verts) * 6 floats per vertex (x,y,z,r,g,b)
 
     // Helper lambda to add a line (2 vertices)
     auto addLine = [&](float x1, float y1, float z1, float x2, float y2, float z2) {
-        // First vertex
+        // First vertex - position (xyz) + color (rgb)
         vertices.push_back(x1);
         vertices.push_back(y1);
         vertices.push_back(z1);
-        vertices.push_back(0.0f); // Black outline color (cartoonish)
+        vertices.push_back(0.0f); // Black outline color
         vertices.push_back(0.0f);
         vertices.push_back(0.0f);
-        vertices.push_back(1.0f); // Alpha (fully opaque)
-        vertices.push_back(0.0f); // UV coordinates
-        vertices.push_back(0.0f);
-        vertices.push_back(1.0f); // skyLight (full bright)
-        vertices.push_back(0.0f); // blockLight (no torch)
 
-        // Second vertex
+        // Second vertex - position (xyz) + color (rgb)
         vertices.push_back(x2);
         vertices.push_back(y2);
         vertices.push_back(z2);
-        vertices.push_back(0.0f); // Black outline color (cartoonish)
+        vertices.push_back(0.0f); // Black outline color
         vertices.push_back(0.0f);
         vertices.push_back(0.0f);
-        vertices.push_back(1.0f); // Alpha (fully opaque)
-        vertices.push_back(0.0f); // UV coordinates
-        vertices.push_back(0.0f);
-        vertices.push_back(1.0f); // skyLight (full bright)
-        vertices.push_back(0.0f); // blockLight (no torch)
     };
 
     // Expand outline outward for visibility
@@ -260,44 +250,26 @@ std::vector<float> TargetingSystem::createOutlineVertices(const glm::vec3& posit
     float y1 = position.y + size + offset;
     float z1 = position.z + size + offset;
 
-    // Draw only the face that was hit (based on normal)
-    if (hitNormal.y > 0.5f) {
-        // Top face (+Y)
-        addLine(x0, y1, z0, x1, y1, z0);
-        addLine(x1, y1, z0, x1, y1, z1);
-        addLine(x1, y1, z1, x0, y1, z1);
-        addLine(x0, y1, z1, x0, y1, z0);
-    } else if (hitNormal.y < -0.5f) {
-        // Bottom face (-Y)
-        addLine(x0, y0, z0, x1, y0, z0);
-        addLine(x1, y0, z0, x1, y0, z1);
-        addLine(x1, y0, z1, x0, y0, z1);
-        addLine(x0, y0, z1, x0, y0, z0);
-    } else if (hitNormal.x > 0.5f) {
-        // Right face (+X)
-        addLine(x1, y0, z0, x1, y1, z0);
-        addLine(x1, y1, z0, x1, y1, z1);
-        addLine(x1, y1, z1, x1, y0, z1);
-        addLine(x1, y0, z1, x1, y0, z0);
-    } else if (hitNormal.x < -0.5f) {
-        // Left face (-X)
-        addLine(x0, y0, z0, x0, y1, z0);
-        addLine(x0, y1, z0, x0, y1, z1);
-        addLine(x0, y1, z1, x0, y0, z1);
-        addLine(x0, y0, z1, x0, y0, z0);
-    } else if (hitNormal.z > 0.5f) {
-        // Back face (+Z)
-        addLine(x0, y0, z1, x1, y0, z1);
-        addLine(x1, y0, z1, x1, y1, z1);
-        addLine(x1, y1, z1, x0, y1, z1);
-        addLine(x0, y1, z1, x0, y0, z1);
-    } else {
-        // Front face (-Z)
-        addLine(x0, y0, z0, x1, y0, z0);
-        addLine(x1, y0, z0, x1, y1, z0);
-        addLine(x1, y1, z0, x0, y1, z0);
-        addLine(x0, y1, z0, x0, y0, z0);
-    }
+    // Draw full cube wireframe (12 edges total)
+    // This creates a complete outline box around the targeted block
+
+    // Bottom face (4 edges)
+    addLine(x0, y0, z0, x1, y0, z0);  // Bottom front
+    addLine(x1, y0, z0, x1, y0, z1);  // Bottom right
+    addLine(x1, y0, z1, x0, y0, z1);  // Bottom back
+    addLine(x0, y0, z1, x0, y0, z0);  // Bottom left
+
+    // Top face (4 edges)
+    addLine(x0, y1, z0, x1, y1, z0);  // Top front
+    addLine(x1, y1, z0, x1, y1, z1);  // Top right
+    addLine(x1, y1, z1, x0, y1, z1);  // Top back
+    addLine(x0, y1, z1, x0, y1, z0);  // Top left
+
+    // Vertical edges (4 edges connecting top and bottom)
+    addLine(x0, y0, z0, x0, y1, z0);  // Front left vertical
+    addLine(x1, y0, z0, x1, y1, z0);  // Front right vertical
+    addLine(x1, y0, z1, x1, y1, z1);  // Back right vertical
+    addLine(x0, y0, z1, x0, y1, z1);  // Back left vertical
 
     return vertices;
 }
