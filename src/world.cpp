@@ -32,6 +32,7 @@
 #include <unordered_set>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <chrono>
 
 // ========== WORLD GENERATION CONFIGURATION ==========
@@ -2045,21 +2046,39 @@ bool World::loadWorld(const std::string& worldPath) {
         // Store world path for chunk streaming persistence
         m_worldPath = worldPath;
 
-        // Load all chunks
+        // FIXED: Discover and load all chunk files from disk
         int loadedChunks = 0;
-        int generatedChunks = 0;
+        fs::path chunksDir = fs::path(worldPath) / "chunks";
 
-        for (auto& [coord, chunk] : m_chunkMap) {
-            if (chunk && chunk->load(worldPath)) {
-                loadedChunks++;
-            } else {
-                // Chunk file doesn't exist - will need to be generated
-                generatedChunks++;
+        if (fs::exists(chunksDir) && fs::is_directory(chunksDir)) {
+            std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+            for (const auto& entry : fs::directory_iterator(chunksDir)) {
+                if (entry.path().extension() == ".chunk") {
+                    // Parse chunk filename: "chunk_x_y_z.chunk"
+                    std::string filename = entry.path().stem().string();
+                    std::istringstream iss(filename);
+                    std::string prefix;
+                    int chunkX, chunkY, chunkZ;
+                    char underscore;
+
+                    if (iss >> prefix >> underscore >> chunkX >> underscore >> chunkY >> underscore >> chunkZ) {
+                        // Create chunk and load from disk
+                        ChunkCoord coord{chunkX, chunkY, chunkZ};
+                        auto chunk = acquireChunk(chunkX, chunkY, chunkZ);
+
+                        if (chunk->load(worldPath)) {
+                            Chunk* chunkPtr = chunk.get();
+                            m_chunkMap[coord] = std::move(chunk);
+                            m_chunks.push_back(chunkPtr);
+                            loadedChunks++;
+                        }
+                    }
+                }
             }
         }
 
-        Logger::info() << "World load complete - " << loadedChunks << " chunks loaded, "
-                      << generatedChunks << " chunks need generation";
+        Logger::info() << "World load complete - " << loadedChunks << " chunks loaded from disk";
         return true;
 
     } catch (const std::exception& e) {
