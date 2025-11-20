@@ -922,7 +922,7 @@ int main() {
                 worldStreaming.updatePlayerPosition(player.Position, loadDistance, unloadDistance);
             }
 
-            worldStreaming.processCompletedChunks(4);  // Upload max 4 chunks per frame to avoid stuttering
+            worldStreaming.processCompletedChunks(1);  // Upload max 1 chunk per frame for smooth 60 FPS
 
             // Calculate matrices
             glm::mat4 model = glm::mat4(1.0f);
