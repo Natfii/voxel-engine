@@ -867,8 +867,8 @@ int main() {
             // DECORATION FIX: Process pending decorations (chunks waiting for neighbors)
             static float decorationRetryTimer = 0.0f;
             decorationRetryTimer += deltaTime;
-            if (decorationRetryTimer >= 0.05f) {  // Retry every 50ms (20 times per second)
-                world.processPendingDecorations(&renderer, 20);  // Process up to 20 chunks per check (400/sec max)
+            if (decorationRetryTimer >= 0.02f) {  // Retry every 20ms (50 times per second)
+                world.processPendingDecorations(&renderer, 100);  // Process up to 100 chunks per check (5000/sec max)
                 decorationRetryTimer = 0.0f;
             }
 

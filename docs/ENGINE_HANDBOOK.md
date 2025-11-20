@@ -268,6 +268,33 @@ blocks:
 spawnstructure simple_house
 ```
 
+### Decoration System
+
+**Deferred Decoration:**
+Chunks require neighboring chunks to be loaded before decoration (prevents trees cutting off at chunk boundaries). If neighbors aren't ready, chunks are added to a pending queue.
+
+**Processing Queue:**
+```cpp
+// main.cpp game loop
+if (decorationRetryTimer >= 0.02f) {  // Check every 20ms (50 times/sec)
+    world.processPendingDecorations(&renderer, 100);  // Process up to 100 chunks
+    // Max throughput: 5,000 chunks/second
+}
+```
+
+**Workflow:**
+1. Chunk generates terrain → check if neighbors loaded
+2. If neighbors ready → decorate immediately → mesh → upload
+3. If neighbors missing → render terrain only, add to pending queue
+4. Pending queue processes continuously (5,000 chunks/sec max)
+5. When neighbors load → decorate → regenerate mesh → re-upload
+
+**Benefits:**
+- No tree cutoffs at chunk boundaries
+- Deterministic decoration (same seed = same trees)
+- Fast processing prevents "invisible tree" artifacts
+- Chunks still render quickly (terrain first, trees within ~20ms)
+
 ## 3.2 Rendering System
 
 ### Vulkan Pipeline
@@ -615,47 +642,93 @@ class MeshBufferPool {
 - Eliminates repeated allocations
 - Pre-reserved capacity (50,000 vertices)
 
-**3. Chunk Unloading**
+**3. RAM Cache for Unloaded Chunks**
 ```cpp
+class ChunkCache {
+    std::unordered_map<ChunkPos, std::unique_ptr<Chunk>> m_cache;
+    std::deque<ChunkPos> m_lruQueue;  // Least recently used
+    size_t m_maxCacheSize = 1000;     // ~450 MB of cached chunks
+
+    Chunk* get(const ChunkPos& pos) {
+        auto it = m_cache.find(pos);
+        if (it != m_cache.end()) {
+            updateLRU(pos);  // Mark as recently used
+            return it->second.get();
+        }
+        return nullptr;
+    }
+
+    void add(ChunkPos pos, std::unique_ptr<Chunk> chunk) {
+        if (m_cache.size() >= m_maxCacheSize) {
+            evictLRU();  // Free space by writing to disk
+        }
+        m_cache[pos] = std::move(chunk);
+        m_lruQueue.push_back(pos);
+    }
+
+    void evictLRU() {
+        auto oldest = m_lruQueue.front();
+        m_lruQueue.pop_front();
+        m_cache[oldest]->saveToDisk();  // Only now write to disk
+        m_cache.erase(oldest);
+    }
+};
+
 void Chunk::unload() {
-    // Serialize to disk
-    saveToDisk();
-    // Free block data
-    clearBlockData();
+    // Move to RAM cache (fast - keeps block data)
+    world->getChunkCache()->add(m_position, this);
+    // Free GPU buffers only
+    freeGPUBuffers();
     m_isLoaded = false;
 }
 ```
 
 **Priority:**
-- Unload chunks beyond render distance
-- Keep 13-chunk radius active
-- Save to disk before unloading
+- Unload chunks beyond render distance to RAM cache (instant)
+- Keep 13-chunk radius active in memory
+- Evict from cache to disk only when:
+  - Cache exceeds size limit (LRU eviction)
+  - Explicit save command / auto-save triggered
+  - Application shutdown
+
+**Benefits:**
+- Near-instant re-loading of recently visited chunks
+- Reduces disk I/O by 90%+
+- Smooth experience when moving back and forth
 
 ### Memory Budget
 
-| RAM   | Safe Budget | Chunk Count | Radius |
-|-------|-------------|-------------|--------|
-| 4 GB  | 2 GB        | 4,425       | 10     |
-| 8 GB  | 5 GB        | 11,061      | 13     |
-| 16 GB | 10 GB       | 22,123      | 17     |
-| 32 GB | 20 GB       | 44,247      | 21     |
+| RAM   | Safe Budget | Active Chunks | Cache Chunks | Total Chunks | Radius |
+|-------|-------------|---------------|--------------|--------------|--------|
+| 4 GB  | 2 GB        | 2,197 (r=13)  | 500          | 2,697        | 10-13  |
+| 8 GB  | 5 GB        | 6,859 (r=17)  | 1,000        | 7,859        | 13-17  |
+| 16 GB | 10 GB       | 11,449 (r=20) | 2,000        | 13,449       | 17-20  |
+| 32 GB | 20 GB       | 24,389 (r=26) | 5,000        | 29,389       | 21-26  |
+
+**Memory Allocation:**
+- Active chunks: Fully loaded (blocks + mesh + GPU buffers)
+- Cached chunks: Blocks only (~192 KB each), no mesh/GPU
+- Cache provides instant re-load for recently visited areas
 
 ## 4.3 Chunk Lifecycle
 
 ### State Machine
 
 ```
-INACTIVE → QUEUED → GENERATING → ACTIVE → RENDER → (DIRTY) → UNLOADED
+INACTIVE → QUEUED → GENERATING → ACTIVE → RENDER → (DIRTY) → CACHED → UNLOADED
+                        ↑______________|                              |
+                                (cache hit - instant reload)←─────────┘
 ```
 
 **States:**
 - **INACTIVE** - Chunk object exists but not loaded
 - **QUEUED** - Requested for generation
-- **GENERATING** - Worker thread processing
+- **GENERATING** - Worker thread processing (check cache → disk → generate)
 - **ACTIVE** - Block data loaded in RAM
-- **RENDER** - GPU buffers created
+- **RENDER** - GPU buffers created and rendering
 - **DIRTY** - Modified, needs mesh regeneration
-- **UNLOADED** - Saved to disk, RAM freed
+- **CACHED** - Block data in RAM cache, GPU buffers freed (instant reload)
+- **UNLOADED** - Evicted from cache to disk, RAM freed
 
 ### Lifecycle Operations
 
@@ -676,10 +749,16 @@ INACTIVE → QUEUED → GENERATING → ACTIVE → RENDER → (DIRTY) → UNLOADE
 5. Re-upload to GPU
 
 **Unload Chunk:**
-1. Save to disk (if modified)
-2. Free GPU buffers
-3. Free block data
-4. Mark as inactive
+1. Move to RAM cache (keep block data)
+2. Free GPU buffers only
+3. Mark as inactive (but cached)
+
+**Evict from Cache to Disk:**
+1. Check if cache is full
+2. Select least recently used (LRU) chunk
+3. Serialize to disk (if modified)
+4. Free block data from cache
+5. Remove from cache map
 
 ## 4.4 Priority System
 
@@ -700,9 +779,10 @@ Higher priority (closer chunks) loaded first.
 ### Load Radius Management
 
 **Zones:**
-- **Active Zone** (0-13 chunks) - Fully loaded and simulated
+- **Active Zone** (0-13 chunks) - Fully loaded with GPU buffers and simulated
 - **Render Zone** (13-20 chunks) - Rendered but not simulated
-- **Disk Zone** (>20 chunks) - Saved to disk and unloaded
+- **Cache Zone** (recently visited) - Block data in RAM, GPU freed (LRU cache)
+- **Disk Zone** (>20 chunks + old cache) - Evicted to disk and unloaded
 
 **Dynamic Adjustment:**
 - Increase radius with more RAM

@@ -79,7 +79,7 @@ run.bat
 ./run.sh
 ```
 
-For detailed build instructions, see [docs/BUILD_INSTRUCTIONS.md](docs/BUILD_INSTRUCTIONS.md)
+For detailed build instructions, see [docs/BUILD_INSTRUCTIONS.md](docs/BUILD_INSTRUCTIONS.md) or the [Engine Handbook](ENGINE_HANDBOOK.md#2-quick-start-guide)
 
 ## Controls
 
@@ -94,7 +94,7 @@ For detailed build instructions, see [docs/BUILD_INSTRUCTIONS.md](docs/BUILD_INS
 | **ESC** | Pause menu / Close console |
 | **Left Click** | Break block |
 
-For more details, see [docs/controls.md](docs/controls.md)
+For more details, see the [Engine Handbook - Controls](ENGINE_HANDBOOK.md#basic-controls)
 
 ## Configuration
 
@@ -173,17 +173,16 @@ voxel-engine/
 
 ## Documentation
 
-### Setup & Building
-- [docs/BUILD_INSTRUCTIONS.md](docs/BUILD_INSTRUCTIONS.md) - Comprehensive build guide
-- [docs/QUICK_START_WINDOWS.md](docs/QUICK_START_WINDOWS.md) - Windows quick setup
-- [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) - Detailed Windows configuration
+### Main Documentation
+- **[Engine Handbook](ENGINE_HANDBOOK.md)** - Complete reference covering all systems, architecture, and development guides
+- [docs/BUILD_INSTRUCTIONS.md](docs/BUILD_INSTRUCTIONS.md) - Platform-specific build instructions
 
-### Gameplay & Development
-- [docs/controls.md](docs/controls.md) - Game controls reference
-- [docs/console.md](docs/console.md) - Developer console usage
-- [docs/commands.md](docs/commands.md) - Adding custom console commands
-- [docs/sky_system.md](docs/sky_system.md) - Sky system and time control guide
-- [docs/CUBE_MAP_GUIDE.md](docs/CUBE_MAP_GUIDE.md) - Cube map textures and block definitions
+### Quick Links to Handbook Sections
+- [Quick Start Guide](ENGINE_HANDBOOK.md#2-quick-start-guide) - Installation and first run
+- [Core Systems](ENGINE_HANDBOOK.md#3-core-systems) - World generation, rendering, lighting, water
+- [Architecture & Design](ENGINE_HANDBOOK.md#4-architecture--design) - Threading, memory management, chunk lifecycle
+- [Development Guide](ENGINE_HANDBOOK.md#5-development-guide) - Adding features, shaders, testing
+- [API Reference](ENGINE_HANDBOOK.md#6-api-reference) - Core classes and utility functions
 
 ## Development Status
 
