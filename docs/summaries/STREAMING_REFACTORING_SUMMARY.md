@@ -339,12 +339,15 @@ Parallel:
 | `/src/chunk.cpp` | 1015 | Chunk implementation |
 | `/src/main.cpp` | ~500 | Game loop entry |
 
-### Documentation Files (Created)
+### Documentation Files
 
-- `REFACTORING_STRATEGY.md` - High-level strategy and phases
-- `CONCURRENCY_ANALYSIS.md` - Technical threading details
-- `IMPLEMENTATION_GUIDE.md` - Step-by-step code patterns
-- `STREAMING_REFACTORING_SUMMARY.md` - This file
+- `/docs/implementation/REFACTORING_STRATEGY.md` - High-level strategy and phases
+- `/docs/architecture/CONCURRENCY_ANALYSIS.md` - Technical threading details
+- `/docs/implementation/IMPLEMENTATION_GUIDE.md` - Step-by-step code patterns
+- `/docs/implementation/STREAMING_IMPLEMENTATION_GUIDE.md` - Quick implementation guide
+- `/docs/implementation/LOADING_CODE_EXAMPLES.md` - Copy-paste code examples
+- `/docs/implementation/QUICK_REFERENCE.md` - Quick reference lookup
+- `/docs/summaries/STREAMING_REFACTORING_SUMMARY.md` - This file
 
 ---
 
@@ -374,9 +377,9 @@ Parallel:
 ## Next Steps
 
 1. **Read the strategy documents**
-   - Start with `REFACTORING_STRATEGY.md` (understand flow)
-   - Then `CONCURRENCY_ANALYSIS.md` (understand risks)
-   - Finally `IMPLEMENTATION_GUIDE.md` (understand code)
+   - Start with `/docs/implementation/REFACTORING_STRATEGY.md` (understand flow)
+   - Then `/docs/architecture/CONCURRENCY_ANALYSIS.md` (understand risks)
+   - Finally `/docs/implementation/IMPLEMENTATION_GUIDE.md` (understand code)
 
 2. **Prototype Phase 1**
    - Create `ChunkGenerator` class
@@ -447,17 +450,23 @@ This refactoring strategy transforms your voxel engine from a **fixed-world** ar
 
 ## Document Locations
 
-All documents located in repository root:
+All documents located in the docs directory:
 
 ```
-/home/user/voxel-engine/
-├── REFACTORING_STRATEGY.md          ← Start here: What to build
-├── CONCURRENCY_ANALYSIS.md          ← Then read: How to avoid bugs
-├── IMPLEMENTATION_GUIDE.md          ← Finally: Code patterns
-└── STREAMING_REFACTORING_SUMMARY.md ← This file: Executive overview
+/home/user/voxel-engine/docs/
+├── implementation/
+│   ├── REFACTORING_STRATEGY.md          ← Start here: What to build
+│   ├── IMPLEMENTATION_GUIDE.md          ← Code patterns
+│   ├── STREAMING_IMPLEMENTATION_GUIDE.md ← Step-by-step guide
+│   ├── LOADING_CODE_EXAMPLES.md         ← Copy-paste code examples
+│   └── QUICK_REFERENCE.md               ← Quick lookup
+├── architecture/
+│   └── CONCURRENCY_ANALYSIS.md          ← How to avoid bugs
+└── summaries/
+    └── STREAMING_REFACTORING_SUMMARY.md ← This file: Executive overview
 ```
 
-**Recommendation**: Print or bookmark all three documents before starting implementation.
+**Recommendation**: Print or bookmark all key documents before starting implementation.
 
 ---
 

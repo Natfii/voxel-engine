@@ -24,7 +24,7 @@ The lifecycle is **conceptually sound** for a streaming system, but has several 
 5. GPU cleanup before chunk deletion
 
 ### What's Missing ❌
-1. **"CPU data freed"** - Block data (160 KB) is **never freed** in current implementation
+1. **"CPU data freed"** - Block data (192 KB) is **never freed** in current implementation
 2. **"When player leaves area"** - No unload trigger mechanism
 3. **"Chunk object deleted/pooled"** - No pooling system exists
 4. **State tracking** - No distinction between loaded/rendered/unloaded states
@@ -38,7 +38,7 @@ The lifecycle is **conceptually sound** for a streaming system, but has several 
 ```
 World::World()
     ├─ ALL 73,728 chunks created at once
-    │  ├─ new Chunk(x, y, z)  ← 160 KB block data allocated
+    │  ├─ new Chunk(x, y, z)  ← 192 KB block data allocated
     │  └─ Stored in unordered_map (unique_ptr)
     │
     └─ All chunks STAY in memory until program exit!
@@ -58,7 +58,7 @@ World::createBuffers()
     │  ├─ Create GPU buffers
     │  ├─ Copy mesh data
     │  ├─ m_vertices.clear(); ← Mesh vectors freed
-    │  └─ Block data STILL in RAM ← BUG!
+    │  └─ Block data (192 KB) STILL in RAM ← BUG!
     │
     └─ GPU buffers stay until cleanup
 
@@ -72,7 +72,7 @@ World::~World()
        └─ ~Chunk() releases block data
 
 
-Result: 31 GB peak memory, no streaming!
+Result: 33.4 GB peak memory, no streaming!
 ```
 
 ---
@@ -94,7 +94,7 @@ Result: 31 GB peak memory, no streaming!
 │ • Block data: uninitialized (but allocated)                         │
 │ • Mesh data: none                                                   │
 │ • GPU buffers: none                                                 │
-│ Memory: 160 KB (just array allocation)                              │
+│ Memory: 192 KB (just array allocation)                              │
 └──────────────────────────────────────────────────────────────────────┘
                               ↑
                               │
@@ -146,10 +146,10 @@ Result: 31 GB peak memory, no streaming!
          ┌──────────────────────────────────────────────────────────┐
          │                    [ACTIVE]                              │
          │ (Fully loaded and rendered)                              │
-         │ • Block data: in RAM (160 KB)                            │
+         │ • Block data: in RAM (192 KB)                            │
          │ • Mesh data: freed (vectors cleared)                     │
          │ • GPU buffers: resident (260 KB)                         │
-         │ Memory: 420 KB total                                     │
+         │ Memory: 452 KB total                                     │
          │ CPU simulation: yes (for updates)                        │
          └──────────────────────────────────────────────────────────┘
                     ↑           ↓
@@ -180,7 +180,7 @@ Result: 31 GB peak memory, no streaming!
          │ • Mesh data: none                                        │
          │ • GPU buffers: destroyed                                 │
          │ • Disk: chunk.dat compressed                             │
-         │ Memory: 160 KB (array only)                              │
+         │ Memory: 192 KB (array only)                              │
          │ Stored: ChunkPool                                        │
          └──────────────────────────────────────────────────────────┘
                               │
@@ -251,25 +251,25 @@ Time  Action                        Memory
 ────  ──────────────────────────────────────────────────────────
 0ms   Program start                 0 MB
       ↓
-100ms World::World()               31 GB (all chunks created!)
+100ms World::World()               33.4 GB (all chunks created!)
       ├─ 73,728 × new Chunk()
       └─ All unique_ptr allocated
       ↓
-200ms World::generateWorld()        31 GB + temp meshes
+200ms World::generateWorld()        33.4 GB + temp meshes
       ├─ Terrain fill
       └─ Mesh generation
       ↓
-500ms World::createBuffers()        31 GB + 19 GB GPU
+500ms World::createBuffers()        33.4 GB + 19 GB GPU
       ├─ GPU upload
       └─ CPU mesh freed (but blocks remain!)
       ↓
-600ms renderWorld()                 31 GB CPU + 19 GB GPU = 50 GB
+600ms renderWorld()                 33.4 GB CPU + 19 GB GPU = 52.4 GB
       ├─ Chunk culling
       └─ Rendering
       ↓
 Exit  World cleanup                 0 MB
 
-Result: 30-60 second load time, 31 GB wasted on non-visible chunks!
+Result: 30-60 second load time, 33.4 GB wasted on non-visible chunks!
 ```
 
 ### Proposed Implementation (12×512×12 world, 10-chunk load radius)
@@ -290,20 +290,20 @@ Time  Action                        Loaded Chunks  Memory
       ├─ Render starts
       └─ Load radius: 5 chunks
       ↓
-1000ms Player moves                 ~1,200         600 MB + 400 MB GPU
-       ├─ updateLoadRegion() expands to radius 10
+1000ms Player moves                 ~1,200         650 MB + 400 MB GPU
+       ├─ updateLoadRegion() expands to radius 13
        ├─ unloadChunk() removes distant ones
        └─ loadChunk() adds nearby ones
        │
        └─ Streaming continues:
           ↓
-2000ms  More chunks loaded          ~4,200         2 GB + 1.1 GB GPU
-        ├─ Reached 10-chunk radius
+2000ms  More chunks loaded          ~4,200         2.1 GB + 1.1 GB GPU
+        ├─ Reached 13-chunk radius
         └─ Memory plateau
         │
         └─ Further movement:
            ↓
-3000ms  Chunks rotate              ~4,200         2 GB + 1.1 GB GPU
+3000ms  Chunks rotate              ~4,200         2.1 GB + 1.1 GB GPU
         ├─ Old chunks unload (save to disk)
         ├─ New chunks load (from disk)
         └─ Memory stays constant!
@@ -312,7 +312,7 @@ Exit    cleanup()                  0              0 MB
         ├─ All GPU buffers freed
         └─ All chunks returned to pool
 
-Result: 2-5 second load time, 2 GB RAM (67× less), scalable!
+Result: 2-5 second load time, 2.1 GB RAM (15.9× less), scalable!
 ```
 
 ---
@@ -343,34 +343,34 @@ Program exit: ~Chunk() finally frees m_blocks
 ```
 Chunk acquired from pool
     ↓
-m_blocks[32][32][32] allocated (128 KB)
+m_blocks[32][32][32] + m_blockMetadata + m_lightData allocated (192 KB)
     ↓
 If loading from disk:
-    ├─ Load chunk.dat (30 KB compressed)
-    └─ Decompress and populate m_blocks
+    ├─ Load chunk.dat (35-50 KB compressed)
+    └─ Decompress and populate m_blocks, m_blockMetadata, m_lightData
     Or
 If generating new:
-    └─ procedural generation populates m_blocks
+    └─ procedural generation populates all arrays
     ↓
-generateMesh() reads m_blocks
+generateMesh() reads m_blocks + m_blockMetadata + m_lightData
     ↓
-createVertexBuffer() reads m_blocks
+createVertexBuffer() reads mesh data
     ↓
 m_vertices.clear()  ← Mesh freed
     ↓
 if (inDISK_zone):
-    ├─ saveChunkToDisk(m_blocks)  ← Serialize to "chunk_X_Y_Z.dat"
-    ├─ Compress with zstd (30 KB)
-    ├─ m_blocks = uninitialized  ← Reuse memory
+    ├─ saveChunkToDisk()  ← Serialize to "chunk_X_Y_Z.dat"
+    ├─ Compress with zstd (35-50 KB)
+    ├─ Clear block data  ← Reuse memory
     └─ Return to pool
 
 else if (inRENDER_zone):
-    ├─ Keep m_blocks in RAM (ready for reloading)
+    ├─ Keep block data in RAM (ready for reloading)
     ├─ Ready for quick re-load if player returns
     └─ Or unload later with save
 ```
 
-**Key difference:** Block data serialization **BEFORE** unloading
+**Key difference:** All block data (blocks + metadata + lighting) serialization **BEFORE** unloading
 
 ---
 
@@ -446,14 +446,14 @@ LOAD PHASE:
     ├─ Try load from disk
     │  ├─ Check "world_cache/{x}_{y}_{z}.chunk"
     │  ├─ Decompress zstd
-    │  └─ Populate m_blocks (fast!)
+    │  └─ Populate m_blocks + m_blockMetadata + m_lightData (fast!)
     │  Or
     ├─ Generate new
     │  ├─ terrain generation
     │  ├─ decoration (trees, flowers, etc)
     │  └─ Save to disk for later
     │
-    └─ Block data in RAM (160 KB)
+    └─ Block data in RAM (192 KB)
     ↓
 MESH BUILD PHASE:
     ├─ Generate mesh from m_blocks
@@ -470,10 +470,10 @@ ACTIVE PHASE:
     ├─ GPU buffers: in VRAM (rendering)
     └─ Player can modify blocks here
     ↓
-WHEN PLAYER LEAVES AREA (beyond radius 10):
+WHEN PLAYER LEAVES AREA (beyond radius 13):
     ├─ Save blocks to disk
-    │  ├─ Serialize m_blocks to file
-    │  ├─ Compress with zstd (→ 30 KB)
+    │  ├─ Serialize m_blocks + m_blockMetadata + m_lightData to file
+    │  ├─ Compress with zstd (→ 35-50 KB)
     │  └─ Store in world_cache/
     ├─ Destroy GPU buffers
     │  ├─ vkDestroyBuffer(m_vertexBuffer)
@@ -485,7 +485,7 @@ WHEN PLAYER LEAVES AREA (beyond radius 10):
     ↓
 IF PLAYER RE-ENTERS AREA:
     ├─ Acquire from pool (very fast)
-    ├─ Load from disk (30 ms on SSD)
+    ├─ Load from disk (8-23 ms on SSD/HDD)
     ├─ Generate mesh
     ├─ Upload to GPU
     └─ Resume rendering
@@ -504,13 +504,13 @@ SHUTDOWN:
 | Aspect | Current | Proposed | Fix |
 |--------|---------|----------|-----|
 | Chunks loaded | All (73,728) | ~4,200 | Streaming zones |
-| Block data | 11.8 GB | 672 MB | Load only visible |
+| Block data | 14.2 GB | 806 MB | Load only visible |
 | GPU buffers | 19.2 GB | 1.1 GB | Load only visible |
 | Load time | 30-60 sec | 2-5 sec | Async streaming |
 | Pooling | None | Yes | ChunkPool |
 | Disk caching | None | Yes | Zstd compression |
 | Scalability | Fixed | Unlimited | Disk-based |
-| Memory peak | 31 GB | 2 GB | 15.5× reduction |
+| Memory peak | 33.4 GB | 2.1 GB | 15.9× reduction |
 
 ---
 

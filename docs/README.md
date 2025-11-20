@@ -40,14 +40,18 @@ Test strategy and test suite documentation:
 
 ### Systems (`systems/`)
 Feature-specific system documentation:
-- **BIOME_SYSTEM.md** - Biome generation and configuration
 - **WATER_SYSTEM_ENHANCED.md** - Enhanced water rendering system
 - **WATER_SYSTEM_PROGRESS.md** - Water system development progress
+
+### Core Documentation (docs root)
+User and developer guides:
 - **sky_system.md** - Skybox and atmospheric rendering
 - **targeting_system.md** - Block targeting and raycasting
 - **console.md** - Debug console system
 - **commands.md** - Available console commands
 - **controls.md** - Player controls reference
+- **progress.md** - Development progress tracker
+- **BIOME_SYSTEM.md** - Biome generation and configuration
 
 ### Build & Setup
 Platform-specific build instructions (in docs root):
@@ -60,14 +64,11 @@ Platform-specific build instructions (in docs root):
 High-level overviews and decision summaries:
 - **STREAMING_REFACTORING_SUMMARY.md** - Progressive loading refactoring summary
 
-### Project Status
-- **progress.md** - Development progress tracker
-
 ## 🚀 Quick Start
 
 **New developers:**
 1. Read `BUILD_INSTRUCTIONS.md` or `WINDOWS_SETUP.md`
-2. Review `systems/BIOME_SYSTEM.md` for terrain generation
+2. Review `BIOME_SYSTEM.md` for terrain generation
 3. Check `progress.md` for current development status
 
 **Implementing progressive chunk loading:**
@@ -77,21 +78,27 @@ High-level overviews and decision summaries:
 4. Expected outcome: 15-60x faster startup, 17x less RAM
 
 **Performance optimization:**
-1. Read `memory/MEMORY_ANALYSIS.md` for bottlenecks
-2. Implement fixes from `implementation/LOADING_CODE_EXAMPLES.md`
-3. Priority order: GPU sync fix → Mesh pooling → Chunk pooling
+1. Read `memory/MEMORY_ANALYSIS.md` for optimization strategies
+2. Review `implementation/LOADING_CODE_EXAMPLES.md` for implementation patterns
+3. See `progress.md` for completed optimizations
 
-## 📊 Key Metrics & Goals
+## 📊 Performance Metrics
 
-Current performance:
-- World generation: 30-60 seconds
-- RAM usage: ~31 GB (8×8×4 world)
-- Startup experience: Full blocking load
+Current performance (after optimizations):
+- Startup Time: ~5 seconds for 432 chunks
+- GPU Sync Points: 1 per frame (10-15x improvement)
+- Chunk Generation: ~10ms average
+- Mesh Generation: <1ms per chunk (with greedy meshing)
+- Vertex Reduction: 50-80% achieved via greedy meshing
+- Memory Usage: ~14MB for full world
+- FPS: 60+ stable
 
-Target performance:
-- World generation: 1-2 seconds (spawn area only)
-- RAM usage: ~1.8 GB (streaming + pooling)
-- Startup experience: Instant gameplay with background loading
+Major optimizations completed:
+- GPU Upload Batching (10-15x reduction in sync points)
+- Greedy Meshing (50-80% vertex reduction)
+- Mesh Buffer Pooling (40-60% speedup)
+- Chunk Persistence with compression
+- Async World Streaming with priority queue
 
 ## 🧪 Testing
 

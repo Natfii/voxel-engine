@@ -242,6 +242,15 @@ Before you start shipping chunk streaming:
 
 ```
 /home/user/voxel-engine/
+├── docs/
+│   └── testing/
+│       ├── TESTING_STRATEGY.md           ← Design docs
+│       ├── TESTING_INTEGRATION.md        ← Setup guide
+│       ├── TESTING_QUICK_REFERENCE.md    ← THIS FILE
+│       ├── TESTING_CHECKLIST.md          ← Ship checklist
+│       ├── TESTING_IMPLEMENTATION_SUMMARY.md
+│       ├── TESTING_ARCHITECTURE.txt
+│       └── README_TESTING.md
 ├── tests/
 │   ├── CMakeLists.txt
 │   ├── test_utils.h
@@ -250,10 +259,7 @@ Before you start shipping chunk streaming:
 │   ├── memory_leak_test.cpp
 │   ├── performance_test.cpp
 │   └── stress_test.cpp
-├── TESTING_STRATEGY.md           ← Design docs
-├── TESTING_INTEGRATION.md        ← Setup guide
-├── TESTING_QUICK_REFERENCE.md    ← THIS FILE
-└── CMakeLists.txt               ← Update with add_subdirectory(tests)
+└── CMakeLists.txt                        ← Update with add_subdirectory(tests)
 ```
 
 ---
@@ -306,5 +312,5 @@ cd build && ctest -R "ChunkGeneration" -V
 
 ---
 
-Last updated: 2025-11-13
+Last updated: 2025-11-20
 For detailed information, see `TESTING_STRATEGY.md`

@@ -11,10 +11,10 @@ RAM
 │ Game Textures/Shaders/Audio     2 GB    │
 ├─────────────────────────────────────────┤
 │ ALL 73,728 chunks:                      │
-│  ├─ Block data     11.8 GB      ████   │
+│  ├─ Block data     14.2 GB      ████   │
 │  └─ GPU mesh refs  19.2 GB      ███   │
 │                    ──────────           │
-│                    ~31 GB + overhead   │  ❌ OOM
+│                    ~33.4 GB + overhead │  ❌ OOM
 │                    ──────────           │
 │  (+ temp mesh buffers during load)     │
 ├─────────────────────────────────────────┤
@@ -31,12 +31,12 @@ RAM (8 GB system)
 │ Game Textures/Shaders/Audio     2 GB    │
 ├─────────────────────────────────────────┤
 │ Loaded chunks (4,200):                  │
-│  ├─ Block data        672 MB    ▓      │
+│  ├─ Block data        806 MB    ▓      │
 │  └─ GPU mesh buffers 1.1 GB     ██     │
 │                       ─────            │
-│                       1.8 GB            │  ✓ FITS
+│                       1.9 GB            │  ✓ FITS
 │                       ─────            │
-│ Disk cache:         3-4 GB              │  (compressed)
+│ Disk cache:         3.5-5 GB            │  (compressed)
 ├─────────────────────────────────────────┤
 │ Available:                     1.2 GB   │  ✓ SAFE MARGIN
 └─────────────────────────────────────────┘
@@ -49,10 +49,10 @@ RAM (8 GB system)
 | Metric | Current | Streamed | Improvement |
 |--------|---------|----------|-------------|
 | Max world size | 512×512 blocks | Unlimited | ∞× |
-| Memory per chunk | 420 KB | 420 KB | Same |
+| Memory per chunk | 452 KB | 452 KB | Same |
 | Loaded chunks | All (73,728) | ~4,200 | 17.5× less |
-| RAM required | ~31 GB | ~2 GB | 15.5× less |
-| Disk storage | 0 | 3-4 GB (compressed) | Trade-off |
+| RAM required | ~33.4 GB | ~2.1 GB | 15.9× less |
+| Disk storage | 0 | 3.5-5 GB (compressed) | Trade-off |
 | Load time | 30-60 sec | 2-5 sec | 10-12× faster |
 | Chunk creation | O(n) at startup | O(1) stream | Scalable |
 | Gameplay latency | None (all loaded) | 5-10 ms on entry | Minor |
@@ -175,7 +175,7 @@ public:
             v.reserve(50000);
             m_vertexBuffers.push(std::move(v));
         }
-        set.vertices = &m_vertexBuffers.front();
+        set.vertices = new std::vector<Vertex>(std::move(m_vertexBuffers.front()));
         m_vertexBuffers.pop();
 
         if (m_indexBuffers.empty()) {
@@ -183,7 +183,7 @@ public:
             idx.reserve(75000);
             m_indexBuffers.push(std::move(idx));
         }
-        set.indices = &m_indexBuffers.front();
+        set.indices = new std::vector<uint32_t>(std::move(m_indexBuffers.front()));
         m_indexBuffers.pop();
 
         if (m_transpVertexBuffers.empty()) {
@@ -191,7 +191,7 @@ public:
             tv.reserve(50000);
             m_transpVertexBuffers.push(std::move(tv));
         }
-        set.transpVertices = &m_transpVertexBuffers.front();
+        set.transpVertices = new std::vector<Vertex>(std::move(m_transpVertexBuffers.front()));
         m_transpVertexBuffers.pop();
 
         if (m_transpIndexBuffers.empty()) {
@@ -199,24 +199,28 @@ public:
             ti.reserve(75000);
             m_transpIndexBuffers.push(std::move(ti));
         }
-        set.transpIndices = &m_transpIndexBuffers.front();
+        set.transpIndices = new std::vector<uint32_t>(std::move(m_transpIndexBuffers.front()));
         m_transpIndexBuffers.pop();
 
         return set;
     }
 
-    void release(const BufferSet& set) {
+    void release(BufferSet& set) {
         set.vertices->clear();
-        m_vertexBuffers.push(*set.vertices);
+        m_vertexBuffers.push(std::move(*set.vertices));
+        delete set.vertices;
 
         set.indices->clear();
-        m_indexBuffers.push(*set.indices);
+        m_indexBuffers.push(std::move(*set.indices));
+        delete set.indices;
 
         set.transpVertices->clear();
-        m_transpVertexBuffers.push(*set.transpVertices);
+        m_transpVertexBuffers.push(std::move(*set.transpVertices));
+        delete set.transpVertices;
 
         set.transpIndices->clear();
-        m_transpIndexBuffers.push(*set.transpIndices);
+        m_transpIndexBuffers.push(std::move(*set.transpIndices));
+        delete set.transpIndices;
     }
 };
 ```
@@ -471,10 +475,10 @@ void Chunk::generateMesh(World* world) {
 ## Expected Performance Improvements
 
 ### Memory
-- **Before:** 31 GB (OOM)
-- **After:** 2 GB (loaded region only)
-- **Disk:** 3-4 GB (compressed cache)
-- **Delta:** 92% reduction ✓
+- **Before:** 33.4 GB (OOM)
+- **After:** 2.1 GB (loaded region only)
+- **Disk:** 3.5-5 GB (compressed cache)
+- **Delta:** 93.7% reduction ✓
 
 ### Load Time
 - **Before:** 30-60 seconds (all chunks at startup)

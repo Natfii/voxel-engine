@@ -69,37 +69,20 @@ Create or update `.vscode/c_cpp_properties.json`:
 
 ## Step 4: Compile Shaders (Windows)
 
-Create `shaders/compile.bat`:
-
-```batch
-@echo off
-echo Compiling shaders...
-
-if exist "%VULKAN_SDK%\Bin\glslc.exe" (
-    echo Using glslc...
-    "%VULKAN_SDK%\Bin\glslc.exe" shader.vert -o vert.spv
-    "%VULKAN_SDK%\Bin\glslc.exe" shader.frag -o frag.spv
-    echo Shaders compiled successfully!
-) else if exist "%VULKAN_SDK%\Bin\glslangValidator.exe" (
-    echo Using glslangValidator...
-    "%VULKAN_SDK%\Bin\glslangValidator.exe" -V shader.vert -o vert.spv
-    "%VULKAN_SDK%\Bin\glslangValidator.exe" -V shader.frag -o frag.spv
-    echo Shaders compiled successfully!
-) else (
-    echo ERROR: Vulkan SDK not found!
-    echo Please install from https://vulkan.lunarg.com/
-    pause
-    exit /b 1
-)
-
-pause
-```
+The project includes a `shaders/compile.bat` script that automatically compiles all shaders.
 
 Run it:
 ```cmd
 cd shaders
 compile.bat
 ```
+
+This will compile all shader files:
+- `shader.vert` and `shader.frag` (main rendering)
+- `line.vert` and `line.frag` (line rendering)
+- `skybox.vert` and `skybox.frag` (skybox rendering)
+
+The script automatically detects and uses either `glslc` or `glslangValidator` from your Vulkan SDK installation.
 
 ## Step 5: Build with CMake (Windows)
 

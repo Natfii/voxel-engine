@@ -81,10 +81,10 @@ timespeed        # Show current speed
 | Speed | Cycle Duration | Use Case |
 |-------|---------------|----------|
 | `0` | ⏸️ Paused | Lock time at specific moment |
-| `0.1` | 240 minutes | Slow, realistic |
-| `1` | 24 minutes | Normal gameplay |
-| `10` | 2.4 minutes | Fast timelapse |
-| `100` | 14.4 seconds | Extreme timelapse |
+| `0.1` | 200 minutes | Slow, realistic |
+| `1` | 20 minutes | Normal gameplay |
+| `10` | 2 minutes | Fast timelapse |
+| `100` | 12 seconds | Extreme timelapse |
 
 **Tab Completion:**
 Press Tab after `timespeed ` to cycle through: `0`, `0.1`, `1`, `10`, `100`
@@ -321,7 +321,7 @@ if (randVal < 0.0075f) {  // 0.75% density
 
 ## See Also
 
-- [docs/console.md](console.md) - Console usage guide
-- [docs/controls.md](controls.md) - Game controls
-- [docs/commands.md](commands.md) - Adding custom commands
-- [docs/progress.md](progress.md) - Implementation details
+- [console.md](console.md) - Console usage guide
+- [controls.md](controls.md) - Game controls
+- [commands.md](commands.md) - Adding custom commands
+- [progress.md](progress.md) - Implementation details

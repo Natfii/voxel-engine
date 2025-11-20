@@ -12,10 +12,11 @@ Your proposed lifecycle is **mostly correct but incomplete**. The critical issue
 
 **Block Data (CPU-side, permanent):**
 ```
-int m_blocks[32][32][32]       = 32×32×32×4 bytes = 131,072 bytes ≈ 128 KB
-uint8_t m_blockMetadata[32][32][32] = 32×32×32×1 byte = 32,768 bytes ≈ 32 KB
-────────────────────────────────────────────────────────────────
-Total block data per chunk     = 160 KB (permanent until chunk deletion)
+int m_blocks[32][32][32]            = 32×32×32×4 bytes = 131,072 bytes ≈ 128 KB
+uint8_t m_blockMetadata[32][32][32] = 32×32×32×1 byte  =  32,768 bytes ≈  32 KB
+BlockLight m_lightData[32*32*32]    = 32×32×32×1 byte  =  32,768 bytes ≈  32 KB
+────────────────────────────────────────────────────────────────────────────────
+Total block data per chunk          = 192 KB (permanent until chunk deletion)
 ```
 
 **Mesh Data (CPU-side, temporary during generation):**
@@ -41,27 +42,27 @@ Total GPU memory per chunk = 260 KB (stays until destroyBuffers())
 ```
 
 ### Total Cost Per Chunk:
-- **CPU-side block data:** 160 KB (NEVER freed)
+- **CPU-side block data:** 192 KB (NEVER freed)
 - **GPU mesh buffers:** ~260 KB (freed only on chunk destruction)
-- **Worst case (during generation):** 160 + 260 + 260 (temp meshes) = 680 KB per chunk
+- **Worst case (during generation):** 192 + 260 + 260 (temp meshes) = 712 KB per chunk
 
 ### World-Scale Costs:
 
 **Your example: 12×512×12 = 73,728 chunks**
 ```
-CPU block data:  73,728 chunks × 160 KB = 11.8 GB
+CPU block data:   73,728 chunks × 192 KB = 14.2 GB
 GPU mesh buffers: 73,728 chunks × 260 KB = 19.2 GB
 ────────────────────────────────────────────────────
-TOTAL:          ~31 GB ❌ IMPOSSIBLE
+TOTAL:          ~33.4 GB ❌ IMPOSSIBLE
 ```
 
-**Progressive Loading Target: 10-chunk radius = ~4,200 chunks**
+**Progressive Loading Target: 13-chunk radius = ~4,200 chunks**
 ```
-CPU block data:  4,200 chunks × 160 KB = 672 MB
+CPU block data:   4,200 chunks × 192 KB = 806 MB
 GPU mesh buffers: 4,200 chunks × 260 KB = 1.1 GB
 During generation: +temp mesh buffers ≈ 200 MB
 ────────────────────────────────────────────────────
-TOTAL:          ~2 GB ✓ REASONABLE
+TOTAL:          ~2.1 GB ✓ REASONABLE
 ```
 
 ---
@@ -72,7 +73,7 @@ TOTAL:          ~2 GB ✓ REASONABLE
 World constructor (world.cpp:49)
     ↓
 Creates all chunks with make_unique<Chunk>(x, y, z)
-    ├─ Allocates 160 KB block data per chunk
+    ├─ Allocates 192 KB block data per chunk
     └─ Stores in unordered_map<ChunkCoord, unique_ptr<Chunk>>
 
 World::generateWorld() (world.cpp:107)
@@ -96,7 +97,7 @@ World::cleanup() (called once at shutdown)
 
 World::~World()
     └─ unique_ptr<Chunk> destructor runs → ~Chunk()
-    └─ Block data finally freed after 31 GB wasted
+    └─ Block data finally freed after 33.4 GB wasted
 ```
 
 **PROBLEM:** No chunk unloading mechanism exists!
@@ -117,9 +118,9 @@ Chunk Created → Terrain Generated → Decorated → Mesh Built → GPU Upload 
 
 **Issues with this lifecycle:**
 
-1. **"CPU data freed" ❌** Currently, **block data is NEVER freed** (160 KB stays forever)
+1. **"CPU data freed" ❌** Currently, **block data is NEVER freed** (192 KB stays forever)
    - Only mesh vectors are freed (`m_vertices.clear()`)
-   - The critical `m_blocks[32][32][32]` array persists
+   - The critical `m_blocks[32][32][32]`, `m_blockMetadata`, and `m_lightData` arrays persist
 
 2. **"When player leaves area"** – No implementation for this detection/unloading
 
@@ -145,8 +146,9 @@ m_indices.shrink_to_fit();
 **MISSING:** Block data is never freed
 ```cpp
 // What should happen but doesn't:
-m_blocks.reset();  // This isn't even possible - it's a raw array!
-m_blockMetadata.reset();
+m_blocks.reset();        // This isn't even possible - it's a raw array!
+m_blockMetadata.reset(); // Same issue
+m_lightData.clear();     // This is an std::array, so also can't free
 ```
 
 **Recommendation:**
@@ -175,7 +177,7 @@ m_chunkMap[ChunkCoord{x, y, z}] = std::move(chunk);
 ```
 
 **Problem:**
-- Each `new Chunk()` individually allocates 160 KB
+- Each `new Chunk()` individually allocates 192 KB
 - Fragmentation over 73K chunks
 - No reuse pattern
 - Destructor overhead when chunks are freed
@@ -218,7 +220,7 @@ public:
 - ~20-30% faster chunk creation
 
 **Cost of not pooling (current approach):**
-- 73,728 allocations at 160 KB each = massive heap fragmentation
+- 73,728 allocations at 192 KB each = massive heap fragmentation
 - Each deletion has overhead
 - Thrashing if streaming chunks in/out
 
@@ -321,19 +323,19 @@ Game heap margin:   -1,000 MB (textures, shaders, other assets)
                    ─────────
 Chunk budget:       6,000 MB
 
-Per chunk cost:      420 KB (160 KB blocks + 260 KB GPU buffers)
-Max chunks:         6,000 MB ÷ 0.42 MB = 14,285 chunks
+Per chunk cost:      452 KB (192 KB blocks + 260 KB GPU buffers)
+Max chunks:         6,000 MB ÷ 0.452 MB = 13,274 chunks
 
-At 32×32×32 blocks per chunk = 14.3 billion blocks (massive world!)
+At 32×32×32 blocks per chunk = 13.7 billion blocks (massive world!)
 ```
 
 **Practical recommended limits:**
 
 | System RAM | Chunk Budget | Safe Max Chunks | Radius (chunks) |
 |-----------|-------------|-----------------|-----------------|
-| 4 GB      | 2 GB        | 4,700 chunks    | 7 chunk radius  |
-| 8 GB      | 4 GB        | 9,500 chunks    | 10 chunk radius |
-| 16 GB     | 9 GB        | 21,000 chunks   | 15 chunk radius |
+| 4 GB      | 2 GB        | 4,425 chunks    | 10 chunk radius |
+| 8 GB      | 5 GB        | 11,061 chunks   | 13 chunk radius |
+| 16 GB     | 10 GB       | 22,123 chunks   | 17 chunk radius |
 
 **Implementation:**
 
@@ -344,7 +346,7 @@ class ChunkManager {
 
 public:
     bool canLoadChunk(const Chunk* chunk) {
-        size_t cost = 160 * 1024 + (chunk->getVertexCount() +
+        size_t cost = 192 * 1024 + (chunk->getVertexCount() +
                                     chunk->getTransparentVertexCount()) * 36;
         return (m_currentMemory + cost) <= MAX_CHUNK_MEMORY;
     }
@@ -382,8 +384,9 @@ struct ChunkSaveData {
     int x, y, z;
     std::array<int, 32*32*32> blocks;
     std::array<uint8_t, 32*32*32> metadata;
+    std::array<uint8_t, 32*32*32> lighting;  // BlockLight data
 
-    // Compresses to ~30-40 KB (8x reduction!)
+    // Compresses to ~35-50 KB (4-5× reduction!)
     // Blocks are highly redundant (lots of stone/dirt)
 };
 
@@ -399,7 +402,7 @@ public:
 
         // Compress and save to disk
         ChunkSaveData data = serializeChunk(chunk);
-        std::string compressed = compressZSTD(data);  // zstd: 30 KB
+        std::string compressed = compressZSTD(data);  // zstd: 35-50 KB
 
         std::ofstream file(m_cacheDir / format("{},{},{}.chunk",
                                                coord.x, coord.y, coord.z),
@@ -436,15 +439,15 @@ public:
 ```
 
 **Compression ratios (observed):**
-- Uncompressed chunk: 160 KB
-- Zstd compression: 30-40 KB (4-5x reduction)
-- Disk storage for 100K chunks: 3-4 GB vs 16 GB RAM
+- Uncompressed chunk: 192 KB
+- Zstd compression: 35-50 KB (4-5× reduction)
+- Disk storage for 100K chunks: 3.5-5 GB vs 19.2 GB RAM
 
 **Latency impact:**
 - SSD (NVME): ~5 ms load time
 - HDD: ~15-20 ms load time
-- Compression/decompression: ~2-3 ms (Zstd is very fast)
-- Total: 7-23 ms (noticeable but acceptable)
+- Compression/decompression: ~3 ms (Zstd is very fast)
+- Total: 8-23 ms (noticeable but acceptable)
 
 ---
 
@@ -474,7 +477,7 @@ Entry to RENDER_ZONE:
     3. generateMesh() → temporary vectors
     4. createVertexBuffer() → GPU upload
     5. Clear mesh vectors
-    6. Chunk now in memory (160 KB blocks + 260 KB GPU buffers)
+    6. Chunk now in memory (192 KB blocks + 260 KB GPU buffers)
 
 UNLOADING PHASE:
 ────────────────
@@ -651,12 +654,12 @@ Your proposed lifecycle is **conceptually correct**:
 4. ✓ Delete/pool chunk objects
 
 But **3 critical pieces are missing:**
-1. ❌ **Block data serialization** (160 KB not freed without disk save)
+1. ❌ **Block data serialization** (192 KB not freed without disk save)
 2. ❌ **Pooling system** (no allocation reuse)
 3. ❌ **Streaming detection** (no code to unload beyond radius)
 
 **Key metric:** Your 12×512×12 world is **30× too large** for current approach.
-With proper streaming (10-chunk radius): **2 GB RAM instead of 31 GB**.
+With proper streaming (13-chunk radius): **2.1 GB RAM instead of 33.4 GB**.
 
 ---
 
@@ -667,13 +670,13 @@ With proper streaming (10-chunk radius): **2 GB RAM instead of 31 GB**.
 m_vertices.clear();
 m_vertices.shrink_to_fit();
 
-// BAD: Block data still 160 KB resident
-// m_blocks[32][32][32] never freed
+// BAD: Block data still 192 KB resident
+// m_blocks[32][32][32] + m_blockMetadata + m_lightData never freed
 
 // Better: Conditional freeing
 if (!isInActiveZone()) {
     serializeBlocksToFile("chunks/{x}_{y}_{z}.chunk");
-    freeBlockDataMemory();  // Clear actual array
+    freeBlockDataMemory();  // Clear actual arrays
 }
 
 // Best: With pooling + compression
