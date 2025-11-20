@@ -13,7 +13,10 @@
       "Bash(nm:*)",
       "Bash(cmake --build:*)",
       "Bash(compile_shaders.bat)",
-      "Bash(cmd /c compile_shaders.bat)"
+      "Bash(cmd /c compile_shaders.bat)",
+      "Bash(rm:*)",
+      "Bash(git restore:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []
