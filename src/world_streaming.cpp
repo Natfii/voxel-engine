@@ -408,10 +408,10 @@ void WorldStreaming::unloadDistantChunks(const glm::vec3& playerPos, float unloa
     });
 
     // CRITICAL FIX: Limit unloads per call to prevent GPU buffer deletion spam
-    // Even 10 chunks causes 20 buffer deletions → 700ms GPU fence stall!
-    // Reduce to 1 chunk per 0.25s = 4 chunks/sec (2 buffers × 4 = 8 deletions/sec)
-    // This keeps GPU deletion queue small and prevents fence stalls
-    const int MAX_UNLOADS_PER_CALL = 1;
+    // Even 1 chunk still causes 750ms stall due to BACKLOG of 102-chunk deletion from earlier!
+    // Temporarily DISABLE unloading to let GPU deletion queue drain
+    // After backlog clears (100+ frames), we can re-enable at very slow rate
+    const int MAX_UNLOADS_PER_CALL = 0;  // DISABLED - draining backlog
     if (chunksToUnload.size() > MAX_UNLOADS_PER_CALL) {
         chunksToUnload.resize(MAX_UNLOADS_PER_CALL);
     }
