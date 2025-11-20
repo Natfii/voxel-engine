@@ -491,7 +491,7 @@ int main() {
             loadingMessage = "Updating lighting on meshes";
             renderLoadingScreen();
             std::cout << "Regenerating meshes with final lighting..." << std::endl;
-            world.getLightingSystem()->regenerateDirtyChunks(10000, nullptr);  // Mesh only, no GPU upload yet
+            world.getLightingSystem()->regenerateAllDirtyChunks(10000, nullptr);  // Mesh only, no GPU upload yet
             std::cout << "Mesh regeneration complete!" << std::endl;
         }
 

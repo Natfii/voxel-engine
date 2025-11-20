@@ -224,6 +224,19 @@ public:
      */
     size_t getPendingRemovals() const { return m_lightRemoveQueue.size(); }
 
+    /**
+     * @brief Regenerates meshes for all dirty chunks (blocking)
+     *
+     * Used during world loading to ensure all spawn chunks have final lighting.
+     * Pass maxChunks=10000 to process all dirty chunks immediately.
+     *
+     * @param maxChunks Maximum chunks to regenerate (use high value for blocking operation)
+     * @param renderer Vulkan renderer for GPU upload (nullptr to skip upload)
+     */
+    void regenerateAllDirtyChunks(int maxChunks, class VulkanRenderer* renderer) {
+        regenerateDirtyChunks(maxChunks, renderer);
+    }
+
 private:
     // ========== Internal Data Structures ==========
 
