@@ -475,6 +475,24 @@ int main() {
             // Register water blocks with simulation system
             std::cout << "Initializing water physics..." << std::endl;
             world.registerWaterBlocks();
+
+            // CRITICAL FIX: Complete lighting propagation BEFORE GPU upload
+            // This prevents chunks from being marked dirty during gameplay
+            loadingProgress = 0.75f;
+            loadingMessage = "Propagating lighting";
+            renderLoadingScreen();
+            std::cout << "Completing light propagation for spawn chunks..." << std::endl;
+            world.getLightingSystem()->initializeWorldLighting();
+            std::cout << "Light propagation complete!" << std::endl;
+
+            // Regenerate all meshes with updated lighting (synchronously during loading)
+            // Pass nullptr for renderer to skip GPU upload (createBuffers will batch upload later)
+            loadingProgress = 0.77f;
+            loadingMessage = "Updating lighting on meshes";
+            renderLoadingScreen();
+            std::cout << "Regenerating meshes with final lighting..." << std::endl;
+            world.getLightingSystem()->regenerateDirtyChunks(10000, nullptr);  // Mesh only, no GPU upload yet
+            std::cout << "Mesh regeneration complete!" << std::endl;
         }
 
         // Loading stage 8: Create GPU buffers (85%)
@@ -712,18 +730,8 @@ int main() {
         Inventory inventory;
         g_inventory = &inventory;
 
-        // Loading stage 12: Initialize world lighting (99%)
-        loadingProgress = 0.98f;
-        loadingMessage = "Initializing lighting";
-        renderLoadingScreen();
-        std::cout << "Initializing world lighting (static sky light values)..." << std::endl;
-
-        // Initialize lighting for ALL spawn chunks with full BFS propagation
-        // This calculates STATIC sky light values that never change
-        // The shader multiplies these by dynamic sun/moon intensity for time-of-day
-        world.getLightingSystem()->initializeWorldLighting();
-
-        // Loading stage 13: Final check - wait for player to be on ground (100%)
+        // Loading stage 12: Final check - wait for player to be on ground (99%)
+        // NOTE: Lighting initialization moved earlier (before GPU upload) to prevent chunk re-uploads
         loadingProgress = 0.99f;
         loadingMessage = "Ready";
         renderLoadingScreen();
