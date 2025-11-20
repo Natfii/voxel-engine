@@ -121,6 +121,13 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
     // Calculate chunk load radius
     int loadRadiusChunks = static_cast<int>(std::ceil(loadDistance / (CHUNK_SIZE * BLOCK_SIZE)));
 
+    // PERFORMANCE FIX: Get loaded chunks once with ONE lock instead of 1,331 locks!
+    // Build a hash set for O(1) existence checks
+    std::unordered_set<ChunkCoord> loadedChunks;
+    m_world->forEachChunkCoord([&](const ChunkCoord& coord) {
+        loadedChunks.insert(coord);
+    });
+
     // Queue chunks for loading in a sphere around the player
     std::vector<ChunkLoadRequest> newRequests;
 
@@ -133,8 +140,9 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
 
                 // Check if chunk is within load distance
                 if (shouldLoadChunk(chunkX, chunkY, chunkZ, playerPos, loadDistance)) {
-                    // Check if chunk already exists
-                    if (m_world->getChunkAt(chunkX, chunkY, chunkZ) == nullptr) {
+                    // Check if chunk already exists (O(1) hash lookup, no lock!)
+                    ChunkCoord coord{chunkX, chunkY, chunkZ};
+                    if (loadedChunks.find(coord) == loadedChunks.end()) {
                         // Calculate priority (distance)
                         float priority = calculateChunkPriority(chunkX, chunkY, chunkZ, playerPos);
 
