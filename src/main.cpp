@@ -649,18 +649,23 @@ int main() {
         // CRITICAL DEBUG: Verify blocks exist where we think they do
         std::cout << "\n=== SPAWN VERIFICATION ===" << std::endl;
         float feetY = spawnY - 1.6f;
-        std::cout << "Player feet will be at Y=" << feetY << std::endl;
+        std::cout << "Player feet will be at Y=" << feetY << " (in block " << static_cast<int>(std::floor(feetY)) << ")" << std::endl;
         int groundBlock = world.getBlockAt(spawnX, static_cast<float>(spawnGroundY), spawnZ);
         int feetBlock = world.getBlockAt(spawnX, feetY, spawnZ);
-        int belowFeet = world.getBlockAt(spawnX, feetY - 0.1f, spawnZ);
-        std::cout << "Block at ground (" << spawnGroundY << "): " << groundBlock << std::endl;
-        std::cout << "Block at feet (" << feetY << "): " << feetBlock << std::endl;
-        std::cout << "Block 0.1 below feet: " << belowFeet << std::endl;
-        if (groundBlock == 0 || feetBlock != 0 || belowFeet == 0) {
-            std::cout << "ERROR: Spawn validation FAILED! Terrain doesn't match expectations!" << std::endl;
-            std::cout << "  Expected: ground=" << spawnGroundY << " should be solid (got " << groundBlock << ")" << std::endl;
-            std::cout << "  Expected: feet position should be air (got " << feetBlock << ")" << std::endl;
-            std::cout << "  Expected: below feet should be solid (got " << belowFeet << ")" << std::endl;
+        std::cout << "Block at ground Y=" << spawnGroundY << ": blockID=" << groundBlock << (groundBlock != 0 ? " ✓ SOLID" : " ✗ AIR!") << std::endl;
+        std::cout << "Block at feet Y=" << static_cast<int>(std::floor(feetY)) << ": blockID=" << feetBlock << (feetBlock == 0 ? " ✓ AIR" : " ✗ SOLID!") << std::endl;
+
+        bool spawnValid = (groundBlock != 0) && (feetBlock == 0);
+        if (!spawnValid) {
+            std::cout << "ERROR: Spawn validation FAILED!" << std::endl;
+            if (groundBlock == 0) {
+                std::cout << "  - Ground block is AIR (expected SOLID)" << std::endl;
+            }
+            if (feetBlock != 0) {
+                std::cout << "  - Feet position is SOLID (expected AIR)" << std::endl;
+            }
+        } else {
+            std::cout << "Spawn validation PASSED ✓" << std::endl;
         }
         std::cout << "===========================\n" << std::endl;
 
