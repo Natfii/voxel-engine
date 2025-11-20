@@ -269,25 +269,7 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
 
 float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
     // FastNoiseLite is thread-safe for reads - no mutex needed
-
-    // === CACHE LOOKUP (2-block quantization) ===
-    // Quantize coordinates to 2-block resolution for cache efficiency
-    // Adjacent blocks share similar cave density values
-    int quantizedX = static_cast<int>(worldX) / 2;
-    int quantizedY = static_cast<int>(worldY) / 2;
-    int quantizedZ = static_cast<int>(worldZ) / 2;
-    uint64_t cacheKey = coordsToKey3D(quantizedX, quantizedY, quantizedZ);
-
-    // Try to read from cache
-    {
-        std::shared_lock<std::shared_mutex> lock(m_caveCacheMutex);
-        auto it = m_caveDensityCache.find(cacheKey);
-        if (it != m_caveDensityCache.end()) {
-            return it->second;
-        }
-    }
-
-    // === Cache miss - calculate cave density ===
+    // Note: Caching disabled - lock contention during parallel generation hurts performance
 
     // === Primary Winding Tunnel System ===
     // Creates narrow, winding tunnels that snake through the underground
@@ -343,16 +325,6 @@ float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
     }
 
     // Cave threshold: < 0.45 = air (cave), >= 0.45 = solid
-
-    // === CACHE STORAGE ===
-    // Store result in cache (only if under max size to prevent unbounded growth)
-    {
-        std::unique_lock<std::shared_mutex> lock(m_caveCacheMutex);
-        if (m_caveDensityCache.size() < MAX_CACHE_SIZE) {
-            m_caveDensityCache[cacheKey] = combinedDensity;
-        }
-    }
-
     return combinedDensity;
 }
 
