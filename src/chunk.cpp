@@ -579,6 +579,34 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
         return registry.get(blockID).isLiquid;
     };
 
+    // Helper lambda to check if a block is transparent (leaves, glass, etc.)
+    auto isTransparent = [this, world, &registry, &localToWorldPos, callerHoldsLock](int x, int y, int z) -> bool {
+        int blockID;
+        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
+            blockID = m_blocks[x][y][z];
+        } else {
+            // Out of bounds - check world
+            glm::vec3 worldPos = localToWorldPos(x, y, z);
+            blockID = callerHoldsLock ? world->getBlockAtUnsafe(worldPos.x, worldPos.y, worldPos.z)
+                                       : world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
+        }
+        if (blockID == 0) return false;  // Air is not transparent, it's nothing
+        if (blockID < 0 || blockID >= registry.count()) return false;
+        return registry.get(blockID).transparency > 0.0f;
+    };
+
+    // Helper lambda to get the block ID at a position (for neighbor comparison)
+    auto getBlockID = [this, world, &localToWorldPos, callerHoldsLock](int x, int y, int z) -> int {
+        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
+            return m_blocks[x][y][z];
+        } else {
+            // Out of bounds - check world
+            glm::vec3 worldPos = localToWorldPos(x, y, z);
+            return callerHoldsLock ? world->getBlockAtUnsafe(worldPos.x, worldPos.y, worldPos.z)
+                                    : world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
+        }
+    };
+
     // SMOOTH LIGHTING: Helper to get light at a vertex by sampling 4 adjacent blocks
     // This creates smooth gradients between different light levels (Minecraft-style)
     // Uses WORLD-SPACE vertex position to ensure consistent lighting across block boundaries
@@ -840,6 +868,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
 
                 // Front face (z=0, facing -Z direction)
                 {
+                    int neighborBlockID = getBlockID(X, Y, Z - 1);
                     bool neighborIsLiquid = isLiquid(X, Y, Z - 1);
                     bool neighborIsSolid = isSolid(X, Y, Z - 1);
 
@@ -853,8 +882,11 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         } else {
                             shouldRender = true;
                         }
+                    } else if (isCurrentTransparent) {
+                        // Transparent blocks (leaves, glass): render unless neighbor is same block type
+                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                     } else {
-                        // Solid: render against non-solid (air or water)
+                        // Solid opaque: render against non-solid (air or water)
                         shouldRender = !neighborIsSolid;
                     }
 
@@ -865,6 +897,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
 
                 // Back face (z=0.5, facing +Z direction)
                 {
+                    int neighborBlockID = getBlockID(X, Y, Z + 1);
                     bool neighborIsLiquid = isLiquid(X, Y, Z + 1);
                     bool neighborIsSolid = isSolid(X, Y, Z + 1);
                     bool shouldRender;
@@ -876,6 +909,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         } else {
                             shouldRender = true;
                         }
+                    } else if (isCurrentTransparent) {
+                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                     } else {
                         shouldRender = !neighborIsSolid;
                     }
@@ -886,6 +921,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
 
                 // Left face (x=0, facing -X direction)
                 {
+                    int neighborBlockID = getBlockID(X - 1, Y, Z);
                     bool neighborIsLiquid = isLiquid(X - 1, Y, Z);
                     bool neighborIsSolid = isSolid(X - 1, Y, Z);
                     bool shouldRender;
@@ -897,6 +933,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         } else {
                             shouldRender = true;
                         }
+                    } else if (isCurrentTransparent) {
+                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                     } else {
                         shouldRender = !neighborIsSolid;
                     }
@@ -907,6 +945,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
 
                 // Right face (x=0.5, facing +X direction)
                 {
+                    int neighborBlockID = getBlockID(X + 1, Y, Z);
                     bool neighborIsLiquid = isLiquid(X + 1, Y, Z);
                     bool neighborIsSolid = isSolid(X + 1, Y, Z);
                     bool shouldRender;
@@ -918,6 +957,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         } else {
                             shouldRender = true;
                         }
+                    } else if (isCurrentTransparent) {
+                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                     } else {
                         shouldRender = !neighborIsSolid;
                     }
@@ -928,9 +969,17 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
 
                 // Top face (y=0.5, facing +Y direction)
                 {
+                    int neighborBlockID = getBlockID(X, Y + 1, Z);
                     bool neighborIsLiquid = isLiquid(X, Y + 1, Z);
                     bool neighborIsSolid = isSolid(X, Y + 1, Z);
-                    bool shouldRender = isCurrentLiquid ? !neighborIsLiquid : !neighborIsSolid;
+                    bool shouldRender;
+                    if (isCurrentLiquid) {
+                        shouldRender = !neighborIsLiquid;
+                    } else if (isCurrentTransparent) {
+                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
+                    } else {
+                        shouldRender = !neighborIsSolid;
+                    }
                     if (shouldRender) {
                         // Apply water height adjustment to entire top face for flowing water effect
                         renderFace(topTex, 48, 32, waterHeightAdjust, false, isCurrentTransparent, glm::ivec3(0, 1, 0));
@@ -939,6 +988,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
 
                 // Bottom face (y=0, facing -Y direction)
                 {
+                    int neighborBlockID = getBlockID(X, Y - 1, Z);
                     bool neighborIsLiquid = isLiquid(X, Y - 1, Z);
                     bool neighborIsSolid = isSolid(X, Y - 1, Z);
                     bool shouldRender;
@@ -946,6 +996,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         // Water: render bottom if not water below
                         // Render against both air AND solid blocks (visible from below)
                         shouldRender = !neighborIsLiquid;
+                    } else if (isCurrentTransparent) {
+                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                     } else {
                         // Solid: render against air/water
                         shouldRender = !neighborIsSolid;
