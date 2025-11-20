@@ -453,7 +453,17 @@ int main() {
             int spawnChunkX = 0;
             int spawnChunkY = 2;  // Y=64 surface is in chunk Y=2
             int spawnChunkZ = 0;
-            int spawnRadius = menuResult.spawnRadius;  // From menu slider (2-8 chunks)
+
+            // CRITICAL FIX: Match spawn radius to load radius for instant 60 FPS
+            // loadDistance = 152 blocks (renderDistance + 32) = ~5 chunk radius
+            // Using spawn radius=4 generates 729 chunks (covers all 461 chunks in load sphere)
+            // This prevents streaming from queuing 300+ chunks immediately after game start
+            const int INITIAL_SPAWN_RADIUS = 4;  // Overrides menu setting for new worlds
+            int spawnRadius = INITIAL_SPAWN_RADIUS;
+
+            std::cout << "Generating " << spawnRadius << " chunk radius ("
+                     << ((2*spawnRadius+1)*(2*spawnRadius+1)*(2*spawnRadius+1))
+                     << " chunks) to match load distance..." << std::endl;
 
             world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
 

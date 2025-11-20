@@ -164,7 +164,7 @@ chmod +x build.sh run.sh
 ## First Run
 
 1. **Launch the game** - The executable will be in `build/Release/` (Windows) or `build/` (Linux)
-2. **Wait for world generation** - Initial spawn area loads (~5 seconds for 432 chunks)
+2. **Wait for world generation** - Initial spawn area loads (~10 seconds for 729 chunks)
 3. **Start exploring** - Use WASD to move, mouse to look around
 4. **Open console** - Press F9 to access developer console
 5. **Check documentation** 
@@ -368,11 +368,17 @@ if (decorationRetryTimer >= 0.02f) {  // Check every 20ms (50 times/sec)
 
 ### GPU Warm-Up System
 
-**Problem:** When starting a new world, 125 chunks (spawn radius=2) generate 250 GPU buffers.
-Uploading all at once creates a backlog that causes `vkWaitForFences` to stall for 400-600ms
-per frame, resulting in 1.7-2.3 FPS during initial gameplay.
+**Problem:** Spawn/load radius mismatch causes chunk uploads during gameplay, creating GPU stalls.
 
-**Solution:** Front-load GPU work during the loading screen instead of during gameplay.
+**Initial Issue:** Spawn radius=2 (125 chunks) but load radius=5 (461 chunks needed).
+Streaming system queued 336 additional chunks immediately after game start, causing:
+- 300+ chunks uploading during gameplay (1 per frame)
+- Each upload uses same graphics queue as rendering
+- `vkWaitForFences` stalls 400-600ms waiting for queue to drain
+- Result: 1.7-2.3 FPS for first 5+ minutes
+
+**Solution 1:** Increase spawn radius to match load radius (radius=4, 729 chunks)
+**Solution 2:** GPU warm-up phase - wait for all uploads during loading screen
 
 **Implementation:**
 ```cpp
@@ -391,15 +397,23 @@ renderer.waitForGPUIdle();  // Blocks until GPU finishes all uploads
 4. When entering game loop, GPU has no backlog → instant 60 FPS
 
 **Benefits:**
-- **Before:** 1.7-2.3 FPS for first ~5 minutes as GPU catches up
-- **After:** Instant 60 FPS from first frame
-- User sees "Warming up GPU..." message during ~5 second wait
-- Better UX: predictable load time vs. unpredictable stuttering
+- **Before:** 1.7-2.3 FPS for first ~5 minutes as GPU catches up with 300+ chunk backlog
+- **After:** Instant 60 FPS from first frame with no streaming backlog
+- User sees "Warming up GPU..." message during ~10 second load (worth it!)
+- Better UX: predictable load time vs. unpredictable multi-minute stuttering
+
+**Why spawn radius=4 specifically:**
+- Load distance = 152 blocks (renderDistance + 32)
+- Load radius = 5 chunks (461 chunks in sphere)
+- Spawn radius = 4 chunks (729 chunks in cube, covers entire load sphere)
+- No chunks need streaming until player moves beyond initial area
+- GPU warm-up covers ALL chunks that would be needed
 
 **Combined with other GPU optimizations:**
 - Buffer deletion rate limiting (10/frame max)
 - Chunk unloading disabled during initial load
 - Lock-free chunk iteration for minimal CPU overhead
+- Spawn/load radius matching prevents streaming backlog
 
 ### Face Culling System
 
