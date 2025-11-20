@@ -16,6 +16,7 @@
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
+#include <chrono>
 // GLFW header
 #include <GLFW/glfw3.h>
 // GLM for matrix transformations
@@ -742,18 +743,24 @@ int main() {
         std::cout << "Entering main loop..." << std::endl;
 
         while (!glfwWindowShouldClose(window) && gameState == GameState::IN_GAME) {
+            auto frameStart = std::chrono::high_resolution_clock::now();
+
             float currentFrame = static_cast<float>(glfwGetTime());
             deltaTime = currentFrame - lastFrame;
             lastFrame = currentFrame;
 
+            // Update FPS counter with UNCLAMPED deltaTime (before clamp!)
+            DebugState::instance().updateFPS(deltaTime);
+
             // Clamp deltaTime to prevent physics explosions during lag spikes
             // Max 0.1 seconds (10 FPS minimum) prevents huge jumps when loading chunks
-            if (deltaTime > 0.1f) {
-                deltaTime = 0.1f;
+            float clampedDeltaTime = deltaTime;
+            if (clampedDeltaTime > 0.1f) {
+                clampedDeltaTime = 0.1f;
             }
 
             // Autosave system (RAM cache → disk every 5 min)
-            autosaveTimer += deltaTime;
+            autosaveTimer += clampedDeltaTime;
             if (autosaveTimer >= AUTOSAVE_INTERVAL) {
                 autosaveTimer = 0.0f;
                 int savedChunks = world.saveModifiedChunks();
@@ -764,11 +771,8 @@ int main() {
 
             glfwPollEvents();
 
-            // Update FPS counter
-            DebugState::instance().updateFPS(deltaTime);
-
             // Update sky time (handles day/night cycle)
-            ConsoleCommands::updateSkyTime(deltaTime);
+            ConsoleCommands::updateSkyTime(clampedDeltaTime);
 
             // Sun tracker removed - shader handles time-of-day by multiplying
             // static sky light values by dynamic sun/moon intensity
@@ -856,22 +860,22 @@ int main() {
 
             // Always update player physics, but only process input during gameplay
             bool canProcessInput = InputManager::instance().canMove();
-            player.update(window, deltaTime, &world, canProcessInput);
+            player.update(window, clampedDeltaTime, &world, canProcessInput);
 
             // Update inventory system
-            inventory.update(window, deltaTime);
+            inventory.update(window, clampedDeltaTime);
 
             // Update lighting system (incremental propagation)
             if (DebugState::instance().lightingEnabled.getValue()) {
-                world.getLightingSystem()->update(deltaTime, &renderer);
+                world.getLightingSystem()->update(clampedDeltaTime, &renderer);
 
                 // NATURAL TIME-BASED LIGHTING: Smoothly interpolate lighting values
-                world.updateInterpolatedLighting(deltaTime);
+                world.updateInterpolatedLighting(clampedDeltaTime);
             }
 
             // DECORATION FIX: Process pending decorations (chunks waiting for neighbors)
             static float decorationRetryTimer = 0.0f;
-            decorationRetryTimer += deltaTime;
+            decorationRetryTimer += clampedDeltaTime;
             if (decorationRetryTimer >= 0.02f) {  // Retry every 20ms (50 times per second)
                 world.processPendingDecorations(&renderer, 100);  // Process up to 100 chunks per check (5000/sec max)
                 decorationRetryTimer = 0.0f;
@@ -916,7 +920,7 @@ int main() {
             // PERFORMANCE FIX: Only run streaming updates 4 times per second instead of 60 FPS
             // Reduces 374,640 iterations/second to 24,976 (99.3% reduction!)
             static float streamingUpdateTimer = 0.0f;
-            streamingUpdateTimer += deltaTime;
+            streamingUpdateTimer += clampedDeltaTime;
             const float STREAMING_UPDATE_INTERVAL = 0.25f;  // 4 times per second
             const float renderDistance = 120.0f;
 
@@ -1053,11 +1057,11 @@ int main() {
             // Only simulates water within render distance (chunk freezing)
             // Performance: O(dirty_cells_in_range) instead of O(all_chunks)
             static float liquidUpdateTimer = 0.0f;
-            liquidUpdateTimer += deltaTime;
+            liquidUpdateTimer += clampedDeltaTime;
             const float liquidUpdateInterval = 0.1f;  // Update liquids 10 times per second for smooth flow
             if (liquidUpdateTimer >= liquidUpdateInterval) {
                 liquidUpdateTimer = 0.0f;
-                world.updateWaterSimulation(deltaTime, &renderer, player.Position, renderDistance);
+                world.updateWaterSimulation(clampedDeltaTime, &renderer, player.Position, renderDistance);
             }
 
             // Begin rendering
@@ -1217,7 +1221,19 @@ int main() {
             ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), renderer.getCurrentCommandBuffer());
 
             // End rendering
+            auto renderEnd = std::chrono::high_resolution_clock::now();
             renderer.endFrame();
+            auto frameEnd = std::chrono::high_resolution_clock::now();
+
+            // PERFORMANCE DIAGNOSTICS: Log slow frames (> 50ms = < 20 FPS)
+            auto frameDuration = std::chrono::duration_cast<std::chrono::milliseconds>(frameEnd - frameStart).count();
+            if (frameDuration > 50) {
+                auto renderDuration = std::chrono::duration_cast<std::chrono::milliseconds>(renderEnd - frameStart).count();
+                auto presentDuration = std::chrono::duration_cast<std::chrono::milliseconds>(frameEnd - renderEnd).count();
+                Logger::warning() << "SLOW FRAME: " << frameDuration << "ms total | "
+                                 << "render=" << renderDuration << "ms | "
+                                 << "present=" << presentDuration << "ms";
+            }
         }
 
                 // Game loop ended - check why it ended
