@@ -937,6 +937,20 @@ Chunk* World::getChunkAt(int chunkX, int chunkY, int chunkZ) {
     return getChunkAtUnsafe(chunkX, chunkY, chunkZ);
 }
 
+std::vector<ChunkCoord> World::getAllChunkCoords() const {
+    // THREAD SAFETY: Shared lock for concurrent reads
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    std::vector<ChunkCoord> coords;
+    coords.reserve(m_chunkMap.size());
+
+    for (const auto& pair : m_chunkMap) {
+        coords.push_back(pair.first);
+    }
+
+    return coords;
+}
+
 int World::getBlockAt(float worldX, float worldY, float worldZ) {
     // Convert world coordinates to chunk and local block coordinates
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);

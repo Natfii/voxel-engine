@@ -190,6 +190,16 @@ public:
     Chunk* getChunkAtWorldPos(float worldX, float worldY, float worldZ);
 
     /**
+     * @brief Gets coordinates of all currently loaded chunks
+     *
+     * Used for efficient chunk unloading - iterates only loaded chunks
+     * instead of a large volume. Thread-safe with shared_lock.
+     *
+     * @return Vector of chunk coordinates for all loaded chunks
+     */
+    std::vector<ChunkCoord> getAllChunkCoords() const;
+
+    /**
      * @brief Gets the mesh buffer pool for optimized mesh generation
      *
      * The buffer pool reuses vector memory across mesh regenerations,

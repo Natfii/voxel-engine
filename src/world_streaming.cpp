@@ -391,36 +391,23 @@ void WorldStreaming::unloadDistantChunks(const glm::vec3& playerPos, float unloa
     const int CHUNK_SIZE = 32;
     const float BLOCK_SIZE = 1.0f;  // Blocks are 1.0 world units (not 0.5!)
 
-    // Convert player position to chunk coordinates
-    int playerChunkX = static_cast<int>(std::floor(playerPos.x / (CHUNK_SIZE * BLOCK_SIZE)));
-    int playerChunkY = static_cast<int>(std::floor(playerPos.y / (CHUNK_SIZE * BLOCK_SIZE)));
-    int playerChunkZ = static_cast<int>(std::floor(playerPos.z / (CHUNK_SIZE * BLOCK_SIZE)));
-
-    // Calculate unload radius in chunks (slightly larger than load distance for hysteresis)
-    int unloadRadiusChunks = static_cast<int>(std::ceil(unloadDistance / (CHUNK_SIZE * BLOCK_SIZE))) + 2;
-
     std::vector<ChunkCoord> chunksToUnload;
+    float unloadDistanceSquared = unloadDistance * unloadDistance;
 
-    // Check chunks in a large sphere around the player
-    for (int dx = -unloadRadiusChunks; dx <= unloadRadiusChunks; ++dx) {
-        for (int dy = -unloadRadiusChunks; dy <= unloadRadiusChunks; ++dy) {
-            for (int dz = -unloadRadiusChunks; dz <= unloadRadiusChunks; ++dz) {
-                int chunkX = playerChunkX + dx;
-                int chunkY = playerChunkY + dy;
-                int chunkZ = playerChunkZ + dz;
+    // PERFORMANCE FIX: Instead of iterating through a huge volume (17^3 = 4,913 iterations),
+    // iterate only through loaded chunks (~432 chunks). This is 10x faster!
+    // Get all loaded chunk coordinates from the world
+    std::vector<ChunkCoord> loadedChunks = m_world->getAllChunkCoords();
 
-                // Check if chunk exists
-                if (m_world->getChunkAt(chunkX, chunkY, chunkZ) != nullptr) {
-                    // Calculate distance
-                    glm::vec3 chunkCenter = chunkToWorldPos(chunkX, chunkY, chunkZ);
-                    float distance = glm::distance(playerPos, chunkCenter);
+    // Check each loaded chunk's distance
+    for (const auto& coord : loadedChunks) {
+        glm::vec3 chunkCenter = chunkToWorldPos(coord.x, coord.y, coord.z);
+        glm::vec3 delta = chunkCenter - playerPos;
+        float distanceSquared = glm::dot(delta, delta);
 
-                    // If beyond unload distance, mark for removal
-                    if (distance > unloadDistance) {
-                        chunksToUnload.push_back({chunkX, chunkY, chunkZ});
-                    }
-                }
-            }
+        // If beyond unload distance, mark for removal
+        if (distanceSquared > unloadDistanceSquared) {
+            chunksToUnload.push_back(coord);
         }
     }
 
