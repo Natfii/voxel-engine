@@ -74,7 +74,6 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - **ConVar System** - Persistent console variables
 - **Debug Overlays** - FPS, position, target info
 - **Markdown Viewer** - In-game documentation viewer
-- **Hot Reload** - Config and asset reloading
 
 ## Technical Specifications
 
@@ -156,7 +155,7 @@ chmod +x build.sh run.sh
 2. **Wait for world generation** - Initial spawn area loads (~5 seconds for 432 chunks)
 3. **Start exploring** - Use WASD to move, mouse to look around
 4. **Open console** - Press F9 to access developer console
-5. **Check documentation** - Type `docs/console.md` in console to view help
+5. **Check documentation** 
 
 ## Basic Controls
 
