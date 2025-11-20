@@ -4,6 +4,7 @@
 #include "block_system.h"
 #include "frustum.h"
 #include "logger.h"
+#include "vulkan_renderer.h"
 #include <algorithm>
 #include <iostream>
 
