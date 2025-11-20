@@ -32,6 +32,7 @@
 #include <unordered_set>
 #include <filesystem>
 #include <fstream>
+#include <chrono>
 
 // ========== WORLD GENERATION CONFIGURATION ==========
 
@@ -1052,7 +1053,7 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         }
     } else {
         // SKIP MODE: Just mesh and upload (no decoration, no lighting for FPS test)
-        Logger::debug() << "FAST MODE: Quick mesh+upload for chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
+        auto meshStart = std::chrono::high_resolution_clock::now();
 
         // Set basic lighting (all blocks lit)
         for (int x = 0; x < Chunk::WIDTH; x++) {
@@ -1065,9 +1066,23 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         }
         chunkPtr->initializeInterpolatedLighting();
 
+        auto meshGenStart = std::chrono::high_resolution_clock::now();
         chunkPtr->generateMesh(this);
+        auto meshGenEnd = std::chrono::high_resolution_clock::now();
+
         if (renderer) {
+            auto uploadStart = std::chrono::high_resolution_clock::now();
             chunkPtr->createVertexBuffer(renderer);
+            auto uploadEnd = std::chrono::high_resolution_clock::now();
+
+            auto lightMs = std::chrono::duration_cast<std::chrono::milliseconds>(meshGenStart - meshStart).count();
+            auto meshMs = std::chrono::duration_cast<std::chrono::milliseconds>(meshGenEnd - meshGenStart).count();
+            auto uploadMs = std::chrono::duration_cast<std::chrono::milliseconds>(uploadEnd - uploadStart).count();
+            auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(uploadEnd - meshStart).count();
+
+            Logger::info() << "FAST MODE chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") timing: "
+                          << "light=" << lightMs << "ms, mesh=" << meshMs << "ms, upload=" << uploadMs
+                          << "ms, TOTAL=" << totalMs << "ms";
         }
     }
 
