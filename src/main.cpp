@@ -1230,9 +1230,9 @@ int main() {
             if (frameDuration > 50) {
                 auto renderDuration = std::chrono::duration_cast<std::chrono::milliseconds>(renderEnd - frameStart).count();
                 auto presentDuration = std::chrono::duration_cast<std::chrono::milliseconds>(frameEnd - renderEnd).count();
-                Logger::warning() << "SLOW FRAME: " << frameDuration << "ms total | "
-                                 << "render=" << renderDuration << "ms | "
-                                 << "present=" << presentDuration << "ms";
+                std::cerr << "[PERF] SLOW FRAME: " << frameDuration << "ms total | "
+                         << "render=" << renderDuration << "ms | "
+                         << "present=" << presentDuration << "ms" << std::endl;
             }
         }
 
