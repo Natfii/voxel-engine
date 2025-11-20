@@ -89,6 +89,11 @@ private:
     std::unordered_map<uint64_t, float> m_caveDensityCache;
     mutable std::shared_mutex m_caveCacheMutex;
 
+    // Mountain density cache (2D: worldX, worldZ) - quantized to 32-block resolution
+    // Stores mountain scaling factor to avoid 8 recursive biome lookups per terrain query
+    std::unordered_map<uint64_t, float> m_mountainDensityCache;
+    mutable std::shared_mutex m_mountainCacheMutex;
+
     // Helper functions
     uint64_t coordsToKey(int x, int z) const;
     uint64_t coordsToKey3D(int x, int y, int z) const;
