@@ -744,6 +744,7 @@ int main() {
 
         while (!glfwWindowShouldClose(window) && gameState == GameState::IN_GAME) {
             auto frameStart = std::chrono::high_resolution_clock::now();
+            auto checkpoint = frameStart;
 
             float currentFrame = static_cast<float>(glfwGetTime());
             deltaTime = currentFrame - lastFrame;
@@ -770,6 +771,7 @@ int main() {
             }
 
             glfwPollEvents();
+            auto afterInput = std::chrono::high_resolution_clock::now();
 
             // Update sky time (handles day/night cycle)
             ConsoleCommands::updateSkyTime(clampedDeltaTime);
@@ -930,8 +932,10 @@ int main() {
                 const float unloadDistance = renderDistance + 64.0f;  // Unload chunks well beyond render distance
                 worldStreaming.updatePlayerPosition(player.Position, loadDistance, unloadDistance);
             }
+            auto afterStreaming = std::chrono::high_resolution_clock::now();
 
             worldStreaming.processCompletedChunks(1);  // Upload max 1 chunk per frame for smooth 60 FPS
+            auto afterChunkProcess = std::chrono::high_resolution_clock::now();
 
             // Calculate matrices
             glm::mat4 model = glm::mat4(1.0f);
@@ -1069,6 +1073,7 @@ int main() {
                 // Skip this frame (swap chain recreation in progress)
                 continue;
             }
+            auto afterBeginFrame = std::chrono::high_resolution_clock::now();
 
             // Get current descriptor set (need to store it to take address)
             VkDescriptorSet currentDescriptorSet = renderer.getCurrentDescriptorSet();
@@ -1083,6 +1088,7 @@ int main() {
             vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, renderDistance, &renderer);
+            auto afterWorldRender = std::chrono::high_resolution_clock::now();
 
             // Render block outline with line pipeline
             if (target.hasTarget) {
@@ -1096,6 +1102,7 @@ int main() {
             ImGui_ImplVulkan_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
+            auto afterImGuiStart = std::chrono::high_resolution_clock::now();
 
             if (isPaused) {
                 PauseMenuAction pauseAction = pauseMenu.render();
@@ -1228,11 +1235,24 @@ int main() {
             // PERFORMANCE DIAGNOSTICS: Log slow frames (> 50ms = < 20 FPS)
             auto frameDuration = std::chrono::duration_cast<std::chrono::milliseconds>(frameEnd - frameStart).count();
             if (frameDuration > 50) {
-                auto renderDuration = std::chrono::duration_cast<std::chrono::milliseconds>(renderEnd - frameStart).count();
-                auto presentDuration = std::chrono::duration_cast<std::chrono::milliseconds>(frameEnd - renderEnd).count();
-                std::cerr << "[PERF] SLOW FRAME: " << frameDuration << "ms total | "
-                         << "render=" << renderDuration << "ms | "
-                         << "present=" << presentDuration << "ms" << std::endl;
+                auto inputMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterInput - frameStart).count();
+                auto streamMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterStreaming - afterInput).count();
+                auto chunkProcMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterChunkProcess - afterStreaming).count();
+                auto beginFrameMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterBeginFrame - afterChunkProcess).count();
+                auto worldRenderMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterWorldRender - afterBeginFrame).count();
+                auto imguiStartMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterImGuiStart - afterWorldRender).count();
+                auto imguiEndMs = std::chrono::duration_cast<std::chrono::milliseconds>(renderEnd - afterImGuiStart).count();
+                auto presentMs = std::chrono::duration_cast<std::chrono::milliseconds>(frameEnd - renderEnd).count();
+
+                std::cerr << "[PERF] SLOW FRAME " << frameDuration << "ms: "
+                         << "input=" << inputMs << " | "
+                         << "stream=" << streamMs << " | "
+                         << "chunkProc=" << chunkProcMs << " | "
+                         << "beginFrame=" << beginFrameMs << " | "
+                         << "worldRender=" << worldRenderMs << " | "
+                         << "imguiStart=" << imguiStartMs << " | "
+                         << "imguiEnd=" << imguiEndMs << " | "
+                         << "present=" << presentMs << "ms" << std::endl;
             }
         }
 
