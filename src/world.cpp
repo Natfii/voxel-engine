@@ -951,6 +951,16 @@ std::vector<ChunkCoord> World::getAllChunkCoords() const {
     return coords;
 }
 
+void World::forEachChunkCoord(const std::function<void(const ChunkCoord&)>& callback) const {
+    // THREAD SAFETY: Shared lock for concurrent reads
+    // Zero-copy iteration - avoids allocating vector of 432 coords
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    for (const auto& pair : m_chunkMap) {
+        callback(pair.first);
+    }
+}
+
 int World::getBlockAt(float worldX, float worldY, float worldZ) {
     // Convert world coordinates to chunk and local block coordinates
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);

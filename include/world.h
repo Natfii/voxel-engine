@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <shared_mutex>
+#include <functional>
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
@@ -198,6 +199,16 @@ public:
      * @return Vector of chunk coordinates for all loaded chunks
      */
     std::vector<ChunkCoord> getAllChunkCoords() const;
+
+    /**
+     * @brief Iterates chunk coordinates with a callback (zero-copy)
+     *
+     * More efficient than getAllChunkCoords() - avoids copying 432 coords.
+     * Holds shared_lock during iteration, so callback must be fast.
+     *
+     * @param callback Function called for each chunk coordinate
+     */
+    void forEachChunkCoord(const std::function<void(const ChunkCoord&)>& callback) const;
 
     /**
      * @brief Gets the mesh buffer pool for optimized mesh generation
