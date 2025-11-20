@@ -109,15 +109,6 @@ void main() {
         discard;
     }
 
-    // Only apply fog if we're in the fog range
-    vec3 finalColor = baseColor;
-    if (distance > fogStart) {
-        // Calculate linear fog factor (1.0 = no fog, 0.0 = full fog)
-        float fogFactor = clamp((fogEnd - distance) / (fogEnd - fogStart), 0.0, 1.0);
-        // Mix block color with dynamic fog color
-        finalColor = mix(fogColor, baseColor, fogFactor);
-    }
-
     // VIEWPORT-BASED DUAL-CHANNEL LIGHTING SYSTEM
     // Sky light: Affected by sun/moon position (recalculated for visible chunks only)
     // Block light: Constant (torches, lava) regardless of time of day
@@ -129,10 +120,28 @@ void main() {
     float moonContribution = moonIntensity * 0.25;     // Moon is much dimmer than sun
     float skyLightIntensity = sunContribution + moonContribution;
 
-    // Apply time-of-day modulation to sky light only
-    float skyLightFinal = fragSkyLight * skyLightIntensity;
+    // DIRECTIONAL SUN LIGHTING - Classic Minecraft-style face shading
+    // Calculate face normal from derivatives (works for flat-shaded blocks)
+    vec3 dFdxPos = dFdx(fragWorldPos);
+    vec3 dFdyPos = dFdy(fragWorldPos);
+    vec3 faceNormal = normalize(cross(dFdxPos, dFdyPos));
 
-    // Block light is constant (torches don't care about time of day)
+    // Sun always comes from above in retro style
+    vec3 sunDirection = vec3(0.0, 1.0, 0.0);  // Pointing straight up
+
+    // Calculate how much this face faces the sun (0.0 = perpendicular, 1.0 = directly facing)
+    float sunDot = max(dot(faceNormal, sunDirection), 0.0);
+
+    // Classic Minecraft face brightness multipliers:
+    // Top faces: 100% brightness
+    // Side faces: 80% brightness
+    // Bottom faces: 60% brightness
+    float faceBrightness = 0.6 + (sunDot * 0.4);  // Range: 0.6 to 1.0
+
+    // Apply directional shading to sky light only (not block light/torches)
+    float skyLightFinal = fragSkyLight * skyLightIntensity * faceBrightness;
+
+    // Block light is constant (torches don't care about time of day or face direction)
     float blockLightFinal = fragBlockLight;
 
     // Ambient light prevents pure darkness (starlight, eye adjustment)
@@ -141,21 +150,30 @@ void main() {
     // Combine using MAX (not add, to avoid over-brightening when torch + sunlight)
     float finalLight = max(max(skyLightFinal, blockLightFinal), ambientLight);
 
+    // Apply lighting and ambient occlusion to base color FIRST
+    vec3 finalColor = baseColor * finalLight * fragAO;
+
     // Underwater lighting - use dynamic liquid properties
     if (cameraUnderwater) {
         // Reduce all light underwater using custom darken factor
-        finalLight *= ubo.liquidTint.a;  // Custom darken factor from YAML
+        finalColor *= ubo.liquidTint.a;  // Custom darken factor from YAML
 
         // Add depth-based darkening (deeper = darker)
         float depthFactor = clamp(distance / 10.0, 0.0, 0.8);
-        finalLight *= (1.0 - depthFactor * 0.5);
+        finalColor *= (1.0 - depthFactor * 0.5);
 
         // Apply custom tint color that increases with depth
         finalColor = mix(finalColor, finalColor * ubo.liquidTint.rgb, depthFactor);
     }
 
-    // Apply lighting and ambient occlusion
-    finalColor *= finalLight * fragAO;
+    // Apply fog LAST so it's not affected by lighting
+    // This keeps fog color bright and visible
+    if (distance > fogStart) {
+        // Calculate linear fog factor (1.0 = no fog, 0.0 = full fog)
+        float fogFactor = clamp((fogEnd - distance) / (fogEnd - fogStart), 0.0, 1.0);
+        // Mix lit block color with dynamic fog color
+        finalColor = mix(fogColor, finalColor, fogFactor);
+    }
 
     // Output with alpha from vertex color (for liquid transparency)
     outColor = vec4(finalColor, fragColor.a);

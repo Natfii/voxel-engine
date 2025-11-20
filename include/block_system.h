@@ -81,7 +81,6 @@ struct BlockDefinition {
     bool affectedByGravity = false;    ///< If true, block falls (like sand)
     int flammability = 0;              ///< How easily block catches fire
     float transparency = 0.0f;         ///< Transparency (0=opaque, 1=fully transparent)
-    bool redstone = false;             ///< If true, conducts redstone signal
     bool isLiquid = false;             ///< If true, no outline when targeting
     int animatedTiles = 1;             ///< Number of tiles for animation (1=static, 2=2x2 grid, etc.)
 

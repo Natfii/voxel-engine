@@ -522,8 +522,17 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
                 glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
                 // Floor to get the block below, then add 1.0 to place on top
                 float blockGridY = std::floor(feetPos.y) + 1.0f;
-                // Set movement to place feet exactly on block grid
-                movement.y = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
+                float targetY = blockGridY + PLAYER_EYE_HEIGHT;
+
+                // Only snap if there's meaningful correction needed (> 0.001 units)
+                // This prevents micro-bouncing from floating point precision issues
+                float correction = targetY - Position.y;
+                if (std::abs(correction) > 0.001f) {
+                    movement.y = correction;
+                } else {
+                    // Already perfectly aligned - just stop
+                    movement.y = 0.0f;
+                }
             } else {
                 // In water: don't snap to grid, just stop movement to prevent bouncing
                 movement.y = 0.0f;

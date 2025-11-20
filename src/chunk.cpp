@@ -604,11 +604,14 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                 if (localX >= 0 && localX < WIDTH && localY >= 0 && localY < HEIGHT && localZ >= 0 && localZ < DEPTH) {
                     return isSky ? getInterpolatedSkyLight(localX, localY, localZ) : getInterpolatedBlockLight(localX, localY, localZ);
                 }
-                return 0.0f; // Fallback for out-of-chunk
+                // Fallback for out-of-chunk: assume full sunlight (15.0) for sky, no block light (0.0)
+                // This prevents harsh dark edges at chunk boundaries
+                return isSky ? 15.0f : 0.0f;
             }
 
             Chunk* chunk = world->getChunkAtWorldPos(worldX, worldY, worldZ);
-            if (!chunk) return 0.0f;
+            // If chunk doesn't exist, assume full sunlight for sky, no block light
+            if (!chunk) return isSky ? 15.0f : 0.0f;
 
             int localX = worldX - (chunk->getChunkX() * WIDTH);
             int localY = worldY - (chunk->getChunkY() * HEIGHT);
@@ -762,44 +765,44 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
                         v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
 
-                        // SMOOTH LIGHTING + AMBIENT OCCLUSION
+                        // CLASSIC RETRO LIGHTING - Per-face uniform lighting
+                        // Sample light from the block adjacent to this face (not per-vertex)
+                        // This gives consistent, blocky lighting like classic Minecraft
                         if (DebugState::instance().lightingEnabled.getValue()) {
-                            // Determine which corner of the face this vertex is at
-                            // Each face has 4 vertices (corners), we sample 4 blocks per corner
-                            int vertexIndex = (i - cubeStart) / 3;
+                            // Sample the light from the block in the direction this face is pointing
+                            // Use the face normal to determine which neighbor to sample
+                            int sampleX = X + faceNormal.x;
+                            int sampleY = Y + faceNormal.y;
+                            int sampleZ = Z + faceNormal.z;
 
-                            // Calculate smooth lighting offsets based on face normal and vertex position
-                            // These offsets determine which 4 blocks to sample around this vertex
-                            int dx1 = 0, dy1 = 0, dz1 = 0;  // First perpendicular direction
-                            int dx2 = 0, dy2 = 0, dz2 = 0;  // Second perpendicular direction
+                            // Get light at the sampled position (may be in neighboring chunk)
+                            glm::vec3 sampleWorldPos = localToWorldPos(sampleX, sampleY, sampleZ);
 
-                            // Determine perpendicular directions based on face normal
-                            if (faceNormal.y != 0) {
-                                // Top/bottom face: perpendiculars are X and Z
-                                dx1 = (vertexIndex == 0 || vertexIndex == 3) ? -1 : 0;
-                                dz1 = (vertexIndex == 0 || vertexIndex == 1) ? -1 : 0;
-                                dx2 = (vertexIndex == 1 || vertexIndex == 2) ? 1 : 0;
-                                dz2 = (vertexIndex == 2 || vertexIndex == 3) ? 1 : 0;
-                            } else if (faceNormal.x != 0) {
-                                // Left/right face: perpendiculars are Y and Z
-                                dy1 = (vertexIndex == 0 || vertexIndex == 3) ? 1 : 0;
-                                dz1 = (vertexIndex == 0 || vertexIndex == 1) ? -1 : 0;
-                                dy2 = (vertexIndex == 1 || vertexIndex == 2) ? -1 : 0;
-                                dz2 = (vertexIndex == 2 || vertexIndex == 3) ? 1 : 0;
+                            float skyLight = 15.0f;  // Default full sunlight
+                            float blockLight = 0.0f;  // Default no block light
+
+                            if (callerHoldsLock) {
+                                // Can't query other chunks - use local data if available
+                                if (sampleX >= 0 && sampleX < WIDTH && sampleY >= 0 && sampleY < HEIGHT && sampleZ >= 0 && sampleZ < DEPTH) {
+                                    skyLight = getInterpolatedSkyLight(sampleX, sampleY, sampleZ);
+                                    blockLight = getInterpolatedBlockLight(sampleX, sampleY, sampleZ);
+                                }
                             } else {
-                                // Front/back face: perpendiculars are X and Y
-                                dx1 = (vertexIndex == 0 || vertexIndex == 3) ? -1 : 0;
-                                dy1 = (vertexIndex == 0 || vertexIndex == 1) ? 1 : 0;
-                                dx2 = (vertexIndex == 1 || vertexIndex == 2) ? 1 : 0;
-                                dy2 = (vertexIndex == 2 || vertexIndex == 3) ? -1 : 0;
+                                // Query world for neighbor chunks
+                                Chunk* chunk = world->getChunkAtWorldPos(sampleWorldPos.x, sampleWorldPos.y, sampleWorldPos.z);
+                                if (chunk) {
+                                    int localX = static_cast<int>(sampleWorldPos.x) - (chunk->getChunkX() * WIDTH);
+                                    int localY = static_cast<int>(sampleWorldPos.y) - (chunk->getChunkY() * HEIGHT);
+                                    int localZ = static_cast<int>(sampleWorldPos.z) - (chunk->getChunkZ() * DEPTH);
+                                    skyLight = chunk->getInterpolatedSkyLight(localX, localY, localZ);
+                                    blockLight = chunk->getInterpolatedBlockLight(localX, localY, localZ);
+                                }
                             }
 
-                            // Get smooth lighting using VERTEX WORLD POSITION for consistent lighting across blocks
-                            v.skyLight = getSmoothLight(v.x, v.y, v.z, dx1, dy1, dz1, dx2, dy2, dz2, true);
-                            v.blockLight = getSmoothLight(v.x, v.y, v.z, dx1, dy1, dz1, dx2, dy2, dz2, false);
-
-                            // Calculate ambient occlusion (still uses block position)
-                            v.ao = calculateAO(X, Y, Z, dx1, dy1, dz1, dx2, dy2, dz2);
+                            // Normalize to 0-1 range
+                            v.skyLight = skyLight / 15.0f;
+                            v.blockLight = blockLight / 15.0f;
+                            v.ao = 1.0f;  // No AO for classic look
                         } else {
                             // Lighting disabled - full brightness
                             v.skyLight = 1.0f;
@@ -810,7 +813,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                         targetVerts.push_back(v);
                     }
 
-                    // Create 6 indices for 2 triangles (0,1,2 and 0,2,3)
+                    // SIMPLIFIED TRIANGLE SPLIT FOR CLASSIC LIGHTING
+                    // Use consistent diagonal (0-2) for all faces
+                    // This ensures adjacent blocks have matching gradients (retro aesthetic)
                     targetIndices.push_back(baseIndex + 0);
                     targetIndices.push_back(baseIndex + 1);
                     targetIndices.push_back(baseIndex + 2);

@@ -94,7 +94,6 @@ BlockRegistry::BlockRegistry() {
     air.affectedByGravity = false;
     air.flammability = 0;
     air.transparency = 1.0f;
-    air.redstone = false;
     air.hasColor = false;
     air.hasTexture = false;
     m_defs.push_back(air);
@@ -177,7 +176,7 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         if (doc["affected_by_gravity"]) {
             def.affectedByGravity = doc["affected_by_gravity"].as<bool>();
         }
-        // Optional: flammability, transparency, redstone, liquid
+        // Optional: flammability, transparency, liquid
         if (doc["flammability"]) {
             def.flammability = doc["flammability"].as<int>();
         }
@@ -281,7 +280,7 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
             if (doc["affected_by_gravity"]) {
                 def.affectedByGravity = doc["affected_by_gravity"].as<bool>();
             }
-            // Optional: flammability, transparency, redstone, liquid
+            // Optional: flammability, transparency, liquid
             if (doc["flammability"]) {
                 def.flammability = doc["flammability"].as<int>();
             }
