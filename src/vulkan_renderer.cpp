@@ -1357,6 +1357,13 @@ void VulkanRenderer::endFrame() {
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
+void VulkanRenderer::waitForGPUIdle() {
+    // Wait for all GPU work to complete
+    // This is used during initialization to ensure all chunk uploads finish
+    // before entering the game loop, preventing initial frame stalls
+    vkDeviceWaitIdle(m_device);
+}
+
 // Update uniform buffer
 void VulkanRenderer::updateUniformBuffer(uint32_t currentImage, const glm::mat4& model, const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos, float renderDistance, bool underwater,
                                         const glm::vec3& liquidFogColor, float liquidFogStart, float liquidFogEnd,

@@ -140,6 +140,14 @@ public:
     void endFrame();
 
     /**
+     * @brief Waits for all GPU work to complete
+     *
+     * Blocks until the GPU finishes processing all submitted commands.
+     * Used during initialization to ensure smooth gameplay start.
+     */
+    void waitForGPUIdle();
+
+    /**
      * @brief Updates uniform buffer with current frame data and liquid properties
      *
      * Uploads MVP matrices, camera position, render distance, and liquid properties to GPU.

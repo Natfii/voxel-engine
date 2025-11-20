@@ -474,6 +474,14 @@ int main() {
         std::cout << "Creating GPU buffers..." << std::endl;
         world.createBuffers(&renderer);
 
+        // Loading stage 8.5: GPU warm-up - wait for all uploads to finish (87%)
+        loadingProgress = 0.87f;
+        loadingMessage = "Warming up GPU (this ensures smooth 60 FPS)";
+        renderLoadingScreen();
+        std::cout << "Warming up GPU - waiting for all chunk uploads to complete..." << std::endl;
+        renderer.waitForGPUIdle();
+        std::cout << "GPU warm-up complete - ready for 60 FPS gameplay!" << std::endl;
+
         // Loading stage 9: Finding spawn location (90%)
         loadingProgress = 0.88f;
         loadingMessage = "Finding safe spawn location";
