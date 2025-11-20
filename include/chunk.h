@@ -118,6 +118,8 @@ struct Vertex {
  * @note The noise generator is shared across all chunks (static member)
  */
 class Chunk {
+    // VulkanRenderer needs access to staging buffers for async upload management
+    friend class VulkanRenderer;
 
  static std::unique_ptr<FastNoiseLite> s_noise;  ///< Shared noise generator for terrain (RAII managed)
 
