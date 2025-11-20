@@ -267,9 +267,9 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     return height;
 }
 
-float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
+float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ, int terrainHeight) {
     // FastNoiseLite is thread-safe for reads - no mutex needed
-    // Note: Caching disabled - lock contention during parallel generation hurts performance
+    // NOTE: terrainHeight passed as parameter to avoid redundant calculation (was called 32x per column!)
 
     // === Primary Winding Tunnel System ===
     // Creates narrow, winding tunnels that snake through the underground
@@ -302,7 +302,7 @@ float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
 
     // === Surface Entrance System ===
     // Allow caves to reach surface in some areas, creating natural entrances
-    int terrainHeight = getTerrainHeightAt(worldX, worldZ);
+    // Use passed terrainHeight parameter (already calculated once per column)
     float depthBelowSurface = terrainHeight - worldY;
 
     // Check if we're near surface (top 15 blocks)

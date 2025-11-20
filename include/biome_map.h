@@ -48,8 +48,9 @@ public:
      * Get cave density at a 3D world position
      * Returns value 0.0-1.0 where higher = more solid (not cave)
      * Values < 0.45 = air (cave), >= 0.45 = solid
+     * @param terrainHeight Pre-calculated terrain height for this (x,z) column to avoid redundant calculation
      */
-    float getCaveDensityAt(float worldX, float worldY, float worldZ);
+    float getCaveDensityAt(float worldX, float worldY, float worldZ, int terrainHeight);
 
     /**
      * Check if a position is inside an underground biome chamber

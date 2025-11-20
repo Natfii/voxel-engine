@@ -289,7 +289,8 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 }
 
                 // Check if this is inside a cave (extended to deep underground)
-                float caveDensity = biomeMap->getCaveDensityAt(worldX, worldYf, worldZ);
+                // Pass terrainHeight to avoid redundant calculation (was 32x per column!)
+                float caveDensity = biomeMap->getCaveDensityAt(worldX, worldYf, worldZ, terrainHeight);
                 bool isCave = (caveDensity < 0.45f) && (worldY > 10);  // Caves above solid foundation layer
 
                 // Check if inside underground biome chamber (extended to deep underground)
