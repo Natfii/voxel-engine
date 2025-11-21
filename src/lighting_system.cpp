@@ -23,7 +23,7 @@ LightingSystem::~LightingSystem() {
 
 // ========== Initialization ==========
 
-void LightingSystem::initializeWorldLighting() {
+void LightingSystem::initializeWorldLighting(std::function<void(float)> progressCallback) {
     std::cout << "Initializing world lighting..." << std::endl;
 
     // Get world bounds to iterate through all chunk columns
@@ -61,6 +61,7 @@ void LightingSystem::initializeWorldLighting() {
     int totalNodes = static_cast<int>(m_lightAddQueue.size());
     const int BATCH_SIZE = 10000;  // Process 10K nodes per batch
     const int REPORT_INTERVAL = 100000;  // Report every 100K nodes (not 10K) to reduce console spam
+    const int PROGRESS_UPDATE_INTERVAL = 50000;  // Update loading screen every 50K nodes (more responsive than 100K)
 
     while (!m_lightAddQueue.empty()) {
         // Process one batch
@@ -81,6 +82,19 @@ void LightingSystem::initializeWorldLighting() {
             std::cout << "  Lighting progress: " << processedCount << " nodes processed ("
                      << static_cast<int>(progress) << "%)" << std::endl;
         }
+
+        // LOADING SCREEN: Update loading screen progress more frequently (every 50K nodes)
+        // This provides visual feedback during the 3-5 second lighting phase
+        if (progressCallback && (processedCount % PROGRESS_UPDATE_INTERVAL == 0 || m_lightAddQueue.empty())) {
+            // Calculate progress: 0.0 to 1.0
+            float progress = static_cast<float>(processedCount) / static_cast<float>(totalNodes + processedCount);
+            progressCallback(progress);
+        }
+    }
+
+    // Final progress callback to ensure we show 100% complete
+    if (progressCallback) {
+        progressCallback(1.0f);
     }
 
     std::cout << "World lighting initialized! Processed " << processedCount << " nodes." << std::endl;

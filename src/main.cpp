@@ -418,7 +418,14 @@ int main() {
                 loadingMessage = "Propagating lighting";
                 renderLoadingScreen();
                 std::cout << "Completing light propagation..." << std::endl;
-                world.getLightingSystem()->initializeWorldLighting();
+
+                // LOADING SCREEN: Pass progress callback to update during lighting (0.60 -> 0.70)
+                world.getLightingSystem()->initializeWorldLighting([&](float progress) {
+                    // Map 0.0-1.0 to the 0.60-0.70 range (10% of overall loading)
+                    loadingProgress = 0.60f + (progress * 0.10f);
+                    renderLoadingScreen();
+                });
+
                 std::cout << "Light propagation complete!" << std::endl;
 
                 // NOW generate meshes WITH correct lighting (single pass)
@@ -510,7 +517,14 @@ int main() {
             loadingMessage = "Propagating lighting";
             renderLoadingScreen();
             std::cout << "Completing light propagation for spawn chunks..." << std::endl;
-            world.getLightingSystem()->initializeWorldLighting();
+
+            // LOADING SCREEN: Pass progress callback to update during lighting (0.75 -> 0.77)
+            world.getLightingSystem()->initializeWorldLighting([&](float progress) {
+                // Map 0.0-1.0 to the 0.75-0.77 range (2% of overall loading)
+                loadingProgress = 0.75f + (progress * 0.02f);
+                renderLoadingScreen();
+            });
+
             std::cout << "Light propagation complete!" << std::endl;
 
             // Regenerate all meshes with updated lighting (synchronously during loading)

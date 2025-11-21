@@ -2,6 +2,7 @@
 #define LIGHTING_SYSTEM_H
 
 #include <deque>
+#include <functional>
 #include <unordered_set>
 #include <vector>
 #include <glm/glm.hpp>
@@ -63,9 +64,11 @@ public:
      *
      * Should be called after world generation but before rendering.
      *
+     * @param progressCallback Optional callback function to report progress (0.0 to 1.0)
+     *                        Called periodically during light propagation for loading screen updates
      * @note This is a blocking operation - may take several seconds for large worlds
      */
-    void initializeWorldLighting();
+    void initializeWorldLighting(std::function<void(float)> progressCallback = nullptr);
 
     // ========== Update ==========
 
