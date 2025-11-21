@@ -220,32 +220,63 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     // BIOME SIZE-BASED SCALING: Mountains grow taller based on biome extent
     // Sample surrounding area to determine mountain biome density
     if (baseHeightMultiplier > 1.5f) {  // Only for mountainous biomes
-        // Sample 8 points in a 500-block radius to check mountain biome extent
-        const float sampleRadius = 500.0f;
-        int mountainCount = 0;
-        const int totalSamples = 8;
+        // Cache mountain density at 32-block resolution to avoid expensive sampling
+        int mountainRegionX = static_cast<int>(worldX / 32.0f);
+        int mountainRegionZ = static_cast<int>(worldZ / 32.0f);
+        uint64_t mountainKey = coordsToKey(mountainRegionX, mountainRegionZ);
 
-        for (int i = 0; i < totalSamples; i++) {
-            float angle = (i / float(totalSamples)) * 2.0f * 3.14159f;
-            float sampleX = worldX + std::cos(angle) * sampleRadius;
-            float sampleZ = worldZ + std::sin(angle) * sampleRadius;
+        float sizeScaling = 1.0f;
 
-            const Biome* sampleBiome = getBiomeAt(sampleX, sampleZ);
-            // Count how many samples are also mountainous (height_multiplier > 1.5)
-            if (sampleBiome && sampleBiome->height_multiplier > 1.5f) {
-                mountainCount++;
+        // Check mountain density cache first
+        {
+            std::shared_lock<std::shared_mutex> lock(m_mountainCacheMutex);
+            auto it = m_mountainDensityCache.find(mountainKey);
+            if (it != m_mountainDensityCache.end()) {
+                sizeScaling = it->second;
+                baseHeightMultiplier *= sizeScaling;
+                goto skip_mountain_sampling;  // Cache hit - skip expensive sampling
             }
         }
 
-        // Calculate mountain density (0.0 = isolated peak, 1.0 = large mountain range)
-        float mountainDensity = mountainCount / float(totalSamples);
+        // Cache miss - sample surrounding area
+        {
+            // Sample 8 points in a 500-block radius to check mountain biome extent
+            const float sampleRadius = 500.0f;
+            int mountainCount = 0;
+            const int totalSamples = 8;
 
-        // Scale height multiplier based on mountain range size
-        // Small isolated mountains: 1.0x multiplier (stay at base height)
-        // Large mountain ranges: up to 2.0x multiplier (grow much taller)
-        float sizeScaling = 0.5f + (mountainDensity * 1.5f);  // Range: 0.5x to 2.0x
-        baseHeightMultiplier *= sizeScaling;
+            for (int i = 0; i < totalSamples; i++) {
+                float angle = (i / float(totalSamples)) * 2.0f * 3.14159f;
+                float sampleX = worldX + std::cos(angle) * sampleRadius;
+                float sampleZ = worldZ + std::sin(angle) * sampleRadius;
+
+                const Biome* sampleBiome = getBiomeAt(sampleX, sampleZ);
+                // Count how many samples are also mountainous (height_multiplier > 1.5)
+                if (sampleBiome && sampleBiome->height_multiplier > 1.5f) {
+                    mountainCount++;
+                }
+            }
+
+            // Calculate mountain density (0.0 = isolated peak, 1.0 = large mountain range)
+            float mountainDensity = mountainCount / float(totalSamples);
+
+            // Scale height multiplier based on mountain range size
+            // Small isolated mountains: 1.0x multiplier (stay at base height)
+            // Large mountain ranges: up to 2.0x multiplier (grow much taller)
+            sizeScaling = 0.5f + (mountainDensity * 1.5f);  // Range: 0.5x to 2.0x
+
+            // Store in cache
+            {
+                std::unique_lock<std::shared_mutex> lock(m_mountainCacheMutex);
+                if (m_mountainDensityCache.size() < MAX_CACHE_SIZE) {
+                    m_mountainDensityCache[mountainKey] = sizeScaling;
+                }
+            }
+
+            baseHeightMultiplier *= sizeScaling;
+        }
     }
+    skip_mountain_sampling:
 
     heightVariation *= baseHeightMultiplier;
 
@@ -267,9 +298,9 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     return height;
 }
 
-float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
+float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ, int terrainHeight) {
     // FastNoiseLite is thread-safe for reads - no mutex needed
-    // Note: Cave density caching disabled - noise lookups are fast enough
+    // NOTE: terrainHeight passed as parameter to avoid redundant calculation (was called 32x per column!)
 
     // === Primary Winding Tunnel System ===
     // Creates narrow, winding tunnels that snake through the underground
@@ -302,7 +333,7 @@ float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ) {
 
     // === Surface Entrance System ===
     // Allow caves to reach surface in some areas, creating natural entrances
-    int terrainHeight = getTerrainHeightAt(worldX, worldZ);
+    // Use passed terrainHeight parameter (already calculated once per column)
     float depthBelowSurface = terrainHeight - worldY;
 
     // Check if we're near surface (top 15 blocks)

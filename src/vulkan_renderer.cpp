@@ -17,6 +17,7 @@
 
 #include "vulkan_renderer.h"
 #include "chunk.h"
+#include "logger.h"
 #include <stdexcept>
 #include <iostream>
 #include <set>
@@ -1354,7 +1355,17 @@ void VulkanRenderer::endFrame() {
     m_frameNumber++;
     flushDeletionQueue();
 
+    // Process async uploads and clean up completed ones
+    processAsyncUploads();
+
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+void VulkanRenderer::waitForGPUIdle() {
+    // Wait for all GPU work to complete
+    // This is used during initialization to ensure all chunk uploads finish
+    // before entering the game loop, preventing initial frame stalls
+    vkDeviceWaitIdle(m_device);
 }
 
 // Update uniform buffer
@@ -1950,6 +1961,12 @@ void VulkanRenderer::beginBufferCopyBatch() {
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
     vkBeginCommandBuffer(m_batchCommandBuffer, &beginInfo);
+    m_batchIsAsync = false;  // Default to sync
+}
+
+void VulkanRenderer::beginAsyncChunkUpload() {
+    beginBufferCopyBatch();
+    m_batchIsAsync = true;  // Mark as async
 }
 
 void VulkanRenderer::batchCopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
@@ -1959,7 +1976,10 @@ void VulkanRenderer::batchCopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkD
     vkCmdCopyBuffer(m_batchCommandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
 }
 
-void VulkanRenderer::submitBufferCopyBatch() {
+void VulkanRenderer::submitBufferCopyBatch(bool async) {
+    // Check if async parameter overrides batch flag
+    bool isAsync = async || m_batchIsAsync;
+
     // End command buffer recording
     vkEndCommandBuffer(m_batchCommandBuffer);
 
@@ -1969,7 +1989,7 @@ void VulkanRenderer::submitBufferCopyBatch() {
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &m_batchCommandBuffer;
 
-    // Create fence to wait for completion
+    // Create fence to track completion
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 
@@ -1979,13 +1999,98 @@ void VulkanRenderer::submitBufferCopyBatch() {
     // Submit batch
     vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence);
 
-    // Wait for all copies to complete
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    if (isAsync) {
+        // ASYNC MODE: Don't wait, store for later cleanup
+        std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
 
-    // Cleanup
-    vkDestroyFence(m_device, fence, nullptr);
-    vkFreeCommandBuffers(m_device, m_commandPool, 1, &m_batchCommandBuffer);
-    m_batchCommandBuffer = VK_NULL_HANDLE;
+        // Wait if we have too many pending uploads (backpressure)
+        if (m_pendingUploads.size() >= MAX_PENDING_UPLOADS) {
+            // Process pending uploads to free up slots
+            lock.~lock_guard();  // Unlock before processing
+            processAsyncUploads();
+            new (&lock) std::lock_guard<std::mutex>(m_pendingUploadsMutex);  // Re-lock
+        }
+
+        // Store pending upload (no staging buffers yet - will be added by submitAsyncChunkUpload)
+        m_pendingUploads.push_back({fence, m_batchCommandBuffer, {}});
+        m_batchCommandBuffer = VK_NULL_HANDLE;
+    } else {
+        // SYNC MODE: Wait for completion (original behavior)
+        vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+
+        // Cleanup immediately
+        vkDestroyFence(m_device, fence, nullptr);
+        vkFreeCommandBuffers(m_device, m_commandPool, 1, &m_batchCommandBuffer);
+        m_batchCommandBuffer = VK_NULL_HANDLE;
+    }
+}
+
+void VulkanRenderer::submitAsyncChunkUpload(Chunk* chunk) {
+    // Submit the batch asynchronously
+    submitBufferCopyBatch(true);
+
+    // Add chunk's staging buffers to the most recent pending upload
+    std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
+    if (!m_pendingUploads.empty()) {
+        auto& upload = m_pendingUploads.back();
+
+        // Collect all staging buffers from the chunk
+        if (chunk->m_vertexStagingBuffer != VK_NULL_HANDLE) {
+            upload.stagingBuffers.push_back({chunk->m_vertexStagingBuffer, chunk->m_vertexStagingBufferMemory});
+        }
+        if (chunk->m_indexStagingBuffer != VK_NULL_HANDLE) {
+            upload.stagingBuffers.push_back({chunk->m_indexStagingBuffer, chunk->m_indexStagingBufferMemory});
+        }
+        if (chunk->m_transparentVertexStagingBuffer != VK_NULL_HANDLE) {
+            upload.stagingBuffers.push_back({chunk->m_transparentVertexStagingBuffer, chunk->m_transparentVertexStagingBufferMemory});
+        }
+        if (chunk->m_transparentIndexStagingBuffer != VK_NULL_HANDLE) {
+            upload.stagingBuffers.push_back({chunk->m_transparentIndexStagingBuffer, chunk->m_transparentIndexStagingBufferMemory});
+        }
+
+        // Clear chunk's staging buffer references (ownership transferred)
+        chunk->m_vertexStagingBuffer = VK_NULL_HANDLE;
+        chunk->m_vertexStagingBufferMemory = VK_NULL_HANDLE;
+        chunk->m_indexStagingBuffer = VK_NULL_HANDLE;
+        chunk->m_indexStagingBufferMemory = VK_NULL_HANDLE;
+        chunk->m_transparentVertexStagingBuffer = VK_NULL_HANDLE;
+        chunk->m_transparentVertexStagingBufferMemory = VK_NULL_HANDLE;
+        chunk->m_transparentIndexStagingBuffer = VK_NULL_HANDLE;
+        chunk->m_transparentIndexStagingBufferMemory = VK_NULL_HANDLE;
+    }
+}
+
+void VulkanRenderer::processAsyncUploads() {
+    std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
+
+    // Check all pending uploads for completion
+    auto it = m_pendingUploads.begin();
+    while (it != m_pendingUploads.end()) {
+        // Check if this upload is complete (non-blocking check)
+        VkResult result = vkGetFenceStatus(m_device, it->fence);
+
+        if (result == VK_SUCCESS) {
+            // Upload complete - clean up resources
+            vkDestroyFence(m_device, it->fence, nullptr);
+            vkFreeCommandBuffers(m_device, m_commandPool, 1, &it->commandBuffer);
+
+            // Destroy all staging buffers
+            for (auto& stagingBuffer : it->stagingBuffers) {
+                vkDestroyBuffer(m_device, stagingBuffer.first, nullptr);
+                vkFreeMemory(m_device, stagingBuffer.second, nullptr);
+            }
+
+            // Remove from pending list
+            it = m_pendingUploads.erase(it);
+        } else if (result == VK_NOT_READY) {
+            // Still in progress - check next one
+            ++it;
+        } else {
+            // Error checking fence status
+            Logger::error() << "Error checking upload fence status";
+            ++it;
+        }
+    }
 }
 
 // ========== Deferred Deletion (Fence-Based Resource Cleanup) ==========
@@ -2002,9 +2107,15 @@ void VulkanRenderer::flushDeletionQueue() {
     // Thread-safe flush operation
     std::lock_guard<std::mutex> lock(m_deletionQueueMutex);
 
+    // CRITICAL FIX: Limit deletions per frame to prevent massive stalls
+    // Deleting 200+ buffers at once causes 400ms frame stall (vkDestroyBuffer is ~1ms each)
+    // Spread deletions over multiple frames (10 per frame = 20ms overhead max)
+    const int MAX_DELETIONS_PER_FRAME = 10;
+    int deletionsThisFrame = 0;
+
     // Delete resources from frames that are at least MAX_FRAMES_IN_FLIGHT old
     // This ensures the GPU is done using them (fence-based approach)
-    while (!m_deletionQueue.empty()) {
+    while (!m_deletionQueue.empty() && deletionsThisFrame < MAX_DELETIONS_PER_FRAME) {
         const auto& deletion = m_deletionQueue.front();
 
         // Check if enough frames have passed (GPU is done with this resource)
@@ -2018,6 +2129,7 @@ void VulkanRenderer::flushDeletionQueue() {
             }
 
             m_deletionQueue.pop_front();
+            deletionsThisFrame++;
         } else {
             // Too recent - GPU might still be using it
             // All subsequent entries are also too new (FIFO queue), so stop
@@ -2571,6 +2683,19 @@ void VulkanRenderer::cleanup() {
         vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
         vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
     }
+
+    std::cout << "    Waiting for pending async uploads..." << std::endl;
+    // Wait for all pending uploads and clean them up
+    for (auto& upload : m_pendingUploads) {
+        vkWaitForFences(m_device, 1, &upload.fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(m_device, upload.fence, nullptr);
+        vkFreeCommandBuffers(m_device, m_commandPool, 1, &upload.commandBuffer);
+        for (auto& stagingBuffer : upload.stagingBuffers) {
+            vkDestroyBuffer(m_device, stagingBuffer.first, nullptr);
+            vkFreeMemory(m_device, stagingBuffer.second, nullptr);
+        }
+    }
+    m_pendingUploads.clear();
 
     std::cout << "    Cleaning up command pool..." << std::endl;
     vkDestroyCommandPool(m_device, m_commandPool, nullptr);

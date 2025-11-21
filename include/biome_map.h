@@ -48,8 +48,9 @@ public:
      * Get cave density at a 3D world position
      * Returns value 0.0-1.0 where higher = more solid (not cave)
      * Values < 0.45 = air (cave), >= 0.45 = solid
+     * @param terrainHeight Pre-calculated terrain height for this (x,z) column to avoid redundant calculation
      */
-    float getCaveDensityAt(float worldX, float worldY, float worldZ);
+    float getCaveDensityAt(float worldX, float worldY, float worldZ, int terrainHeight);
 
     /**
      * Check if a position is inside an underground biome chamber
@@ -87,6 +88,11 @@ private:
     // Cave density cache (3D: worldX, worldY, worldZ) - quantized to 2-block resolution
     std::unordered_map<uint64_t, float> m_caveDensityCache;
     mutable std::shared_mutex m_caveCacheMutex;
+
+    // Mountain density cache (2D: worldX, worldZ) - quantized to 32-block resolution
+    // Stores mountain scaling factor to avoid 8 recursive biome lookups per terrain query
+    std::unordered_map<uint64_t, float> m_mountainDensityCache;
+    mutable std::shared_mutex m_mountainCacheMutex;
 
     // Helper functions
     uint64_t coordsToKey(int x, int z) const;

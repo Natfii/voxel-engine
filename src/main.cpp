@@ -16,6 +16,7 @@
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
+#include <chrono>
 // GLFW header
 #include <GLFW/glfw3.h>
 // GLM for matrix transformations
@@ -452,7 +453,18 @@ int main() {
             int spawnChunkX = 0;
             int spawnChunkY = 2;  // Y=64 surface is in chunk Y=2
             int spawnChunkZ = 0;
-            int spawnRadius = menuResult.spawnRadius;  // From menu slider (2-8 chunks)
+
+            // CRITICAL FIX: Match spawn radius to load radius for instant 60 FPS
+            // loadDistance = 152 blocks sphere requires radius=5 chunk CUBE to fully cover
+            // Chunk (-5,2,0) is 128 blocks from center = INSIDE 152-block sphere
+            // Spawn radius=5 generates 1331 chunks (11x11x11 cube)
+            // This ensures NO chunks within load sphere need streaming
+            const int INITIAL_SPAWN_RADIUS = 5;  // Minimum to cover 152-block load sphere
+            int spawnRadius = INITIAL_SPAWN_RADIUS;
+
+            std::cout << "Generating " << spawnRadius << " chunk radius ("
+                     << ((2*spawnRadius+1)*(2*spawnRadius+1)*(2*spawnRadius+1))
+                     << " chunks) to fully cover load sphere..." << std::endl;
 
             world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
 
@@ -464,6 +476,24 @@ int main() {
             // Register water blocks with simulation system
             std::cout << "Initializing water physics..." << std::endl;
             world.registerWaterBlocks();
+
+            // CRITICAL FIX: Complete lighting propagation BEFORE GPU upload
+            // This prevents chunks from being marked dirty during gameplay
+            loadingProgress = 0.75f;
+            loadingMessage = "Propagating lighting";
+            renderLoadingScreen();
+            std::cout << "Completing light propagation for spawn chunks..." << std::endl;
+            world.getLightingSystem()->initializeWorldLighting();
+            std::cout << "Light propagation complete!" << std::endl;
+
+            // Regenerate all meshes with updated lighting (synchronously during loading)
+            // Pass nullptr for renderer to skip GPU upload (createBuffers will batch upload later)
+            loadingProgress = 0.77f;
+            loadingMessage = "Updating lighting on meshes";
+            renderLoadingScreen();
+            std::cout << "Regenerating meshes with final lighting..." << std::endl;
+            world.getLightingSystem()->regenerateAllDirtyChunks(10000, nullptr);  // Mesh only, no GPU upload yet
+            std::cout << "Mesh regeneration complete!" << std::endl;
         }
 
         // Loading stage 8: Create GPU buffers (85%)
@@ -472,6 +502,14 @@ int main() {
         renderLoadingScreen();
         std::cout << "Creating GPU buffers..." << std::endl;
         world.createBuffers(&renderer);
+
+        // Loading stage 8.5: GPU warm-up - wait for all uploads to finish (87%)
+        loadingProgress = 0.87f;
+        loadingMessage = "Warming up GPU (this ensures smooth 60 FPS)";
+        renderLoadingScreen();
+        std::cout << "Warming up GPU - waiting for all chunk uploads to complete..." << std::endl;
+        renderer.waitForGPUIdle();
+        std::cout << "GPU warm-up complete - ready for 60 FPS gameplay!" << std::endl;
 
         // Loading stage 9: Finding spawn location (90%)
         loadingProgress = 0.88f;
@@ -649,18 +687,23 @@ int main() {
         // CRITICAL DEBUG: Verify blocks exist where we think they do
         std::cout << "\n=== SPAWN VERIFICATION ===" << std::endl;
         float feetY = spawnY - 1.6f;
-        std::cout << "Player feet will be at Y=" << feetY << std::endl;
+        std::cout << "Player feet will be at Y=" << feetY << " (in block " << static_cast<int>(std::floor(feetY)) << ")" << std::endl;
         int groundBlock = world.getBlockAt(spawnX, static_cast<float>(spawnGroundY), spawnZ);
         int feetBlock = world.getBlockAt(spawnX, feetY, spawnZ);
-        int belowFeet = world.getBlockAt(spawnX, feetY - 0.1f, spawnZ);
-        std::cout << "Block at ground (" << spawnGroundY << "): " << groundBlock << std::endl;
-        std::cout << "Block at feet (" << feetY << "): " << feetBlock << std::endl;
-        std::cout << "Block 0.1 below feet: " << belowFeet << std::endl;
-        if (groundBlock == 0 || feetBlock != 0 || belowFeet == 0) {
-            std::cout << "ERROR: Spawn validation FAILED! Terrain doesn't match expectations!" << std::endl;
-            std::cout << "  Expected: ground=" << spawnGroundY << " should be solid (got " << groundBlock << ")" << std::endl;
-            std::cout << "  Expected: feet position should be air (got " << feetBlock << ")" << std::endl;
-            std::cout << "  Expected: below feet should be solid (got " << belowFeet << ")" << std::endl;
+        std::cout << "Block at ground Y=" << spawnGroundY << ": blockID=" << groundBlock << (groundBlock != 0 ? " ✓ SOLID" : " ✗ AIR!") << std::endl;
+        std::cout << "Block at feet Y=" << static_cast<int>(std::floor(feetY)) << ": blockID=" << feetBlock << (feetBlock == 0 ? " ✓ AIR" : " ✗ SOLID!") << std::endl;
+
+        bool spawnValid = (groundBlock != 0) && (feetBlock == 0);
+        if (!spawnValid) {
+            std::cout << "ERROR: Spawn validation FAILED!" << std::endl;
+            if (groundBlock == 0) {
+                std::cout << "  - Ground block is AIR (expected SOLID)" << std::endl;
+            }
+            if (feetBlock != 0) {
+                std::cout << "  - Feet position is SOLID (expected AIR)" << std::endl;
+            }
+        } else {
+            std::cout << "Spawn validation PASSED ✓" << std::endl;
         }
         std::cout << "===========================\n" << std::endl;
 
@@ -688,18 +731,8 @@ int main() {
         Inventory inventory;
         g_inventory = &inventory;
 
-        // Loading stage 12: Initialize world lighting (99%)
-        loadingProgress = 0.98f;
-        loadingMessage = "Initializing lighting";
-        renderLoadingScreen();
-        std::cout << "Initializing world lighting (static sky light values)..." << std::endl;
-
-        // Initialize lighting for ALL spawn chunks with full BFS propagation
-        // This calculates STATIC sky light values that never change
-        // The shader multiplies these by dynamic sun/moon intensity for time-of-day
-        world.getLightingSystem()->initializeWorldLighting();
-
-        // Loading stage 13: Final check - wait for player to be on ground (100%)
+        // Loading stage 12: Final check - wait for player to be on ground (99%)
+        // NOTE: Lighting initialization moved earlier (before GPU upload) to prevent chunk re-uploads
         loadingProgress = 0.99f;
         loadingMessage = "Ready";
         renderLoadingScreen();
@@ -737,18 +770,25 @@ int main() {
         std::cout << "Entering main loop..." << std::endl;
 
         while (!glfwWindowShouldClose(window) && gameState == GameState::IN_GAME) {
+            auto frameStart = std::chrono::high_resolution_clock::now();
+            auto checkpoint = frameStart;
+
             float currentFrame = static_cast<float>(glfwGetTime());
             deltaTime = currentFrame - lastFrame;
             lastFrame = currentFrame;
 
+            // Update FPS counter with UNCLAMPED deltaTime (before clamp!)
+            DebugState::instance().updateFPS(deltaTime);
+
             // Clamp deltaTime to prevent physics explosions during lag spikes
             // Max 0.1 seconds (10 FPS minimum) prevents huge jumps when loading chunks
-            if (deltaTime > 0.1f) {
-                deltaTime = 0.1f;
+            float clampedDeltaTime = deltaTime;
+            if (clampedDeltaTime > 0.1f) {
+                clampedDeltaTime = 0.1f;
             }
 
             // Autosave system (RAM cache → disk every 5 min)
-            autosaveTimer += deltaTime;
+            autosaveTimer += clampedDeltaTime;
             if (autosaveTimer >= AUTOSAVE_INTERVAL) {
                 autosaveTimer = 0.0f;
                 int savedChunks = world.saveModifiedChunks();
@@ -758,12 +798,10 @@ int main() {
             }
 
             glfwPollEvents();
-
-            // Update FPS counter
-            DebugState::instance().updateFPS(deltaTime);
+            auto afterInput = std::chrono::high_resolution_clock::now();
 
             // Update sky time (handles day/night cycle)
-            ConsoleCommands::updateSkyTime(deltaTime);
+            ConsoleCommands::updateSkyTime(clampedDeltaTime);
 
             // Sun tracker removed - shader handles time-of-day by multiplying
             // static sky light values by dynamic sun/moon intensity
@@ -851,24 +889,27 @@ int main() {
 
             // Always update player physics, but only process input during gameplay
             bool canProcessInput = InputManager::instance().canMove();
-            player.update(window, deltaTime, &world, canProcessInput);
+            player.update(window, clampedDeltaTime, &world, canProcessInput);
 
             // Update inventory system
-            inventory.update(window, deltaTime);
+            inventory.update(window, clampedDeltaTime);
 
             // Update lighting system (incremental propagation)
             if (DebugState::instance().lightingEnabled.getValue()) {
-                world.getLightingSystem()->update(deltaTime, &renderer);
+                world.getLightingSystem()->update(clampedDeltaTime, &renderer);
 
                 // NATURAL TIME-BASED LIGHTING: Smoothly interpolate lighting values
-                world.updateInterpolatedLighting(deltaTime);
+                world.updateInterpolatedLighting(clampedDeltaTime);
             }
 
             // DECORATION FIX: Process pending decorations (chunks waiting for neighbors)
             static float decorationRetryTimer = 0.0f;
-            decorationRetryTimer += deltaTime;
+            decorationRetryTimer += clampedDeltaTime;
             if (decorationRetryTimer >= 0.02f) {  // Retry every 20ms (50 times per second)
-                world.processPendingDecorations(&renderer, 100);  // Process up to 100 chunks per check (5000/sec max)
+                // PERFORMANCE FIX: Limit to 1 decoration per check to prevent GPU queue backup
+                // Each decoration = synchronous GPU upload = vkWaitForFences stall
+                // 100 uploads per frame = massive beginFrame stall (700-800ms)
+                world.processPendingDecorations(&renderer, 1);  // Process 1 per check (50/sec max)
                 decorationRetryTimer = 0.0f;
             }
 
@@ -911,7 +952,7 @@ int main() {
             // PERFORMANCE FIX: Only run streaming updates 4 times per second instead of 60 FPS
             // Reduces 374,640 iterations/second to 24,976 (99.3% reduction!)
             static float streamingUpdateTimer = 0.0f;
-            streamingUpdateTimer += deltaTime;
+            streamingUpdateTimer += clampedDeltaTime;
             const float STREAMING_UPDATE_INTERVAL = 0.25f;  // 4 times per second
             const float renderDistance = 120.0f;
 
@@ -921,8 +962,10 @@ int main() {
                 const float unloadDistance = renderDistance + 64.0f;  // Unload chunks well beyond render distance
                 worldStreaming.updatePlayerPosition(player.Position, loadDistance, unloadDistance);
             }
+            auto afterStreaming = std::chrono::high_resolution_clock::now();
 
-            worldStreaming.processCompletedChunks(4);  // Upload max 4 chunks per frame to avoid stuttering
+            worldStreaming.processCompletedChunks(1);  // Upload max 1 chunk per frame for smooth 60 FPS
+            auto afterChunkProcess = std::chrono::high_resolution_clock::now();
 
             // Calculate matrices
             glm::mat4 model = glm::mat4(1.0f);
@@ -1048,11 +1091,11 @@ int main() {
             // Only simulates water within render distance (chunk freezing)
             // Performance: O(dirty_cells_in_range) instead of O(all_chunks)
             static float liquidUpdateTimer = 0.0f;
-            liquidUpdateTimer += deltaTime;
+            liquidUpdateTimer += clampedDeltaTime;
             const float liquidUpdateInterval = 0.1f;  // Update liquids 10 times per second for smooth flow
             if (liquidUpdateTimer >= liquidUpdateInterval) {
                 liquidUpdateTimer = 0.0f;
-                world.updateWaterSimulation(deltaTime, &renderer, player.Position, renderDistance);
+                world.updateWaterSimulation(clampedDeltaTime, &renderer, player.Position, renderDistance);
             }
 
             // Begin rendering
@@ -1060,6 +1103,7 @@ int main() {
                 // Skip this frame (swap chain recreation in progress)
                 continue;
             }
+            auto afterBeginFrame = std::chrono::high_resolution_clock::now();
 
             // Get current descriptor set (need to store it to take address)
             VkDescriptorSet currentDescriptorSet = renderer.getCurrentDescriptorSet();
@@ -1074,6 +1118,7 @@ int main() {
             vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, renderDistance, &renderer);
+            auto afterWorldRender = std::chrono::high_resolution_clock::now();
 
             // Render block outline with line pipeline
             if (target.hasTarget) {
@@ -1087,6 +1132,7 @@ int main() {
             ImGui_ImplVulkan_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
+            auto afterImGuiStart = std::chrono::high_resolution_clock::now();
 
             if (isPaused) {
                 PauseMenuAction pauseAction = pauseMenu.render();
@@ -1212,7 +1258,32 @@ int main() {
             ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), renderer.getCurrentCommandBuffer());
 
             // End rendering
+            auto renderEnd = std::chrono::high_resolution_clock::now();
             renderer.endFrame();
+            auto frameEnd = std::chrono::high_resolution_clock::now();
+
+            // PERFORMANCE DIAGNOSTICS: Log slow frames (> 50ms = < 20 FPS)
+            auto frameDuration = std::chrono::duration_cast<std::chrono::milliseconds>(frameEnd - frameStart).count();
+            if (frameDuration > 50) {
+                auto inputMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterInput - frameStart).count();
+                auto streamMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterStreaming - afterInput).count();
+                auto chunkProcMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterChunkProcess - afterStreaming).count();
+                auto beginFrameMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterBeginFrame - afterChunkProcess).count();
+                auto worldRenderMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterWorldRender - afterBeginFrame).count();
+                auto imguiStartMs = std::chrono::duration_cast<std::chrono::milliseconds>(afterImGuiStart - afterWorldRender).count();
+                auto imguiEndMs = std::chrono::duration_cast<std::chrono::milliseconds>(renderEnd - afterImGuiStart).count();
+                auto presentMs = std::chrono::duration_cast<std::chrono::milliseconds>(frameEnd - renderEnd).count();
+
+                std::cerr << "[PERF] SLOW FRAME " << frameDuration << "ms: "
+                         << "input=" << inputMs << " | "
+                         << "stream=" << streamMs << " | "
+                         << "chunkProc=" << chunkProcMs << " | "
+                         << "beginFrame=" << beginFrameMs << " | "
+                         << "worldRender=" << worldRenderMs << " | "
+                         << "imguiStart=" << imguiStartMs << " | "
+                         << "imguiEnd=" << imguiEndMs << " | "
+                         << "present=" << presentMs << "ms" << std::endl;
+            }
         }
 
                 // Game loop ended - check why it ended

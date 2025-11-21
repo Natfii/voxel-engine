@@ -3,7 +3,7 @@
 #include <vector>
 #include <memory>
 #include <random>
-#include <mutex>
+#include <thread>
 #include <glm/glm.hpp>
 
 // Forward declaration
@@ -60,6 +60,8 @@ public:
     int getRandomTreeType();
 
 private:
+    // Helper: Get thread-local RNG (eliminates mutex contention during parallel decoration)
+    std::mt19937& getThreadLocalRNG();
     // Generate a specific tree template
     void generateSmallTree(TreeTemplate& tree, int logID, int leavesID);
     void generateMediumTree(TreeTemplate& tree, int logID, int leavesID);
@@ -76,6 +78,5 @@ private:
                    int length, int depth, int logID, int leavesID);
 
 private:
-    std::mt19937 m_rng;
-    std::mutex m_rngMutex;
+    int m_seed;  // Seed for deterministic world generation (used to initialize thread-local RNGs)
 };

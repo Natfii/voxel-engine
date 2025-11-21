@@ -4,8 +4,16 @@
 #include "terrain_constants.h"
 #include <cmath>
 
-TreeGenerator::TreeGenerator(int seed) : m_rng(seed + 9999) {
+TreeGenerator::TreeGenerator(int seed) : m_seed(seed + 9999) {
     // Seed offset to make trees different from terrain
+    // Note: Each thread will get its own RNG initialized with this seed
+}
+
+std::mt19937& TreeGenerator::getThreadLocalRNG() {
+    // OPTIMIZATION: Thread-local RNG eliminates mutex contention during parallel decoration
+    // Each thread gets its own RNG - no locking needed!
+    thread_local std::mt19937 t_rng(m_seed + std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    return t_rng;
 }
 
 void TreeGenerator::generateTreeTemplatesForBiome(Biome* biome) {
@@ -90,20 +98,17 @@ bool TreeGenerator::placeTree(World* world, int blockX, int blockY, int blockZ, 
 }
 
 int TreeGenerator::getRandomTreeType() {
-    std::lock_guard<std::mutex> lock(m_rngMutex);
+    // No mutex needed - using thread-local RNG
     std::uniform_int_distribution<int> dist(0, 9);
-    return dist(m_rng);
+    return dist(getThreadLocalRNG());
 }
 
 // ==================== Tree Generation Functions ====================
 
 void TreeGenerator::generateSmallTree(TreeTemplate& tree, int logID, int leavesID) {
-    int height;
-    {
-        std::lock_guard<std::mutex> lock(m_rngMutex);
-        std::uniform_int_distribution<int> heightDist(4, 6);
-        height = heightDist(m_rng);
-    }
+    // No mutex needed - using thread-local RNG
+    std::uniform_int_distribution<int> heightDist(4, 6);
+    int height = heightDist(getThreadLocalRNG());
     tree.height = height;
 
     // Add trunk
@@ -114,26 +119,19 @@ void TreeGenerator::generateSmallTree(TreeTemplate& tree, int logID, int leavesI
 }
 
 void TreeGenerator::generateMediumTree(TreeTemplate& tree, int logID, int leavesID) {
-    int height;
-    {
-        std::lock_guard<std::mutex> lock(m_rngMutex);
-        std::uniform_int_distribution<int> heightDist(7, 10);
-        height = heightDist(m_rng);
-    }
+    // No mutex needed - using thread-local RNG
+    std::uniform_int_distribution<int> heightDist(7, 10);
+    int height = heightDist(getThreadLocalRNG());
     tree.height = height;
 
     addTrunk(tree, height, logID);
     addCanopy(tree, height, 3, leavesID);
 
     int branchHeight = height - 3;
+    std::uniform_int_distribution<int> dirDist(0, 3);
     for (int i = 0; i < 3; i++) {
         glm::ivec3 start(0, branchHeight, 0);
-        int dir;
-        {
-            std::lock_guard<std::mutex> lock(m_rngMutex);
-            std::uniform_int_distribution<int> dirDist(0, 3);
-            dir = dirDist(m_rng);
-        }
+        int dir = dirDist(getThreadLocalRNG());
 
         glm::ivec3 direction;
         switch (dir) {
@@ -149,12 +147,9 @@ void TreeGenerator::generateMediumTree(TreeTemplate& tree, int logID, int leaves
 }
 
 void TreeGenerator::generateLargeTree(TreeTemplate& tree, int logID, int leavesID) {
-    int height;
-    {
-        std::lock_guard<std::mutex> lock(m_rngMutex);
-        std::uniform_int_distribution<int> heightDist(11, 15);
-        height = heightDist(m_rng);
-    }
+    // No mutex needed - using thread-local RNG
+    std::uniform_int_distribution<int> heightDist(11, 15);
+    int height = heightDist(getThreadLocalRNG());
     tree.height = height;
 
     // Add thick trunk (2x2 base for very tall trees)
@@ -197,15 +192,19 @@ void TreeGenerator::addCanopy(TreeTemplate& tree, int trunkHeight, int radius, i
     // Spherical canopy centered at top of trunk
     glm::ivec3 center(0, trunkHeight - 1, 0);
 
+    // OPTIMIZATION: Use squared distance to avoid expensive sqrt (20-30 CPU cycles)
+    // For radius=3: 343 sqrt calls eliminated per tree
+    float radiusSquared = radius * radius;
+
     for (int x = -radius; x <= radius; x++) {
         for (int y = -radius; y <= radius; y++) {
             for (int z = -radius; z <= radius; z++) {
                 // Skip trunk center
                 if (x == 0 && z == 0 && y <= 1) continue;
 
-                // Check if within sphere
-                float dist = std::sqrt(x*x + y*y + z*z);
-                if (dist <= radius) {
+                // Check if within sphere using squared distance
+                float distSquared = x*x + y*y + z*z;
+                if (distSquared <= radiusSquared) {
                     glm::ivec3 pos = center + glm::ivec3(x, y, z);
                     tree.blocks.push_back({pos, leavesID});
                 }
@@ -239,12 +238,9 @@ void TreeGenerator::addBranch(TreeTemplate& tree, glm::ivec3 start, glm::ivec3 d
     }
 
     if (depth < 2 && length > 2) {
-        bool shouldAddBranch;
-        {
-            std::lock_guard<std::mutex> lock(m_rngMutex);
-            std::uniform_int_distribution<int> branchDist(0, 1);
-            shouldAddBranch = (branchDist(m_rng) == 0);
-        }
+        // No mutex needed - using thread-local RNG
+        std::uniform_int_distribution<int> branchDist(0, 1);
+        bool shouldAddBranch = (branchDist(getThreadLocalRNG()) == 0);
         if (shouldAddBranch) {
             glm::ivec3 perpDir;
             if (direction.x != 0) {

@@ -32,6 +32,8 @@
 #include <unordered_set>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
+#include <chrono>
 
 // ========== WORLD GENERATION CONFIGURATION ==========
 
@@ -551,9 +553,11 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
                 // Regenerate mesh with new decorations
                 chunk->generateMesh(this);
 
-                // Upload to GPU
+                // Upload to GPU (async to prevent frame stalls)
                 if (renderer) {
-                    chunk->createVertexBuffer(renderer);
+                    renderer->beginAsyncChunkUpload();
+                    chunk->createVertexBufferBatched(renderer);
+                    renderer->submitAsyncChunkUpload(chunk);
                 }
 
                 processed++;
@@ -936,6 +940,30 @@ Chunk* World::getChunkAt(int chunkX, int chunkY, int chunkZ) {
     return getChunkAtUnsafe(chunkX, chunkY, chunkZ);
 }
 
+std::vector<ChunkCoord> World::getAllChunkCoords() const {
+    // THREAD SAFETY: Shared lock for concurrent reads
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    std::vector<ChunkCoord> coords;
+    coords.reserve(m_chunkMap.size());
+
+    for (const auto& pair : m_chunkMap) {
+        coords.push_back(pair.first);
+    }
+
+    return coords;
+}
+
+void World::forEachChunkCoord(const std::function<void(const ChunkCoord&)>& callback) const {
+    // THREAD SAFETY: Shared lock for concurrent reads
+    // Zero-copy iteration - avoids allocating vector of 432 coords
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    for (const auto& pair : m_chunkMap) {
+        callback(pair.first);
+    }
+}
+
 int World::getBlockAt(float worldX, float worldY, float worldZ) {
     // Convert world coordinates to chunk and local block coordinates
     auto coords = worldToBlockCoords(worldX, worldY, worldZ);
@@ -991,6 +1019,10 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
 
     lock.unlock();  // Release lock before decoration (can be slow)
 
+    // PERFORMANCE DEBUG: Skip heavy operations during streaming to isolate bottleneck
+    // TODO: Remove this and do proper async decoration/lighting
+    const bool SKIP_DECORATION_FOR_FPS = true;
+
     // MAIN THREAD: Decorate, Light, Mesh, Upload - IN THAT ORDER
     // This is safe because:
     // 1. Chunk is now findable via getChunkAt() for tree placement
@@ -998,7 +1030,7 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
     // 3. Lighting happens AFTER all blocks are placed
     // 4. GPU upload happens AFTER final mesh is generated
     // 5. Mesh generation happens AFTER neighbors are loaded (for occlusion culling)
-    if (chunkPtr->getChunkY() >= 0) {  // Only decorate surface chunks
+    if (chunkPtr->getChunkY() >= 0 && !SKIP_DECORATION_FOR_FPS) {  // Only decorate surface chunks
         try {
             Logger::debug() << "Processing surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): decorate → light → mesh → upload";
 
@@ -1024,15 +1056,17 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
 
             // Step 4: Upload final mesh to GPU (CRITICAL: after decoration/lighting!)
             if (renderer) {
-                Logger::info() << "Uploaded surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                Logger::info() << "Uploading surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                                << ") with " << chunkPtr->getVertexCount() << " vertices (lit+decorated)";
-                chunkPtr->createVertexBuffer(renderer);
+                renderer->beginAsyncChunkUpload();
+                chunkPtr->createVertexBufferBatched(renderer);
+                renderer->submitAsyncChunkUpload(chunkPtr);
             }
         } catch (const std::exception& e) {
             Logger::error() << "Failed to decorate/light chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): " << e.what();
             // Continue anyway - chunk has terrain even without decoration
         }
-    } else {
+    } else if (!SKIP_DECORATION_FOR_FPS) {
         // Underground chunks: Light and mesh (no decoration)
         Logger::debug() << "Processing underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): light → mesh → upload";
 
@@ -1040,11 +1074,48 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         chunkPtr->markLightingDirty();
         chunkPtr->generateMesh(this);
 
-        // Upload to GPU
+        // Upload to GPU (async to prevent frame stalls)
         if (renderer) {
-            Logger::info() << "Uploaded underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+            Logger::info() << "Uploading underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                            << ") with " << chunkPtr->getVertexCount() << " vertices (lit)";
-            chunkPtr->createVertexBuffer(renderer);
+            renderer->beginAsyncChunkUpload();
+            chunkPtr->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(chunkPtr);
+        }
+    } else {
+        // SKIP MODE: Just mesh and upload (no decoration, no lighting for FPS test)
+        auto meshStart = std::chrono::high_resolution_clock::now();
+
+        // Set basic lighting (all blocks lit)
+        for (int x = 0; x < Chunk::WIDTH; x++) {
+            for (int y = 0; y < Chunk::HEIGHT; y++) {
+                for (int z = 0; z < Chunk::DEPTH; z++) {
+                    chunkPtr->setSkyLight(x, y, z, 15);
+                    chunkPtr->setBlockLight(x, y, z, 0);
+                }
+            }
+        }
+        chunkPtr->initializeInterpolatedLighting();
+
+        auto meshGenStart = std::chrono::high_resolution_clock::now();
+        chunkPtr->generateMesh(this);
+        auto meshGenEnd = std::chrono::high_resolution_clock::now();
+
+        if (renderer) {
+            auto uploadStart = std::chrono::high_resolution_clock::now();
+            renderer->beginAsyncChunkUpload();
+            chunkPtr->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(chunkPtr);
+            auto uploadEnd = std::chrono::high_resolution_clock::now();
+
+            auto lightMs = std::chrono::duration_cast<std::chrono::milliseconds>(meshGenStart - meshStart).count();
+            auto meshMs = std::chrono::duration_cast<std::chrono::milliseconds>(meshGenEnd - meshGenStart).count();
+            auto uploadMs = std::chrono::duration_cast<std::chrono::milliseconds>(uploadEnd - uploadStart).count();
+            auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(uploadEnd - meshStart).count();
+
+            Logger::info() << "FAST MODE chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") timing: "
+                          << "light=" << lightMs << "ms, mesh=" << meshMs << "ms, upload=" << uploadMs
+                          << "ms, TOTAL=" << totalMs << "ms";
         }
     }
 
@@ -1350,7 +1421,11 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
         try {
             // Pass true to indicate we already hold the lock (prevents deadlock)
             affectedChunk->generateMesh(this, true);
-            affectedChunk->createVertexBuffer(renderer);
+
+            // Upload to GPU (async to prevent frame stalls)
+            renderer->beginAsyncChunkUpload();
+            affectedChunk->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(affectedChunk);
         } catch (const std::exception& e) {
             Logger::error() << "Failed to update chunk after breaking block: " << e.what();
             // Mesh is already generated, just buffer creation failed
@@ -1385,7 +1460,11 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
                 try {
                     // Pass true to indicate we already hold the lock (prevents deadlock)
                     neighbors[i]->generateMesh(this, true);
-                    neighbors[i]->createVertexBuffer(renderer);
+
+                    // Upload to GPU (async to prevent frame stalls)
+                    renderer->beginAsyncChunkUpload();
+                    neighbors[i]->createVertexBufferBatched(renderer);
+                    renderer->submitAsyncChunkUpload(neighbors[i]);
                 } catch (const std::exception& e) {
                     Logger::error() << "Failed to update neighbor chunk: " << e.what();
                     // Continue updating other chunks even if one fails
@@ -1478,7 +1557,11 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
         try {
             // Pass true to indicate we already hold the lock (prevents deadlock)
             affectedChunk->generateMesh(this, true);
-            affectedChunk->createVertexBuffer(renderer);
+
+            // Upload to GPU (async to prevent frame stalls)
+            renderer->beginAsyncChunkUpload();
+            affectedChunk->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(affectedChunk);
         } catch (const std::exception& e) {
             Logger::error() << "Failed to update chunk after placing block: " << e.what();
             // Mesh is already generated, just buffer creation failed
@@ -1512,7 +1595,11 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
                 try {
                     // Pass true to indicate we already hold the lock (prevents deadlock)
                     neighbors[i]->generateMesh(this, true);
-                    neighbors[i]->createVertexBuffer(renderer);
+
+                    // Upload to GPU (async to prevent frame stalls)
+                    renderer->beginAsyncChunkUpload();
+                    neighbors[i]->createVertexBufferBatched(renderer);
+                    renderer->submitAsyncChunkUpload(neighbors[i]);
                 } catch (const std::exception& e) {
                     Logger::error() << "Failed to update neighbor chunk: " << e.what();
                     // Continue updating other chunks even if one fails
@@ -1720,7 +1807,12 @@ void World::updateWaterSimulation(float deltaTime, VulkanRenderer* renderer, con
         if (chunk) {
             // Regenerate mesh for this chunk (water levels changed)
             chunk->generateMesh(this);
-            chunk->createVertexBuffer(renderer);
+
+            // Upload to GPU (async to prevent frame stalls)
+            renderer->beginAsyncChunkUpload();
+            chunk->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(chunk);
+
             updatesThisFrame++;
         }
     }
@@ -1983,21 +2075,39 @@ bool World::loadWorld(const std::string& worldPath) {
         // Store world path for chunk streaming persistence
         m_worldPath = worldPath;
 
-        // Load all chunks
+        // FIXED: Discover and load all chunk files from disk
         int loadedChunks = 0;
-        int generatedChunks = 0;
+        fs::path chunksDir = fs::path(worldPath) / "chunks";
 
-        for (auto& [coord, chunk] : m_chunkMap) {
-            if (chunk && chunk->load(worldPath)) {
-                loadedChunks++;
-            } else {
-                // Chunk file doesn't exist - will need to be generated
-                generatedChunks++;
+        if (fs::exists(chunksDir) && fs::is_directory(chunksDir)) {
+            std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+            for (const auto& entry : fs::directory_iterator(chunksDir)) {
+                if (entry.path().extension() == ".chunk") {
+                    // Parse chunk filename: "chunk_x_y_z.chunk"
+                    std::string filename = entry.path().stem().string();
+                    std::istringstream iss(filename);
+                    std::string prefix;
+                    int chunkX, chunkY, chunkZ;
+                    char underscore;
+
+                    if (iss >> prefix >> underscore >> chunkX >> underscore >> chunkY >> underscore >> chunkZ) {
+                        // Create chunk and load from disk
+                        ChunkCoord coord{chunkX, chunkY, chunkZ};
+                        auto chunk = acquireChunk(chunkX, chunkY, chunkZ);
+
+                        if (chunk->load(worldPath)) {
+                            Chunk* chunkPtr = chunk.get();
+                            m_chunkMap[coord] = std::move(chunk);
+                            m_chunks.push_back(chunkPtr);
+                            loadedChunks++;
+                        }
+                    }
+                }
             }
         }
 
-        Logger::info() << "World load complete - " << loadedChunks << " chunks loaded, "
-                      << generatedChunks << " chunks need generation";
+        Logger::info() << "World load complete - " << loadedChunks << " chunks loaded from disk";
         return true;
 
     } catch (const std::exception& e) {

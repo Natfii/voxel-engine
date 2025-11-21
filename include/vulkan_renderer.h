@@ -140,6 +140,14 @@ public:
     void endFrame();
 
     /**
+     * @brief Waits for all GPU work to complete
+     *
+     * Blocks until the GPU finishes processing all submitted commands.
+     * Used during initialization to ensure smooth gameplay start.
+     */
+    void waitForGPUIdle();
+
+    /**
      * @brief Updates uniform buffer with current frame data and liquid properties
      *
      * Uploads MVP matrices, camera position, render distance, and liquid properties to GPU.
@@ -281,8 +289,33 @@ public:
      *
      * Executes all buffer copies recorded since beginBufferCopyBatch().
      * Blocks until GPU completes all copies.
+     *
+     * @param async If true, returns immediately without waiting (default: false)
      */
-    void submitBufferCopyBatch();
+    void submitBufferCopyBatch(bool async = false);
+
+    /**
+     * @brief Begin an async chunk upload batch
+     *
+     * Like beginBufferCopyBatch(), but marks the batch as async.
+     * Subsequent submitBufferCopyBatch() will return immediately.
+     *
+     * Pattern:
+     *   renderer->beginAsyncChunkUpload();
+     *   chunk->createVertexBufferBatched(renderer);
+     *   renderer->submitAsyncChunkUpload(chunk);  // Non-blocking!
+     */
+    void beginAsyncChunkUpload();
+
+    /**
+     * @brief Submit async chunk upload batch
+     *
+     * Submits the batch without blocking. Staging buffers will be
+     * cleaned up automatically when GPU completes the upload.
+     *
+     * @param chunk Chunk that was uploaded (for staging buffer tracking)
+     */
+    void submitAsyncChunkUpload(class Chunk* chunk);
 
     // ========== Deferred Deletion (Fence-Based Resource Cleanup) ==========
 
@@ -594,6 +627,17 @@ private:
 
     // Batched buffer copying
     VkCommandBuffer m_batchCommandBuffer = VK_NULL_HANDLE;
+    bool m_batchIsAsync = false;  // Track if current batch should be async
+
+    // Async upload tracking
+    struct PendingUpload {
+        VkFence fence;
+        VkCommandBuffer commandBuffer;
+        std::vector<std::pair<VkBuffer, VkDeviceMemory>> stagingBuffers;
+    };
+    std::deque<PendingUpload> m_pendingUploads;
+    std::mutex m_pendingUploadsMutex;
+    static const int MAX_PENDING_UPLOADS = 10;  // Limit concurrent uploads
 
     // Deferred deletion queue (fence-based resource cleanup)
     struct DeferredDeletion {
@@ -603,4 +647,13 @@ private:
     };
     std::deque<DeferredDeletion> m_deletionQueue;
     std::mutex m_deletionQueueMutex;
+
+private:
+    /**
+     * @brief Process pending async uploads, cleaning up completed ones
+     *
+     * Checks fences for pending uploads and cleans up staging buffers
+     * for completed uploads. Called automatically in endFrame().
+     */
+    void processAsyncUploads();
 };

@@ -303,7 +303,11 @@ bool StructureRegistry::spawnStructure(const std::string& name, World* world, co
         std::cout << "Updating " << affectedChunks.size() << " affected chunk(s)..." << std::endl;
         for (Chunk* chunk : affectedChunks) {
             chunk->generateMesh(world);
-            chunk->createVertexBuffer(renderer);
+
+            // Upload to GPU (async to prevent frame stalls)
+            renderer->beginAsyncChunkUpload();
+            chunk->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(chunk);
         }
     }
 
