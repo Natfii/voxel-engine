@@ -45,8 +45,9 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - ✅ **Documentation Consolidation** - All scattered docs merged into this handbook
 - ✅ **Lighting Propagation Batching** - Prevents 50+ sec freeze during world load (10K nodes/batch with progress reporting)
 - ✅ **Lighting Config Persistence** - lightingEnabled ConVar now persists to config.ini
+- ✅ **World Loading Lighting Fix** - Initialize lighting for loaded worlds (prevents 900-1100ms GPU stalls)
 
-**Estimated Overall Speedup:** 4-8x faster initial world generation, instant 60 FPS gameplay, no lighting freezes
+**Estimated Overall Speedup:** 4-8x faster initial world generation, instant 60 FPS gameplay, no lighting freezes or GPU stalls
 
 ## Key Features
 
@@ -534,8 +535,9 @@ textures:
 **Initialization (World Load):**
 - **Batched Processing**: Light propagation processes nodes in batches of 10,000
 - **Progress Reporting**: Console updates show progress during initial world lighting
-- **Typical Load Time**: 3-5 seconds for 1,331 spawn chunks (11×11×11 cube)
+- **Typical Load Time**: 3-5 seconds for spawn area lighting initialization
 - **Queue Size**: ~300,000-600,000 light nodes for initial propagation
+- **Critical Fix Applied**: Both new AND loaded worlds initialize lighting (prevents GPU stalls)
 
 **Runtime Updates (During Gameplay):**
 - **Frame-Rate Safe**: Incremental updates prevent frame stalls
@@ -567,7 +569,14 @@ textures:
   - Only blocks + metadata saved (`Chunk::save()` at `src/chunk.cpp:1840-1858`)
   - Lighting recalculated when loading chunks evicted from RAM cache
   - World load requires full lighting initialization (3-5 seconds for spawn area)
+  - **Fixed**: Lighting now initializes during world load (prevents GPU stall bug)
 - **Future Optimization**: Serialize lighting data to disk to eliminate recalculation on world load
+
+**Historical Issue (FIXED in 2025-11-21):**
+- ~~Loaded worlds skipped lighting initialization entirely~~
+- ~~Caused 900-1100ms GPU stalls when chunks marked dirty during gameplay~~
+- ~~`beginFrame()` blocked waiting for mass mesh regeneration uploads~~
+- **Resolution**: Added lighting init for loaded worlds (`src/main.cpp:431-458`)
 
 **BFS Propagation:**
 - Light spreads horizontally over multiple frames during gameplay
