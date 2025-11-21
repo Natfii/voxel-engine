@@ -313,6 +313,11 @@ int main() {
                 // Only runs when starting a new game or loading a world
                 std::cout << "Initializing game..." << std::endl;
 
+            // CRITICAL FIX: Reset loading screen flag for subsequent world loads
+            // Without this, the loading screen won't show on second+ world generation
+            loadingComplete = false;
+            loadingProgress = 0.0f;
+
             // Disable cursor for gameplay
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
