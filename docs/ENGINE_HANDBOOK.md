@@ -59,8 +59,10 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - ✅ **Transparent Chunk Sort Caching** - Only re-sort when camera moves >5 blocks (reduces O(n log n) overhead)
 - ✅ **Player Collision Fix** - Re-check ground state after movement to eliminate bobbing bug
 - ✅ **Hollow Mountains Fix** - Biome-aware cave suppression for solid mountainous terrain (50-95% cave reduction at high elevations)
+- ✅ **FPS Counter Safety** - Guard against NaN/infinite/negative deltaTime values to prevent crashes
+- ✅ **Raycast Safety** - Guard against zero-length direction vectors to prevent NaN propagation
 
-**Estimated Overall Speedup:** 4-8x faster initial world generation, 6-16 seconds faster world loads, 20-30% faster coordinate conversions, 3x faster startup, 3-5x faster water simulation, stable ground collision, solid mountains, instant 60 FPS gameplay, no lighting freezes or GPU stalls
+**Estimated Overall Speedup:** 4-8x faster initial world generation, 6-16 seconds faster world loads, 20-30% faster coordinate conversions, 3x faster startup, 3-5x faster water simulation, stable ground collision, solid mountains, robust error handling, instant 60 FPS gameplay, no lighting freezes or GPU stalls
 
 ## Key Features
 

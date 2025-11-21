@@ -14,6 +14,13 @@ RaycastHit Raycast::castRay(World* world, const glm::vec3& origin, const glm::ve
         return result;
     }
 
+    // BUG FIX: Guard against zero-length direction vector
+    // Prevents NaN from normalize() which would cause raycast to fail
+    float dirLength = glm::length(direction);
+    if (dirLength < 0.0001f) {
+        return result;  // Invalid direction, return no hit
+    }
+
     // Normalize direction
     glm::vec3 dir = glm::normalize(direction);
 
