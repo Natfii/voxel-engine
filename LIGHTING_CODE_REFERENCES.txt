@@ -1,0 +1,190 @@
+================================================================================
+LIGHTING SYSTEM MEMORY - CODE LOCATION REFERENCE
+================================================================================
+
+1. BLOCKLIGHT STRUCTURE & STORAGE
+────────────────────────────────────────────────────────────────────────────
+File: include/block_light.h
+  - Line 6-19: BlockLight struct definition
+  - Line 16-18: Bit-packed uint8_t (4-bit skyLight + 4-bit blockLight)
+  - Line 39: Static assert sizeof(BlockLight) == 1
+  
+File: include/chunk.h
+  - Line 533: m_lightData array declaration
+  - Line 16: #include "block_light.h"
+  
+File: src/chunk.cpp
+  - Line 82: m_lightData.fill(BlockLight(0, 0)) initialization
+  - Line 124: m_lightData.fill() in reset() method
+
+Access Methods (chunk.h):
+  - Line 346-356: getSkyLight() / getSkyLight() implementations
+  - Line 414: setBlockLight() declaration
+  - Line 366: setSkyLight() declaration
+
+2. INTERPOLATED LIGHTING STORAGE
+────────────────────────────────────────────────────────────────────────────
+File: include/chunk.h
+  - Line 537-541: InterpolatedLight struct definition
+  - Line 542: m_interpolatedLightData array declaration (256 KB/chunk)
+  
+File: src/chunk.cpp
+  - Line 85: m_interpolatedLightData.fill(InterpolatedLight()) initialization
+  - Line 125: m_interpolatedLightData.fill() in reset() method
+  - Line 1524-1532: getInterpolatedSkyLight/getInterpolatedBlockLight
+  - Line 1541-1566: updateInterpolatedLighting() implementation
+  - Line 1541-1566: initializeInterpolatedLighting() implementation
+
+3. LIGHTING SYSTEM QUEUES
+────────────────────────────────────────────────────────────────────────────
+File: include/lighting_system.h
+  - Line 245-253: LightNode struct definition (16 bytes)
+  - Line 325: m_lightAddQueue declaration (std::deque<LightNode>)
+  - Line 326: m_lightRemoveQueue declaration (std::deque<LightNode>)
+  - Line 330-331: Constants MAX_LIGHT_ADDS_PER_FRAME = 500, MAX_LIGHT_REMOVES_PER_FRAME = 300
+
+File: src/lighting_system.cpp
+  Queue additions:
+  - Line 109: addLightSource() emplaces to m_lightAddQueue
+  - Line 121: addSkyLightSource() emplaces to m_lightAddQueue
+  - Line 134: removeLightSource() emplaces to m_lightRemoveQueue
+  - Line 158: onBlockChanged() emplaces when breaking transparent block
+  - Line 169, 173: onBlockChanged() emplaces on opaque block placement
+  - Line 399, 406: generateSunlightColumn() emplaces during initialization
+  - Line 502: propagateLightStep() emplaces neighbors
+  - Line 564, 568: removeLightStep() emplaces in local deques
+  
+  Queue processing:
+  - Line 71-79: update() processes m_lightAddQueue (max 500 per frame)
+  - Line 83-88: update() processes m_lightRemoveQueue (max 300 per frame)
+  - Line 74-76: m_lightAddQueue.pop_front() in update loop
+  - Line 85-87: m_lightRemoveQueue.pop_front() in update loop
+
+4. DIRTY CHUNKS TRACKING
+────────────────────────────────────────────────────────────────────────────
+File: include/lighting_system.h
+  - Line 327: m_dirtyChunks declaration (std::unordered_set<Chunk*>)
+
+File: src/lighting_system.cpp
+  Insertions:
+  - Line 239: setSkyLight() inserts chunk into m_dirtyChunks
+  - Line 264: setBlockLight() inserts chunk into m_dirtyChunks
+  - Line 298, 304, 312, 318, 326, 332: markNeighborChunksDirty() inserts neighbors
+  - Line 612: recalculateViewportLighting() inserts visible chunks
+  
+  Removals:
+  - Line 146: notifyChunkUnload() erases chunk from m_dirtyChunks
+  - Line 359: regenerateDirtyChunks() erases after regeneration
+  - Line 364: regenerateDirtyChunks() erases on exception
+  
+  Processing:
+  - Line 91-92: update() calls regenerateDirtyChunks() if set not empty
+
+5. LIGHT PROPAGATION ALGORITHMS
+────────────────────────────────────────────────────────────────────────────
+File: src/lighting_system.cpp
+
+BFS Light Propagation (Addition):
+  - Line 424-505: propagateLightStep() implementation
+  - Line 438: Gets current light level at node
+  - Line 441: Sanity check against node's light level
+  - Line 446: Don't propagate if light too dim
+  - Line 451-458: Define 6 neighbors
+  - Line 460-504: Loop through neighbors, update if brighter
+  - Line 494: Only update if newLight > neighborLight
+  - Line 502: Queue neighbor for further propagation
+  
+Two-Queue Light Removal:
+  - Line 509-579: removeLightStep() implementation
+  - Line 523-524: Creates two local deques (stack allocation)
+  - Line 527: Initialize removal queue with source node
+  - Line 530-571: Phase 1 - Collect all affected blocks
+  - Line 538, 540: Clear light at position (setSkyLight/setBlockLight)
+  - Line 543-571: Check neighbors, queue for removal if affected
+  - Line 562: If light < oldLight, propagate darkness
+  - Line 565: If light >= oldLight, queue for re-propagation
+  - Line 575-578: Phase 2 - Re-add remaining light sources to main queue
+
+6. CHUNK UNLOAD & CLEANUP
+────────────────────────────────────────────────────────────────────────────
+File: include/lighting_system.h
+  - Line 160: notifyChunkUnload() declaration
+
+File: src/lighting_system.cpp
+  - Line 140-147: notifyChunkUnload() implementation
+  - Line 146: m_dirtyChunks.erase(chunk)
+  
+File: src/world.cpp
+  - Line 1150-1154: notifyChunkUnload() called before chunk destruction
+  - Line 1153: CRITICAL call to notifyChunkUnload()
+  - Line 1157-1159: Destroy Vulkan buffers
+  - Line 1163-1170: Handle empty chunks (don't cache, return to pool)
+  - Line 1172-1174: Move non-empty chunk to cache
+
+File: include/chunk.h
+  - Line 101-103: Chunk destructor (Vulkan buffers must be destroyed first)
+  - Line 531-533: Block storage and metadata
+  
+File: src/chunk.cpp
+  - Line 51-99: Chunk constructor initializes lighting arrays
+  - Line 82: m_lightData.fill(BlockLight(0, 0))
+  - Line 85: m_interpolatedLightData.fill(InterpolatedLight())
+  - Line 101-103: Destructor (no explicit cleanup needed for std::array)
+
+7. MEMORY ALLOCATION HOTSPOTS
+────────────────────────────────────────────────────────────────────────────
+File: src/lighting_system.cpp
+
+Viewport-based allocation:
+  - Line 583-600: getVisibleChunks() returns std::vector<Chunk*>
+  - Line 584: Stack allocated vector
+  - Line 587-596: Iterates all chunks, tests frustum intersection
+  - Line 595: Pushes visible chunks to vector
+
+Local deque allocation in removal:
+  - Line 523-524: removalQueue and addBackQueue stack allocated
+  - Line 527: Initial node pushed
+  - Line 530-571: Both queues can grow based on affected blocks
+  - Worst case: Removing max strength light (15) = ~14,137 blocks
+  - Memory: 14,137 × 16 bytes = 226 KB
+
+Chunk data initialization:
+  - Line 82: m_lightData.fill() - single operation
+  - Line 85: m_interpolatedLightData.fill() - single operation
+
+8. EXCEPTION SAFETY
+────────────────────────────────────────────────────────────────────────────
+File: src/lighting_system.cpp
+  - Line 286: try-catch in isTransparent() for BlockRegistry access
+  - Line 361-365: try-catch in regenerateDirtyChunks() mesh regeneration
+
+Exception safety assessment:
+  - Line 523-524: Local deques auto-cleanup on exception (RAII)
+  - Line 359, 364: Both erase chunk even on exception
+  - Line 16: Constructor throws if world pointer null
+
+9. MEMORY LIMITS & CONSTANTS
+────────────────────────────────────────────────────────────────────────────
+File: include/lighting_system.h
+  - Line 330: MAX_LIGHT_ADDS_PER_FRAME = 500
+  - Line 331: MAX_LIGHT_REMOVES_PER_FRAME = 300
+  - Line 332: MAX_MESH_REGEN_PER_FRAME = 10
+  
+NOTE: No explicit MAX_QUEUE_SIZE limit found in code
+
+File: include/chunk.h
+  - Line 145-147: WIDTH = 32, HEIGHT = 32, DEPTH = 32
+  - Line 233: No lighting size constants (assumed 32 KB)
+
+10. RELATED CLEANUP OPERATIONS
+────────────────────────────────────────────────────────────────────────────
+File: src/world.cpp
+  - Line 1143: m_pendingDecorations.erase(chunkPtr)
+  - Line 1153: m_lightingSystem->notifyChunkUnload(chunkPtr) CRITICAL
+  - Line 1157-1159: chunkPtr->destroyBuffers(renderer)
+  - Line 1163-1170: Handle empty chunks
+  - Line 1166-1167: releaseChunk() + m_chunkMap.erase()
+  - Line 1168: m_dirtyChunks.erase(coord) - in world, not lighting system
+  - Line 1173-1174: Move to cache, erase from map
+
+================================================================================

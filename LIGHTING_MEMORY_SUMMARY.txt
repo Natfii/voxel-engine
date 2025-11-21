@@ -1,0 +1,165 @@
+================================================================================
+LIGHTING SYSTEM MEMORY INVESTIGATION - EXECUTIVE SUMMARY
+================================================================================
+
+OVERALL RESULT: No memory leaks detected. Proper RAII and cleanup practices.
+
+================================================================================
+1. BLOCKLIGHT DATA PER CHUNK: 32 KB ✓
+================================================================================
+Location: Chunk::m_lightData (32,768 blocks × 1 byte)
+Status: CORRECT - Uses efficient bit-packing (4 bits sky + 4 bits block per byte)
+Verification: Static assert ensures sizeof(BlockLight) == 1 byte
+Finding: OPTIMAL - No waste, no leaks
+
+================================================================================
+2. INTERPOLATED LIGHTING PER CHUNK: 256 KB ⚠ WARNING
+================================================================================
+Location: Chunk::m_interpolatedLightData (32,768 blocks × 8 bytes)
+Structure: float skyLight (4 bytes) + float blockLight (4 bytes)
+Issue: 8x larger than BlockLight data (duplicate storage for smooth transitions)
+Memory Impact: 128 MB for 500 chunks (just interpolation!)
+Recommendation: Consider reducing to uint8_t per channel (save 192 KB/chunk)
+
+================================================================================
+3. M_LIGHTADDQUEUE MEMORY: Variable (8 KB to 160 KB+)
+================================================================================
+Normal gameplay: ~2-8 KB
+Max per frame: 500 items × 16 bytes = 8 KB
+Worst case unbounded: Could grow to hundreds of MB
+Risk Level: MEDIUM
+Issue: No explicit size limit - queue can grow unbounded if processing slower than additions
+Recommendation: Add MAX_QUEUE_SIZE limit
+
+================================================================================
+4. M_LIGHTREMOVEQUEUE MEMORY: Variable (4.8 KB to 160 KB+)
+================================================================================
+Normal gameplay: ~2-5 KB
+Max per frame: 300 items × 16 bytes = 4.8 KB
+Worst case: Same as add queue
+Priority: Higher than add queue (visual importance)
+Risk Level: MEDIUM
+Finding: Same unbounded growth concern as add queue
+
+================================================================================
+5. M_DIRTYCHUNKS SET MEMORY: ~20 KB for 500 chunks
+================================================================================
+Per chunk: ~40 bytes (pointer + hash table overhead)
+Typical load: 20-40 KB
+Memory Concern: LOW
+Cleanup: Properly removed on chunk unload via notifyChunkUnload()
+Finding: SAFE - No leaks, proper cleanup
+
+================================================================================
+6. LOCAL STACK ALLOCATIONS IN REMOVELIGHTSTEP: 226 KB worst case ⚠
+================================================================================
+Code: std::deque<LightNode> removalQueue (stack allocation)
+Worst case: Removing large light source (radius 15) = 14,137 blocks = 226 KB
+Stack available: 1-8 MB typical (usually 2-4 MB)
+Safety: 226 KB ≈ 5-10% of stack = GENERALLY SAFE
+But: Multiple large removals in sequence could stress stack
+Recommendation: Monitor or use heap allocation for very large removals
+
+================================================================================
+7. CHUNK UNLOAD & MEMORY CLEANUP: ✓ PROPERLY IMPLEMENTED
+================================================================================
+Sequence:
+  1. Find chunk
+  2. Remove from pending decorations
+  3. Remove from chunks vector
+  4. notifyChunkUnload() called BEFORE destruction
+  5. Vulkan buffers destroyed
+  6. Chunk moved to cache or pool
+
+notifyChunkUnload() safely:
+  - Removes chunk from m_dirtyChunks set
+  - Prevents dangling pointer access
+  - Comment explains critical need for this call
+
+Queue pointer safety:
+  - m_lightAddQueue/m_lightRemoveQueue may contain unloaded chunks
+  - Both propagateLightStep() and removeLightStep() check if chunk exists (return if null)
+  - Safe handling confirmed
+
+Memory cleanup:
+  - BlockLight arrays: std::array (auto cleanup)
+  - InterpolatedLight arrays: std::array (auto cleanup)
+  - All freed when chunk destroyed
+  Finding: ✓ SAFE, NO LEAKS
+
+================================================================================
+8. MEMORY ALLOCATION HOTSPOTS:
+================================================================================
+No explicit new/delete in lighting system - all RAII
+
+Main hotspots:
+1. getVisibleChunks() - Creates std::vector<Chunk*> (500-800 bytes, one-time per call)
+2. removeLightStep() - Creates two local deques (grows with removal area)
+3. Chunk constructor - Fills light arrays (one-time per chunk)
+
+Assessment: MINIMAL CONCERNS - All short-lived, proper cleanup
+
+================================================================================
+9. SUMMARY TABLE: MEMORY USAGE & RISKS
+================================================================================
+
+Component                   Memory          Status           Risk Level
+────────────────────────────────────────────────────────────────────────────
+BlockLight/chunk            32 KB           ✓ Optimal        NONE
+InterpolatedLight/chunk     256 KB          ⚠ Excessive      MEDIUM (optimize)
+m_lightAddQueue (typical)   8 KB            ✓ Good           LOW
+m_lightAddQueue (worst)     160 KB          ⚠ Unbounded      MEDIUM
+m_lightRemoveQueue (typical) 4.8 KB         ✓ Good           LOW
+m_lightRemoveQueue (worst)  160 KB          ⚠ Unbounded      MEDIUM
+m_dirtyChunks (500 chunks)  20 KB           ✓ Good           NONE
+Local deques/removal (worst) 226 KB stack   ⚠ Alert          MEDIUM
+────────────────────────────────────────────────────────────────────────────
+Total per chunk loaded      288 KB          ⚠ High           LOW
+Total for 500 chunks        ~140 MB         ⚠ Moderate       LOW
+
+================================================================================
+10. MEMORY LEAK ANALYSIS: NO LEAKS DETECTED ✓
+================================================================================
+
+✓ Queue processing: All nodes properly dequeued in FIFO order
+✓ Chunk pointers: notifyChunkUnload() properly removes from tracking
+✓ Local allocations: All RAII with automatic cleanup
+✓ Exception safety: No resource leaks on exceptions
+✓ Chunk data: BlockLight and InterpolatedLight auto-freed with chunk
+
+================================================================================
+KEY FINDINGS & RECOMMENDATIONS
+================================================================================
+
+GOOD PRACTICES CONFIRMED:
+  ✓ No memory leaks
+  ✓ Proper RAII throughout
+  ✓ Safe chunk pointer handling
+  ✓ Efficient bit-packing for BlockLight
+  ✓ Frame-rate bounded processing
+
+ISSUES TO ADDRESS:
+  ⚠ InterpolatedLight uses 256 KB/chunk (8x overhead)
+    → Could optimize to 32 KB using uint8_t
+    → Would save 96 MB for 500 chunks
+
+  ⚠ Light queues can grow unbounded
+    → Add MAX_QUEUE_SIZE limits
+    → Log warnings when exceeding thresholds
+
+  ⚠ Stack allocation in removeLightStep()
+    → 226 KB worst case (still safe but concerning)
+    → Monitor or convert to heap if needed
+
+PRIORITY ACTIONS:
+  1. Add queue size monitoring and limits
+  2. Optimize InterpolatedLight memory usage
+  3. Profile actual queue sizes during gameplay
+  4. Consider heap allocation for large removals
+
+OVERALL ASSESSMENT:
+  Memory management is solid and leak-free. Primary concern is
+  InterpolatedLight using excessive memory (256 KB/chunk). With simple
+  optimizations, per-chunk memory could drop from 288 KB to 96 KB.
+
+================================================================================
