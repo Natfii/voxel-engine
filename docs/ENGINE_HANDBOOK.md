@@ -43,8 +43,10 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - ✅ **GPU Warm-Up Phase** - Waits for GPU during load screen for instant 60 FPS gameplay
 - ✅ **World Loading Fix** - Properly discovers chunk files from disk, fixes lighting on load
 - ✅ **Documentation Consolidation** - All scattered docs merged into this handbook
+- ✅ **Lighting Propagation Batching** - Prevents 50+ sec freeze during world load (10K nodes/batch with progress reporting)
+- ✅ **Lighting Config Persistence** - lightingEnabled ConVar now persists to config.ini
 
-**Estimated Overall Speedup:** 4-8x faster initial world generation, instant 60 FPS gameplay
+**Estimated Overall Speedup:** 4-8x faster initial world generation, instant 60 FPS gameplay, no lighting freezes
 
 ## Key Features
 
@@ -526,6 +528,45 @@ textures:
 - Interpolate light values at vertices
 - Average neighboring block light levels
 - Creates smooth gradients
+
+### Performance Characteristics
+
+**Initialization (World Load):**
+- **Batched Processing**: Light propagation processes nodes in batches of 10,000
+- **Progress Reporting**: Console updates show progress during initial world lighting
+- **Typical Load Time**: 3-5 seconds for 1,331 spawn chunks (11×11×11 cube)
+- **Queue Size**: ~300,000-600,000 light nodes for initial propagation
+
+**Runtime Updates (During Gameplay):**
+- **Frame-Rate Safe**: Incremental updates prevent frame stalls
+  - Max 500 light additions per frame
+  - Max 300 light removals per frame (higher priority)
+  - Max 10 chunk mesh regenerations per frame
+- **Sub-millisecond**: Typical update cost <1ms per frame
+- **Two-Queue Algorithm**: Handles light source removal properly
+
+**Configuration:**
+- Console command: `lighting` (toggles on/off)
+- Persisted to `config.ini` (enabled by default)
+- Can disable lighting for performance testing
+- Changes take effect immediately (chunks regenerate on movement)
+
+**Memory Usage:**
+- 32 KB per chunk (BlockLight data: 4-bit sky + 4-bit block per voxel)
+- Light propagation queues: 8-160 KB depending on activity
+- Dirty chunk tracking: ~20 KB for 500 chunks
+
+### Known Limitations
+
+**Lighting Data Not Persisted:**
+- Currently, lighting is NOT saved to disk with chunks
+- All lighting recalculated from scratch on world load
+- Future optimization: Serialize lighting data to reduce load times
+
+**BFS Propagation:**
+- Light spreads horizontally over multiple frames during gameplay
+- Newly generated chunks may show lighting "pop-in" for 2-15 frames
+- Spawn chunks have full lighting before gameplay begins
 
 ## 3.4 Sky & Time System
 
