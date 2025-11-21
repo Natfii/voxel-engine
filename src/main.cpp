@@ -427,6 +427,35 @@ int main() {
                 }
 
                 std::cout << "Regenerated " << chunks.size() << " chunk meshes" << std::endl;
+
+                // CRITICAL FIX: Initialize lighting for loaded chunks
+                // Without this, chunks have zero lighting and will be marked dirty during gameplay
+                // causing massive GPU stalls (900-1100ms per frame)
+                loadingProgress = 0.60f;
+                loadingMessage = "Initializing lighting";
+                renderLoadingScreen();
+                std::cout << "Initializing lighting for loaded chunks..." << std::endl;
+
+                // Initialize chunk lighting (vertical sunlight pass)
+                for (Chunk* chunk : chunks) {
+                    world.initializeChunkLighting(chunk);
+                }
+
+                // Complete light propagation (horizontal BFS)
+                loadingProgress = 0.70f;
+                loadingMessage = "Propagating lighting";
+                renderLoadingScreen();
+                std::cout << "Completing light propagation..." << std::endl;
+                world.getLightingSystem()->initializeWorldLighting();
+                std::cout << "Light propagation complete!" << std::endl;
+
+                // Regenerate meshes with proper lighting
+                loadingProgress = 0.75f;
+                loadingMessage = "Updating lighting on meshes";
+                renderLoadingScreen();
+                std::cout << "Regenerating meshes with lighting..." << std::endl;
+                world.getLightingSystem()->regenerateAllDirtyChunks(10000, nullptr);
+                std::cout << "Mesh regeneration complete!" << std::endl;
             }
         }
 
