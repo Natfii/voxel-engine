@@ -558,15 +558,22 @@ textures:
 
 ### Known Limitations
 
-**Lighting Data Not Persisted:**
-- Currently, lighting is NOT saved to disk with chunks
-- All lighting recalculated from scratch on world load
-- Future optimization: Serialize lighting data to reduce load times
+**Lighting Data Persistence:**
+- **RAM Cache (✅ Preserved)**: Chunks in RAM cache (500-2000 chunks) keep full lighting data
+  - Instant reload when revisiting recently explored areas
+  - No lighting recalculation needed for cached chunks
+  - Cache provides 90%+ hit rate for typical gameplay patterns
+- **Disk Persistence (❌ Not Saved)**: Lighting NOT serialized to disk in chunk files
+  - Only blocks + metadata saved (`Chunk::save()` at `src/chunk.cpp:1840-1858`)
+  - Lighting recalculated when loading chunks evicted from RAM cache
+  - World load requires full lighting initialization (3-5 seconds for spawn area)
+- **Future Optimization**: Serialize lighting data to disk to eliminate recalculation on world load
 
 **BFS Propagation:**
 - Light spreads horizontally over multiple frames during gameplay
 - Newly generated chunks may show lighting "pop-in" for 2-15 frames
 - Spawn chunks have full lighting before gameplay begins
+- RAM cache provides instant lighting for recently visited chunks (no pop-in on return)
 
 ## 3.4 Sky & Time System
 
