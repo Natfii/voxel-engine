@@ -699,4 +699,7 @@ private:
 
     // WATER PERFORMANCE FIX: Track water blocks that need flow updates (dirty list)
     std::unordered_set<glm::ivec3> m_dirtyWaterBlocks;  ///< Water blocks that changed and need flow update
+
+    // RENDERING OPTIMIZATION: Cache transparent chunk sort position to avoid re-sorting every frame
+    glm::vec3 m_lastSortPosition = glm::vec3(0.0f);  ///< Last camera position used for sorting transparent chunks
 };

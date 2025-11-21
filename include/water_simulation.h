@@ -2,6 +2,7 @@
 
 #include <glm/glm.hpp>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <set>
 #include <queue>
@@ -58,7 +59,7 @@ public:
 
     // Large body of water (ocean/lake)
     struct WaterBody {
-        std::set<glm::ivec3, Ivec3Compare> cells;
+        std::unordered_set<glm::ivec3> cells;  // OPTIMIZATION: O(1) lookups vs O(log n)
         bool isInfinite;        // True for oceans/lakes (don't evaporate)
         uint8_t minLevel;       // Minimum water level to maintain
 
@@ -84,13 +85,13 @@ public:
     bool hasWaterSource(const glm::ivec3& position) const;
 
     // Water bodies
-    void markAsWaterBody(const std::set<glm::ivec3, Ivec3Compare>& cells, bool infinite = true);
+    void markAsWaterBody(const std::unordered_set<glm::ivec3>& cells, bool infinite = true);
 
     // Query active chunks
-    const std::set<glm::ivec3, Ivec3Compare>& getActiveWaterChunks() const { return m_activeChunks; }
+    const std::unordered_set<glm::ivec3>& getActiveWaterChunks() const { return m_activeChunks; }
 
     // Query and manage dirty chunks (chunks needing mesh regeneration)
-    const std::set<glm::ivec3, Ivec3Compare>& getDirtyChunks() const { return m_dirtyChunks; }
+    const std::unordered_set<glm::ivec3>& getDirtyChunks() const { return m_dirtyChunks; }
     void clearDirtyChunks() { m_dirtyChunks.clear(); }
     void markChunkDirty(const glm::ivec3& chunkPos) { m_dirtyChunks.insert(chunkPos); }
 
@@ -110,13 +111,14 @@ private:
     std::vector<WaterBody> m_waterBodies;
 
     // Chunks with active water (for optimization)
-    std::set<glm::ivec3, Ivec3Compare> m_activeChunks;
+    // OPTIMIZATION: unordered_set for O(1) lookups instead of O(log n)
+    std::unordered_set<glm::ivec3> m_activeChunks;
 
     // Dirty tracking - only update cells that have changed
-    std::set<glm::ivec3, Ivec3Compare> m_dirtyCells;
+    std::unordered_set<glm::ivec3> m_dirtyCells;
 
     // Dirty chunks - chunks that need mesh regeneration due to water changes
-    std::set<glm::ivec3, Ivec3Compare> m_dirtyChunks;
+    std::unordered_set<glm::ivec3> m_dirtyChunks;
 
     // Configuration
     bool m_enableEvaporation;

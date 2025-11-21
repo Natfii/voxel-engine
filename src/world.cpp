@@ -887,10 +887,14 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
                                &descriptorSet, 0, nullptr);
 
         // Sort transparent chunks back-to-front (farthest first)
-        std::sort(transparentChunks.begin(), transparentChunks.end(),
-                  [](const auto& a, const auto& b) {
-                      return a.second > b.second;  // Greater distance first
-                  });
+        // OPTIMIZATION: Only re-sort if camera moved significantly (saves O(n log n) every frame)
+        if (glm::distance(m_lastSortPosition, cameraPos) > 5.0f) {
+            std::sort(transparentChunks.begin(), transparentChunks.end(),
+                      [](const auto& a, const auto& b) {
+                          return a.second > b.second;  // Greater distance first
+                      });
+            m_lastSortPosition = cameraPos;
+        }
 
         // Render transparent chunks in sorted order
         for (const auto& pair : transparentChunks) {
