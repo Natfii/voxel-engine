@@ -54,12 +54,13 @@ void LightingSystem::initializeWorldLighting() {
     }
 
     // Process all queued light propagation with batching to prevent freezing
-    // PERFORMANCE FIX: Process in batches of 10,000 nodes with progress reporting
+    // PERFORMANCE FIX: Process in batches with minimal progress reporting
     // Prevents 50+ second freeze during world load
     std::cout << "Processing " << m_lightAddQueue.size() << " light propagation nodes..." << std::endl;
     int processedCount = 0;
     int totalNodes = static_cast<int>(m_lightAddQueue.size());
     const int BATCH_SIZE = 10000;  // Process 10K nodes per batch
+    const int REPORT_INTERVAL = 100000;  // Report every 100K nodes (not 10K) to reduce console spam
 
     while (!m_lightAddQueue.empty()) {
         // Process one batch
@@ -72,11 +73,12 @@ void LightingSystem::initializeWorldLighting() {
             batchCount++;
         }
 
-        // Report progress every batch (reduces console spam)
-        if (!m_lightAddQueue.empty()) {
+        // PERFORMANCE FIX: Report progress every 100K nodes instead of every 10K
+        // Reduces console spam from 30-60 outputs to 3-6 outputs
+        // Each std::cout with endl flushes buffer (kernel syscall) - expensive!
+        if (!m_lightAddQueue.empty() && (processedCount % REPORT_INTERVAL == 0)) {
             float progress = (static_cast<float>(processedCount) / static_cast<float>(totalNodes + processedCount)) * 100.0f;
-            std::cout << "  Lighting progress: " << processedCount << " nodes processed, "
-                     << m_lightAddQueue.size() << " remaining ("
+            std::cout << "  Lighting progress: " << processedCount << " nodes processed ("
                      << static_cast<int>(progress) << "%)" << std::endl;
         }
     }

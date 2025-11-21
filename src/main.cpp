@@ -390,15 +390,37 @@ int main() {
                 seed = world.getSeed();
                 Chunk::initNoise(seed);  // Re-init with correct seed
 
-                // Generate meshes for loaded chunks
-                std::cout << "Generating meshes for loaded chunks..." << std::endl;
+                auto& chunks = world.getChunks();
+                std::cout << "Loaded " << chunks.size() << " chunks from disk" << std::endl;
+
+                // PERFORMANCE FIX: Initialize lighting BEFORE generating meshes
+                // This eliminates wasted mesh generation with incorrect/zero lighting
+                // Old flow: mesh → lighting → mesh regeneration (DOUBLE WORK)
+                // New flow: lighting → mesh (SINGLE PASS)
+
                 loadingProgress = 0.50f;
+                loadingMessage = "Initializing lighting";
+                renderLoadingScreen();
+                std::cout << "Initializing lighting for loaded chunks..." << std::endl;
+
+                // Initialize chunk lighting (vertical sunlight pass)
+                for (Chunk* chunk : chunks) {
+                    world.initializeChunkLighting(chunk);
+                }
+
+                // Complete light propagation (horizontal BFS)
+                loadingProgress = 0.60f;
+                loadingMessage = "Propagating lighting";
+                renderLoadingScreen();
+                std::cout << "Completing light propagation..." << std::endl;
+                world.getLightingSystem()->initializeWorldLighting();
+                std::cout << "Light propagation complete!" << std::endl;
+
+                // NOW generate meshes WITH correct lighting (single pass)
+                loadingProgress = 0.70f;
                 loadingMessage = "Building chunk meshes";
                 renderLoadingScreen();
-
-                // Regenerate all chunk meshes (blocks loaded from disk, but meshes need rebuilding)
-                auto& chunks = world.getChunks();
-                std::cout << "Regenerating meshes for " << chunks.size() << " loaded chunks..." << std::endl;
+                std::cout << "Generating meshes with lighting for " << chunks.size() << " chunks..." << std::endl;
 
                 // Parallel mesh generation for better performance
                 unsigned int numThreads = std::thread::hardware_concurrency();
@@ -426,36 +448,7 @@ int main() {
                     thread.join();
                 }
 
-                std::cout << "Regenerated " << chunks.size() << " chunk meshes" << std::endl;
-
-                // CRITICAL FIX: Initialize lighting for loaded chunks
-                // Without this, chunks have zero lighting and will be marked dirty during gameplay
-                // causing massive GPU stalls (900-1100ms per frame)
-                loadingProgress = 0.60f;
-                loadingMessage = "Initializing lighting";
-                renderLoadingScreen();
-                std::cout << "Initializing lighting for loaded chunks..." << std::endl;
-
-                // Initialize chunk lighting (vertical sunlight pass)
-                for (Chunk* chunk : chunks) {
-                    world.initializeChunkLighting(chunk);
-                }
-
-                // Complete light propagation (horizontal BFS)
-                loadingProgress = 0.70f;
-                loadingMessage = "Propagating lighting";
-                renderLoadingScreen();
-                std::cout << "Completing light propagation..." << std::endl;
-                world.getLightingSystem()->initializeWorldLighting();
-                std::cout << "Light propagation complete!" << std::endl;
-
-                // Regenerate meshes with proper lighting
-                loadingProgress = 0.75f;
-                loadingMessage = "Updating lighting on meshes";
-                renderLoadingScreen();
-                std::cout << "Regenerating meshes with lighting..." << std::endl;
-                world.getLightingSystem()->regenerateAllDirtyChunks(10000, nullptr);
-                std::cout << "Mesh regeneration complete!" << std::endl;
+                std::cout << "Generated " << chunks.size() << " chunk meshes with correct lighting!" << std::endl;
             }
         }
 

@@ -326,10 +326,10 @@ private:
     std::deque<LightNode> m_lightRemoveQueue;  ///< Queue for light removals (two-queue algorithm)
     std::unordered_set<Chunk*> m_dirtyChunks;  ///< Chunks that need mesh regeneration
 
-    // Performance tuning constants
-    static constexpr int MAX_LIGHT_ADDS_PER_FRAME = 500;    ///< Max additions per frame
-    static constexpr int MAX_LIGHT_REMOVES_PER_FRAME = 300; ///< Max removals per frame
-    static constexpr int MAX_MESH_REGEN_PER_FRAME = 10;     ///< Max mesh regenerations per frame
+    // Performance tuning constants (optimized 2025-11-21)
+    static constexpr int MAX_LIGHT_ADDS_PER_FRAME = 350;    ///< Max additions per frame (was 500, reduced to prevent spikes)
+    static constexpr int MAX_LIGHT_REMOVES_PER_FRAME = 300; ///< Max removals per frame (kept as-is, good priority)
+    static constexpr int MAX_MESH_REGEN_PER_FRAME = 15;     ///< Max mesh regenerations per frame (was 10, increased for faster updates)
 };
 
 #endif // LIGHTING_SYSTEM_H
