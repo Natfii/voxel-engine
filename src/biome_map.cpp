@@ -303,6 +303,27 @@ float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ, int t
     // FastNoiseLite is thread-safe for reads - no mutex needed
     // NOTE: terrainHeight passed as parameter to avoid redundant calculation (was called 32x per column!)
 
+    // MOUNTAIN FIX: Check biome to suppress caves in mountains
+    // Mountains should be mostly solid, especially at high elevations
+    const Biome* biome = getBiomeAt(worldX, worldZ);
+    float biomeCaveSuppression = 0.0f;  // 0.0 = normal caves, 1.0 = no caves
+
+    if (biome && biome->height_multiplier > 1.5f) {
+        // This is a mountainous biome - reduce caves significantly
+        // Higher elevations have even fewer caves (mountains are solid rock)
+        float elevationAboveBase = worldY - 64.0f;  // Base elevation where mountains start
+        if (elevationAboveBase > 0.0f) {
+            // Suppress caves more as we go higher up the mountain
+            // At elevation +0: 50% cave suppression
+            // At elevation +50: 85% cave suppression
+            // At elevation +100+: 95% cave suppression (nearly solid)
+            biomeCaveSuppression = 0.5f + (std::min(elevationAboveBase, 100.0f) / 100.0f) * 0.45f;
+        } else {
+            // Below mountain base: still some suppression (30%) for foothills
+            biomeCaveSuppression = 0.3f;
+        }
+    }
+
     // === Primary Winding Tunnel System ===
     // Creates narrow, winding tunnels that snake through the underground
     // Uses "Perlin worms" technique: tunnels where abs(noise) is close to 0
@@ -331,6 +352,10 @@ float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ, int t
     // === Combine systems ===
     // Use minimum so tunnels and chambers connect
     float combinedDensity = std::min(std::min(tunnelDensity, tunnelDensity2), chamberDensity);
+
+    // MOUNTAIN FIX: Apply biome cave suppression
+    // Lerp towards 1.0 (solid) based on suppression amount
+    combinedDensity = combinedDensity + biomeCaveSuppression * (1.0f - combinedDensity);
 
     // === Surface Entrance System ===
     // Allow caves to reach surface in some areas, creating natural entrances
