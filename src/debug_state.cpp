@@ -1,4 +1,5 @@
 #include "debug_state.h"
+#include <cmath>
 
 DebugState::DebugState()
     : renderDebug("debug_render", "Show chunk rendering debug info", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
@@ -8,7 +9,7 @@ DebugState::DebugState()
       debugCollision("debug_collision", "Show collision detection debug output", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
       debugWorld("debug_world", "Show world/chunk debug logging", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
       wireframeMode("wireframe", "Enable wireframe rendering mode", false, FCVAR_NOTIFY),
-      lightingEnabled("lighting", "Enable/disable voxel lighting system", true, FCVAR_NOTIFY) {
+      lightingEnabled("lighting", "Enable/disable voxel lighting system", true, FCVAR_ARCHIVE | FCVAR_NOTIFY) {
 }
 
 DebugState& DebugState::instance() {
@@ -17,6 +18,12 @@ DebugState& DebugState::instance() {
 }
 
 void DebugState::updateFPS(float deltaTime) {
+    // BUG FIX: Guard against invalid deltaTime values (NaN, negative, or zero)
+    // Prevents division by zero and FPS calculation issues
+    if (deltaTime <= 0.0f || std::isnan(deltaTime) || std::isinf(deltaTime)) {
+        return;  // Skip this frame's FPS calculation
+    }
+
     frameCount++;
     fpsUpdateTimer += deltaTime;
 

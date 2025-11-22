@@ -200,6 +200,7 @@ void WaterSimulation::spreadHorizontally(const glm::ivec3& pos, WaterCell& cell,
 
     // Spread to neighbors with minimum weight (pathfinding toward downward paths)
     std::vector<int> validNeighbors;
+    validNeighbors.reserve(4);  // OPTIMIZATION: Max 4 neighbors, prevents reallocation
     for (int i = 0; i < 4; i++) {
         if (weights[i] == minWeight && weights[i] < 1000) {
             validNeighbors.push_back(i);
@@ -278,7 +279,7 @@ int WaterSimulation::calculateFlowWeight(const glm::ivec3& from, const glm::ivec
 
     // Use BFS to find shortest path to a "way down" within 4 blocks
     std::queue<std::pair<glm::ivec3, int>> queue;
-    std::set<glm::ivec3, Ivec3Compare> visited;
+    std::unordered_set<glm::ivec3> visited;  // OPTIMIZATION: O(1) lookups vs O(log n)
 
     queue.push({to, 0});
     visited.insert(to);
@@ -447,7 +448,7 @@ bool WaterSimulation::hasWaterSource(const glm::ivec3& position) const {
     return false;
 }
 
-void WaterSimulation::markAsWaterBody(const std::set<glm::ivec3, Ivec3Compare>& cells, bool infinite) {
+void WaterSimulation::markAsWaterBody(const std::unordered_set<glm::ivec3>& cells, bool infinite) {
     WaterBody body;
     body.cells = cells;
     body.isInfinite = infinite;

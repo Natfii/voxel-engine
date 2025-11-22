@@ -204,28 +204,24 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
         chunk->markLightingDirty();  // Let lighting system propagate
     }
 
-    Logger::info() << "Generating meshes for " << chunksToGenerate.size() << " spawn chunks...";
+    // PERFORMANCE FIX: Skip mesh generation here
+    // Meshes will be regenerated in main.cpp after initializeWorldLighting()
+    // completes horizontal BFS propagation. Generating meshes now with incomplete
+    // lighting is wasted work (would need regeneration anyway).
+    //
+    // NOTE: Chunks are marked dirty (line 204), so regenerateAllDirtyChunks()
+    // in main.cpp will handle final mesh generation with complete lighting.
+    //
+    // This eliminates 1,331 wasted mesh operations for typical spawn area!
 
-    // Step 4: Generate meshes for all chunks (AFTER decoration and lighting!)
-    threads.clear();
-    for (unsigned int i = 0; i < numThreads; ++i) {
-        size_t startIdx = i * chunksPerThread;
-        size_t endIdx = std::min(startIdx + chunksPerThread, chunksToGenerate.size());
+    Logger::info() << "Spawn chunks ready (meshes deferred until lighting completes)";
 
-        if (startIdx >= chunksToGenerate.size()) break;
+    // Old code removed (was generating meshes with incomplete lighting):
+    // - Parallel mesh generation threads
+    // - thread.join() loops
+    // All mesh generation now happens in main.cpp after lighting completes
 
-        threads.emplace_back([this, &chunksToGenerate, startIdx, endIdx]() {
-            for (size_t j = startIdx; j < endIdx; ++j) {
-                chunksToGenerate[j]->generateMesh(this);
-            }
-        });
-    }
-
-    for (auto& thread : threads) {
-        thread.join();
-    }
-
-    Logger::info() << "Spawn chunks generated successfully with lighting and decoration";
+    Logger::info() << "Spawn chunks generated successfully - awaiting lighting completion";
 }
 
 void World::generateWorld() {
@@ -891,10 +887,14 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
                                &descriptorSet, 0, nullptr);
 
         // Sort transparent chunks back-to-front (farthest first)
-        std::sort(transparentChunks.begin(), transparentChunks.end(),
-                  [](const auto& a, const auto& b) {
-                      return a.second > b.second;  // Greater distance first
-                  });
+        // OPTIMIZATION: Only re-sort if camera moved significantly (saves O(n log n) every frame)
+        if (glm::distance(m_lastSortPosition, cameraPos) > 5.0f) {
+            std::sort(transparentChunks.begin(), transparentChunks.end(),
+                      [](const auto& a, const auto& b) {
+                          return a.second > b.second;  // Greater distance first
+                      });
+            m_lastSortPosition = cameraPos;
+        }
 
         // Render transparent chunks in sorted order
         for (const auto& pair : transparentChunks) {

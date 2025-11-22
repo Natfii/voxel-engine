@@ -384,10 +384,42 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
         std::cout << "WARNING: Player fell through void, teleporting to safety" << std::endl;
     }
 
-    // After movement, stabilize velocity based on ground state
+    // COLLISION FIX: Re-check ground state AFTER movement to prevent bobbing
+    // The pre-movement ground check (line 288) is for jump logic only
+    // We need to check AFTER movement to know if collision resolution stopped us
+    m_onGround = false;
+    glm::vec3 feetPosAfter = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+    float halfWidthAfter = PLAYER_WIDTH / 2.0f;
+    const float checkDistanceAfter = GROUND_CHECK_DISTANCE;
+
+    // Check center + 4 corners (same as pre-movement check)
+    int centerBelow = world->getBlockAt(feetPosAfter.x, feetPosAfter.y - checkDistanceAfter, feetPosAfter.z);
+    if (centerBelow > 0) {
+        const auto& blockDef = BlockRegistry::instance().get(centerBelow);
+        if (!blockDef.isLiquid) m_onGround = true;
+    }
+
+    if (!m_onGround) {
+        int bl = world->getBlockAt(feetPosAfter.x - halfWidthAfter, feetPosAfter.y - checkDistanceAfter, feetPosAfter.z - halfWidthAfter);
+        if (bl > 0 && !BlockRegistry::instance().get(bl).isLiquid) m_onGround = true;
+    }
+    if (!m_onGround) {
+        int br = world->getBlockAt(feetPosAfter.x + halfWidthAfter, feetPosAfter.y - checkDistanceAfter, feetPosAfter.z - halfWidthAfter);
+        if (br > 0 && !BlockRegistry::instance().get(br).isLiquid) m_onGround = true;
+    }
+    if (!m_onGround) {
+        int fl = world->getBlockAt(feetPosAfter.x - halfWidthAfter, feetPosAfter.y - checkDistanceAfter, feetPosAfter.z + halfWidthAfter);
+        if (fl > 0 && !BlockRegistry::instance().get(fl).isLiquid) m_onGround = true;
+    }
+    if (!m_onGround) {
+        int fr = world->getBlockAt(feetPosAfter.x + halfWidthAfter, feetPosAfter.y - checkDistanceAfter, feetPosAfter.z + halfWidthAfter);
+        if (fr > 0 && !BlockRegistry::instance().get(fr).isLiquid) m_onGround = true;
+    }
+
+    // After movement, stabilize velocity based on ACTUAL ground state (not pre-movement state)
     if (m_onGround) {
         if (!m_inLiquid) {
-            // On land: completely zero vertical velocity to prevent bobbling
+            // On land: completely zero vertical velocity to prevent bobbing
             m_velocity.y = 0.0f;
         } else {
             // In water on floor: only zero if velocity is very small
