@@ -85,6 +85,10 @@ Chunk::Chunk(int x, int y, int z)
     // Initialize interpolated lighting to 0 (prevents accessing uninitialized memory)
     m_interpolatedLightData.fill(InterpolatedLight());
 
+    // BUG FIX: Initialize heightmap to -1 (indicates all air columns)
+    // Without this, heightmap contains garbage memory causing incorrect lighting
+    m_heightMap.fill(-1);
+
     // Calculate world-space bounds for culling
     // Blocks are 1.0 world units in size
     float worldX = m_x * WIDTH;
@@ -125,6 +129,10 @@ void Chunk::reset(int x, int y, int z) {
     m_lightData.fill(BlockLight(0, 0));
     m_interpolatedLightData.fill(InterpolatedLight());
     m_lightingDirty = false;
+
+    // BUG FIX: Reset heightmap to -1 (all air)
+    // Without this, recycled chunks use stale heightmap from previous location
+    m_heightMap.fill(-1);
 
     // Recalculate bounds
     float worldX = m_x * WIDTH;
@@ -1594,12 +1602,27 @@ void Chunk::setBlockLight(int x, int y, int z, uint8_t value) {
 void Chunk::updateHeightAt(int x, int z) {
     if (x < 0 || x >= WIDTH || z < 0 || z >= DEPTH) return;
 
-    // Scan from top to bottom to find highest solid (non-air) block
+    // Scan from top to bottom to find highest OPAQUE block
+    // BUG FIX: Must check transparency to avoid treating water/ice/leaves as solid
     int16_t highestY = -1;
     for (int y = HEIGHT - 1; y >= 0; y--) {
-        if (m_blocks[x][y][z] != 0) {  // 0 = air
-            highestY = static_cast<int16_t>(y);
-            break;
+        int blockID = m_blocks[x][y][z];
+        if (blockID != 0) {  // Not air
+            // Check if block is opaque (blocks sunlight)
+            auto& registry = BlockRegistry::instance();
+            if (blockID >= 0 && blockID < registry.count()) {
+                const BlockDefinition& blockDef = registry.get(blockID);
+                // Only opaque blocks (transparency < 0.5) should block sunlight
+                // Water (0.25), Ice (0.4), Leaves should allow light through
+                if (blockDef.transparency < 0.5f) {
+                    highestY = static_cast<int16_t>(y);
+                    break;
+                }
+            } else {
+                // Invalid block ID - treat as opaque to be safe
+                highestY = static_cast<int16_t>(y);
+                break;
+            }
         }
     }
 
