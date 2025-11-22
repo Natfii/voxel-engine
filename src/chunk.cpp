@@ -352,6 +352,10 @@ void Chunk::generate(BiomeMap* biomeMap) {
             }
         }
     }
+
+    // PERFORMANCE: Build heightmap for fast sky light calculation
+    // This replaces expensive BFS propagation with O(1) lookups
+    rebuildHeightMap();
 }
 
 /**
@@ -804,7 +808,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                             if (callerHoldsLock) {
                                 // Can't query other chunks - use local data if available
                                 if (sampleX >= 0 && sampleX < WIDTH && sampleY >= 0 && sampleY < HEIGHT && sampleZ >= 0 && sampleZ < DEPTH) {
-                                    skyLight = getInterpolatedSkyLight(sampleX, sampleY, sampleZ);
+                                    // PERFORMANCE: Use heightmap for instant sky light (no BFS!)
+                                    skyLight = static_cast<float>(calculateSkyLightFromHeightmap(sampleX, sampleY, sampleZ));
                                     blockLight = getInterpolatedBlockLight(sampleX, sampleY, sampleZ);
                                 }
                             } else {
@@ -814,7 +819,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                                     int localX = static_cast<int>(sampleWorldPos.x) - (chunk->getChunkX() * WIDTH);
                                     int localY = static_cast<int>(sampleWorldPos.y) - (chunk->getChunkY() * HEIGHT);
                                     int localZ = static_cast<int>(sampleWorldPos.z) - (chunk->getChunkZ() * DEPTH);
-                                    skyLight = chunk->getInterpolatedSkyLight(localX, localY, localZ);
+                                    // PERFORMANCE: Use heightmap for instant sky light (no BFS!)
+                                    skyLight = static_cast<float>(chunk->calculateSkyLightFromHeightmap(localX, localY, localZ));
                                     blockLight = chunk->getInterpolatedBlockLight(localX, localY, localZ);
                                 }
                             }
@@ -1475,6 +1481,10 @@ void Chunk::setBlock(int x, int y, int z, int blockID) {
         return;  // Out of bounds
     }
     m_blocks[x][y][z] = blockID;
+
+    // PERFORMANCE: Update heightmap for fast sky light calculation
+    // Only update if this block change might affect the highest block in the column
+    updateHeightAt(x, z);
 }
 
 uint8_t Chunk::getBlockMetadata(int x, int y, int z) const {
@@ -1577,6 +1587,32 @@ void Chunk::setBlockLight(int x, int y, int z, uint8_t value) {
     }
     int index = x + y * WIDTH + z * WIDTH * HEIGHT;
     m_lightData[index].blockLight = value & 0x0F;  // Clamp to 4 bits (0-15)
+}
+
+// ========== Heightmap Implementation (Fast Sky Light) ==========
+
+void Chunk::updateHeightAt(int x, int z) {
+    if (x < 0 || x >= WIDTH || z < 0 || z >= DEPTH) return;
+
+    // Scan from top to bottom to find highest solid (non-air) block
+    int16_t highestY = -1;
+    for (int y = HEIGHT - 1; y >= 0; y--) {
+        if (m_blocks[x][y][z] != 0) {  // 0 = air
+            highestY = static_cast<int16_t>(y);
+            break;
+        }
+    }
+
+    m_heightMap[x * DEPTH + z] = highestY;
+}
+
+void Chunk::rebuildHeightMap() {
+    // Rebuild entire heightmap by scanning all columns
+    for (int x = 0; x < WIDTH; x++) {
+        for (int z = 0; z < DEPTH; z++) {
+            updateHeightAt(x, z);
+        }
+    }
 }
 
 /**
