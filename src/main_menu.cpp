@@ -28,8 +28,8 @@ MenuResult MainMenu::render() {
     if (showSeedDialog) {
         renderSeedDialog();
 
-        // Check if we should start the game
-        if (!showSeedDialog && !showLoadDialog) {
+        // Check if we should start the game (only if "Start Game" was clicked, not "Back")
+        if (!showSeedDialog && !showLoadDialog && startGameRequested) {
             // Dialog was closed with "Start Game" button
             // Parse the seed from input buffer
             int seed = std::atoi(seedInputBuffer);
@@ -43,6 +43,7 @@ MenuResult MainMenu::render() {
             result.temperatureBias = temperatureSlider;
             result.moistureBias = moistureSlider;
             result.ageBias = ageSlider;
+            startGameRequested = false;  // Reset flag
         }
     } else if (showLoadDialog) {
         renderLoadWorldDialog();
@@ -248,13 +249,14 @@ void MainMenu::renderSeedDialog() {
     ImGui::SetCursorPosX(startX);
     ImGui::SetCursorPosY(dialogHeight - buttonHeight - 20.0f);
     if (ImGui::Button("Start Game", ImVec2(buttonWidth, buttonHeight))) {
-        showSeedDialog = false;  // This will trigger NEW_GAME action in render()
+        showSeedDialog = false;
+        startGameRequested = true;  // Flag that game should start
     }
 
     ImGui::SameLine(0, 20.0f);
     if (ImGui::Button("Back", ImVec2(buttonWidth, buttonHeight))) {
         showSeedDialog = false;
-        // Reset to main menu without starting game
+        startGameRequested = false;  // Don't start game, just go back to main menu
     }
 
     ImGui::EndChild();
