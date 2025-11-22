@@ -1,6 +1,6 @@
 # Voxel Engine: Complete Handbook
 
-**Version:** 1.1
+**Version:** 1.2
 **Last Updated:** 2025-11-22
 **Status:** Production Ready
 
@@ -29,6 +29,7 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 
 **November 22, 2025 - Lighting Overhaul & Performance:**
 - ✅ **Heightmap-Based Sky Lighting** - Replaced BFS flood-fill with O(1) heightmap lookups (100x+ faster lighting)
+- ✅ **Heightmap Transparency Fix** - Only fully opaque blocks (transparency == 0.0) block sunlight, water/ice now properly lit
 - ✅ **Transparent Block Lighting** - Water/ice/leaves now allow sunlight through (proper heightmap opacity checks)
 - ✅ **Heightmap Initialization** - Fixed garbage memory bugs in chunk constructor and pooling
 - ✅ **Shader Lighting Fix** - Fixed inverted normals causing "lit from below" appearance
@@ -36,9 +37,12 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - ✅ **Lighting Update Throttle** - Reduced from 60 FPS to 30 FPS (50% CPU savings, imperceptible latency)
 - ✅ **Collision Optimization** - Skip horizontal checks when velocity < 0.001 (60% savings when stationary)
 - ✅ **Water Simulation Throttle** - Reduced from 10x/sec to 5x/sec (50% CPU savings, still smooth)
+- ✅ **Ice Block Properties** - Removed unsupported ice_properties, ice now renders correctly as transparent block
+- ✅ **Main Menu Back Button Fix** - World generation menu back button now returns to main menu instead of starting game
+- ✅ **Transparent Rendering Verification** - Confirmed correct 2-pass rendering (opaque first, transparent sorted back-to-front)
 - ✅ **Documentation Cleanup** - Removed stray investigation docs, consolidated to handbook
 
-**Estimated Impact:** 50-70% reduction in frame time, 100x+ faster sky light calculation, proper water flow, correct directional lighting
+**Estimated Impact:** 50-70% reduction in frame time, 100x+ faster sky light calculation, proper water flow, correct directional lighting, correct transparent block illumination
 
 **November 2025 - Performance Sprint:**
 - ✅ **Critical Terrain Height Fix** - Eliminated 32x redundant calculations per column (2-3x faster cave gen)

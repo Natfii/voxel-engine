@@ -1612,9 +1612,10 @@ void Chunk::updateHeightAt(int x, int z) {
             auto& registry = BlockRegistry::instance();
             if (blockID >= 0 && blockID < registry.count()) {
                 const BlockDefinition& blockDef = registry.get(blockID);
-                // Only opaque blocks (transparency < 0.5) should block sunlight
-                // Water (0.25), Ice (0.4), Leaves should allow light through
-                if (blockDef.transparency < 0.5f) {
+                // Only FULLY opaque blocks (transparency == 0) should block sunlight
+                // This allows water, ice, glass, and leaves to let sunlight through
+                // Minecraft-style: transparent blocks don't stop sunlight column
+                if (blockDef.transparency == 0.0f) {
                     highestY = static_cast<int16_t>(y);
                     break;
                 }
