@@ -2139,10 +2139,10 @@ void VulkanRenderer::processAsyncUploads() {
 
     // CRITICAL FIX (2025-11-23): Limit staging buffer deletions per frame to prevent stalls
     // Each chunk has 4 staging buffers (vertex, index, transparent vertex, transparent index)
-    // With 5 chunks/frame, could delete 20+ buffers unbounded
-    // vkDestroyBuffer/vkFreeMemory can cause implicit GPU synchronization
-    // Limit to 5 upload completions per frame = max 20 buffer deletions
-    const int MAX_UPLOAD_COMPLETIONS_PER_FRAME = 5;
+    // With 10 chunks/frame now, need higher completion rate to keep up
+    // OPTIMIZATION: Increased from 5 to 10 to match chunk processing rate
+    // Prevents upload queue from backing up during heavy streaming
+    const int MAX_UPLOAD_COMPLETIONS_PER_FRAME = 10;
     int completionsThisFrame = 0;
 
     // Check all pending uploads for completion

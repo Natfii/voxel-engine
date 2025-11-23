@@ -975,11 +975,11 @@ int main() {
             // DECORATION FIX: Process pending decorations (chunks waiting for neighbors)
             static float decorationRetryTimer = 0.0f;
             decorationRetryTimer += clampedDeltaTime;
-            if (decorationRetryTimer >= 0.02f) {  // Retry every 20ms (50 times per second)
-                // OPTIMIZED (2025-11-23): Increased from 1 to 3 chunks per check for faster decoration catchup
-                // With async GPU uploads now working, we can handle more decorations per frame
-                // 3 chunks × 50 checks/sec = 150 chunks/sec max decoration rate
-                world.processPendingDecorations(&renderer, 3);  // Process 3 per check (150/sec max)
+            if (decorationRetryTimer >= 0.016f) {  // Retry every 16ms (~60 times per second)
+                // OPTIMIZATION (2025-11-23): Increased to 5 chunks per check for faster catchup
+                // With all sync fixes + double mesh bug fixed, can handle more decorations
+                // 5 chunks × 60 checks/sec = 300 chunks/sec max decoration rate
+                world.processPendingDecorations(&renderer, 5);  // Process 5 per check (300/sec max)
                 decorationRetryTimer = 0.0f;
             }
 

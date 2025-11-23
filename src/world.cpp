@@ -545,7 +545,8 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
 
                 // Reinitialize lighting after adding decorations
                 initializeChunkLighting(chunk);
-                chunk->markLightingDirty();
+                // CRITICAL FIX: Don't mark dirty - prevents double mesh generation!
+                // chunk->markLightingDirty();  // ← REMOVED
 
                 // Regenerate mesh with new decorations
                 chunk->generateMesh(this);
