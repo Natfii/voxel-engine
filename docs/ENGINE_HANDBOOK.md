@@ -2196,6 +2196,42 @@ liquid: false                 # Liquid physics enabled
 animated_tiles: 1             # Animation frames (1 = static, 2+ = animated)
 ```
 
+### Biome/Climate Restrictions
+
+Control which biomes a block can naturally spawn in based on temperature and moisture:
+
+```yaml
+min_temperature: 0            # Minimum biome temperature (0-100, omit for no restriction)
+max_temperature: 30           # Maximum biome temperature (0-100, omit for no restriction)
+min_moisture: 40              # Minimum biome moisture (0-100, omit for no restriction)
+max_moisture: 100             # Maximum biome moisture (0-100, omit for no restriction)
+```
+
+**How it works:**
+- If omitted, block can spawn in any biome (no climate restrictions)
+- If specified, block only spawns in biomes where `biome.temperature` and `biome.moisture` are within ranges
+- Useful for climate-specific blocks: ice, cacti, mushrooms, coral, etc.
+
+**Examples:**
+```yaml
+# Ice block - only spawns in cold biomes
+name: "Ice"
+min_temperature: 0
+max_temperature: 20
+
+# Cactus - only spawns in hot, dry biomes
+name: "Cactus"
+min_temperature: 70
+max_temperature: 100
+min_moisture: 0
+max_moisture: 30
+
+# Mushroom - only spawns in wet biomes (any temperature)
+name: "Mushroom"
+min_moisture: 70
+max_moisture: 100
+```
+
 ### Liquid Properties
 
 For liquid blocks, define underwater visual effects:

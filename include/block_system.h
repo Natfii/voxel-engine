@@ -84,6 +84,12 @@ struct BlockDefinition {
     bool isLiquid = false;             ///< If true, no outline when targeting
     int animatedTiles = 1;             ///< Number of tiles for animation (1=static, 2=2x2 grid, etc.)
 
+    // ========== Biome/Climate Properties ==========
+    int minTemperature = -1;           ///< Minimum biome temperature (0-100, -1 = no restriction)
+    int maxTemperature = -1;           ///< Maximum biome temperature (0-100, -1 = no restriction)
+    int minMoisture = -1;              ///< Minimum biome moisture (0-100, -1 = no restriction)
+    int maxMoisture = -1;              ///< Maximum biome moisture (0-100, -1 = no restriction)
+
     // ========== Lighting Properties ==========
     bool isEmissive = false;           ///< If true, block emits light (torch, lava, etc.)
     uint8_t lightLevel = 0;            ///< Light emission level (0-15, e.g., 14 for torch, 15 for lava)
