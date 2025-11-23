@@ -711,42 +711,63 @@ void World::updateInterpolatedLighting(float deltaTime) {
     }
 }
 
-void World::registerWaterBlocks() {
-    Logger::info() << "Registering water blocks with simulation system...";
+void World::registerWaterInChunk(Chunk* chunk) {
+    if (!chunk) return;
 
-    int waterBlocksFound = 0;
     auto& registry = BlockRegistry::instance();
+    int chunkX = chunk->getChunkX();
+    int chunkY = chunk->getChunkY();
+    int chunkZ = chunk->getChunkZ();
 
-    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+    // Scan all blocks in chunk
+    for (int localX = 0; localX < Chunk::WIDTH; localX++) {
+        for (int localY = 0; localY < Chunk::HEIGHT; localY++) {
+            for (int localZ = 0; localZ < Chunk::DEPTH; localZ++) {
+                int blockID = chunk->getBlock(localX, localY, localZ);
 
-    for (auto& chunk : m_chunks) {
-        int chunkX = chunk->getChunkX();
-        int chunkY = chunk->getChunkY();
-        int chunkZ = chunk->getChunkZ();
+                // Check if this is a liquid block
+                if (blockID > 0 && blockID < registry.count() && registry.get(blockID).isLiquid) {
+                    // Calculate world coordinates
+                    int worldX = chunkX * Chunk::WIDTH + localX;
+                    int worldY = chunkY * Chunk::HEIGHT + localY;
+                    int worldZ = chunkZ * Chunk::DEPTH + localZ;
 
-        // Scan all blocks in chunk
-        for (int localX = 0; localX < Chunk::WIDTH; localX++) {
-            for (int localY = 0; localY < Chunk::HEIGHT; localY++) {
-                for (int localZ = 0; localZ < Chunk::DEPTH; localZ++) {
-                    int blockID = chunk->getBlock(localX, localY, localZ);
+                    // Register with simulation system
+                    m_waterSimulation->setWaterLevel(worldX, worldY, worldZ, 255, 1);
 
-                    // Check if this is a liquid block
-                    if (blockID > 0 && blockID < registry.count() && registry.get(blockID).isLiquid) {
-                        // Calculate world coordinates
-                        int worldX = chunkX * Chunk::WIDTH + localX;
-                        int worldY = chunkY * Chunk::HEIGHT + localY;
-                        int worldZ = chunkZ * Chunk::DEPTH + localZ;
-
-                        // Register with simulation system
-                        m_waterSimulation->setWaterLevel(worldX, worldY, worldZ, 255, 1);
-                        waterBlocksFound++;
+                    // FIXED (2025-11-23): Mark naturally generated water as sources so they flow
+                    // Water blocks with metadata=0 are source blocks (oceans, lakes, placed water)
+                    // This makes them maintain their level and flow continuously like Minecraft
+                    uint8_t metadata = chunk->getBlockMetadata(localX, localY, localZ);
+                    if (metadata == 0) {
+                        glm::ivec3 waterPos(worldX, worldY, worldZ);
+                        m_waterSimulation->addWaterSource(waterPos, 1);
                     }
                 }
             }
         }
     }
+}
 
-    Logger::info() << "Registered " << waterBlocksFound << " water blocks with simulation";
+void World::registerWaterBlocks() {
+    Logger::info() << "Registering water blocks with simulation system...";
+
+    int waterBlocksFound = 0;
+    int waterSourcesCreated = 0;
+
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    // Register water in all existing chunks
+    for (auto& chunk : m_chunks) {
+        size_t beforeSize = m_waterSimulation->getActiveWaterChunks().size();
+        registerWaterInChunk(chunk.get());
+        size_t afterSize = m_waterSimulation->getActiveWaterChunks().size();
+
+        // Approximate count (not exact since multiple chunks can add to same water chunk)
+        waterBlocksFound += (afterSize - beforeSize) * 64;  // Rough estimate
+    }
+
+    Logger::info() << "Registered water blocks in " << m_chunks.size() << " chunks with simulation";
 }
 
 void World::createBuffers(VulkanRenderer* renderer) {
@@ -1102,6 +1123,10 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
                           << "ms, TOTAL=" << totalMs << "ms";
         }
     }
+
+    // FIXED (2025-11-23): Register water blocks in streamed chunks with simulation
+    // This ensures water in dynamically loaded chunks can flow properly
+    registerWaterInChunk(chunkPtr);
 
     Logger::debug() << "Added streamed chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") to world";
 
