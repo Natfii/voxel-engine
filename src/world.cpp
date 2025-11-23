@@ -1305,7 +1305,11 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
             }
 
             // Step 2: Initialize lighting ONCE after all blocks are in place
-            initializeChunkLighting(chunkPtr);
+            // PERFORMANCE FIX (2025-11-23): Skip for Version 3 chunks that already have lighting
+            // This prevents unnecessary re-meshing of loaded chunks with lighting data
+            if (!chunkPtr->hasLightingData()) {
+                initializeChunkLighting(chunkPtr);
+            }
 
             // CRITICAL FIX (2025-11-23): Don't mark fresh chunks dirty!
             // markLightingDirty() causes lighting system to regenerate mesh next frame
@@ -1334,7 +1338,10 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         // Underground chunks: Light and mesh (no decoration)
         Logger::debug() << "Processing underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): light → mesh → upload";
 
-        initializeChunkLighting(chunkPtr);
+        // PERFORMANCE FIX (2025-11-23): Skip for Version 3 chunks that already have lighting
+        if (!chunkPtr->hasLightingData()) {
+            initializeChunkLighting(chunkPtr);
+        }
         // CRITICAL FIX (2025-11-23): Don't mark fresh underground chunks dirty either!
         // chunkPtr->markLightingDirty();  // ← REMOVED - prevents duplicate mesh gen
 

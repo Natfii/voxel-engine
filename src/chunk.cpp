@@ -73,7 +73,8 @@ Chunk::Chunk(int x, int y, int z)
       m_transparentIndexStagingBufferMemory(VK_NULL_HANDLE),
       m_visible(false),
       m_lightingDirty(false),
-      m_needsDecoration(false) {
+      m_needsDecoration(false),
+      m_hasLightingData(false) {
 
     // Initialize all blocks to air, metadata to 0, and lighting to darkness
     // OPTIMIZATION: Use memset instead of nested loops (10-20x faster)
@@ -2280,6 +2281,9 @@ bool Chunk::load(const std::string& worldPath) {
 
             // FIXED (2025-11-23): Mark loaded chunks as NOT needing decoration
             m_needsDecoration = false;
+            // PERFORMANCE FIX (2025-11-23): Mark that chunk has lighting data to skip re-initialization
+            // This prevents double mesh generation for loaded chunks with lighting
+            m_hasLightingData = true;
             return true;
 
         } else {

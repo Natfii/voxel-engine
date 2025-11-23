@@ -481,6 +481,18 @@ public:
      */
     void setNeedsDecoration(bool needs) { m_needsDecoration = needs; }
 
+    /**
+     * @brief Checks if chunk has pre-initialized lighting data (Version 3 chunks)
+     * @return True if chunk loaded with lighting, false if needs lighting initialization
+     */
+    bool hasLightingData() const { return m_hasLightingData; }
+
+    /**
+     * @brief Sets whether chunk has pre-initialized lighting data
+     * @param hasData True for Version 3 loaded chunks, false for fresh/Version 1-2 chunks
+     */
+    void setHasLightingData(bool hasData) { m_hasLightingData = hasData; }
+
     // ========== Heightmap (Fast Sky Light) ==========
 
     /**
@@ -657,6 +669,7 @@ private:
     std::array<BlockLight, WIDTH * HEIGHT * DEPTH> m_lightData; ///< Light data (sky + block light, 32 KB)
     bool m_lightingDirty;                   ///< True if lighting changed (needs mesh regen)
     bool m_needsDecoration;                 ///< True if chunk is freshly generated and needs decoration
+    bool m_hasLightingData;                 ///< True if chunk loaded with lighting data (Version 3), prevents re-initialization
 
     // ========== Heightmap (PERFORMANCE: Fast sky light calculation) ==========
     std::array<int16_t, WIDTH * DEPTH> m_heightMap; ///< Highest solid block Y per XZ column (2 KB, 32x32 grid)
