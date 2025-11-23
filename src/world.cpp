@@ -1009,9 +1009,9 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
 
     lock.unlock();  // Release lock before decoration (can be slow)
 
-    // PERFORMANCE DEBUG: Skip heavy operations during streaming to isolate bottleneck
-    // TODO: Remove this and do proper async decoration/lighting
-    const bool SKIP_DECORATION_FOR_FPS = true;
+    // FIXED (2025-11-23): Re-enabled decoration for streamed chunks
+    // Trees now spawn properly when moving far from spawn
+    const bool SKIP_DECORATION_FOR_FPS = false;
 
     // MAIN THREAD: Decorate, Light, Mesh, Upload - IN THAT ORDER
     // This is safe because:

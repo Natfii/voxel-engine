@@ -974,10 +974,10 @@ int main() {
             static float decorationRetryTimer = 0.0f;
             decorationRetryTimer += clampedDeltaTime;
             if (decorationRetryTimer >= 0.02f) {  // Retry every 20ms (50 times per second)
-                // PERFORMANCE FIX: Limit to 1 decoration per check to prevent GPU queue backup
-                // Each decoration = synchronous GPU upload = vkWaitForFences stall
-                // 100 uploads per frame = massive beginFrame stall (700-800ms)
-                world.processPendingDecorations(&renderer, 1);  // Process 1 per check (50/sec max)
+                // OPTIMIZED (2025-11-23): Increased from 1 to 3 chunks per check for faster decoration catchup
+                // With async GPU uploads now working, we can handle more decorations per frame
+                // 3 chunks × 50 checks/sec = 150 chunks/sec max decoration rate
+                world.processPendingDecorations(&renderer, 3);  // Process 3 per check (150/sec max)
                 decorationRetryTimer = 0.0f;
             }
 
