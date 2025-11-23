@@ -528,9 +528,11 @@ int main() {
             std::cout << "Placing trees and features..." << std::endl;
             world.decorateWorld();
 
-            // Register water blocks with simulation system
-            std::cout << "Initializing water physics..." << std::endl;
-            world.registerWaterBlocks();
+            // PERFORMANCE FIX (2025-11-23): Skip bulk water registration at startup
+            // Water is already registered incrementally in addStreamedChunk() (world.cpp:1144)
+            // Bulk scanning all chunks at startup causes freeze on large worlds
+            // std::cout << "Initializing water physics..." << std::endl;
+            // world.registerWaterBlocks();
 
             // PERFORMANCE: Skip lighting initialization - using heightmap system
             // Heightmap calculates sky light instantly during mesh generation
