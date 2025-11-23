@@ -1209,7 +1209,12 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
 
             // Step 2: Initialize lighting ONCE after all blocks are in place
             initializeChunkLighting(chunkPtr);
-            chunkPtr->markLightingDirty();
+
+            // CRITICAL FIX (2025-11-23): Don't mark fresh chunks dirty!
+            // markLightingDirty() causes lighting system to regenerate mesh next frame
+            // Fresh chunks don't need re-meshing - we generate the mesh below
+            // This eliminates double mesh generation: once here, once in lighting system
+            // chunkPtr->markLightingDirty();  // ← REMOVED - prevents duplicate mesh gen
 
             // Step 3: Generate final mesh with correct lighting (FIRST TIME - worker didn't mesh)
             chunkPtr->generateMesh(this);
@@ -1231,7 +1236,8 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         Logger::debug() << "Processing underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): light → mesh → upload";
 
         initializeChunkLighting(chunkPtr);
-        chunkPtr->markLightingDirty();
+        // CRITICAL FIX (2025-11-23): Don't mark fresh underground chunks dirty either!
+        // chunkPtr->markLightingDirty();  // ← REMOVED - prevents duplicate mesh gen
         chunkPtr->generateMesh(this);
 
         // Upload to GPU (async to prevent frame stalls)
