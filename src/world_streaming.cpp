@@ -418,9 +418,14 @@ void WorldStreaming::unloadDistantChunks(const glm::vec3& playerPos, float unloa
     // PERFORMANCE FIX (2025-11-23): Re-enable chunk unloading with ultra-conservative rate
     // Previous: DISABLED (0) - caused infinite memory accumulation and frame time increase
     // GPU buffer deletion causes MASSIVE stalls (1682ms for 5 chunks!)
-    // New: 1 chunk per call = ~4 chunks/sec at 4Hz streaming update rate
-    // This is slow but prevents multi-second frame freezes
-    const int MAX_UNLOADS_PER_CALL = 1;  // Ultra-conservative to prevent GPU stalls
+    //
+    // UPDATE: With indirect drawing, chunks no longer have individual GPU buffers!
+    // They only write to mega-buffers, so unloading is nearly instant.
+#if USE_INDIRECT_DRAWING
+    const int MAX_UNLOADS_PER_CALL = 50;  // High rate - no GPU buffer destruction needed!
+#else
+    const int MAX_UNLOADS_PER_CALL = 1;  // Ultra-conservative for legacy path (GPU stalls)
+#endif
     if (chunksToUnload.size() > MAX_UNLOADS_PER_CALL) {
         chunksToUnload.resize(MAX_UNLOADS_PER_CALL);
     }

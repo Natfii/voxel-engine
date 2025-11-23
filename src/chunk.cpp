@@ -1249,6 +1249,13 @@ void Chunk::destroyBuffers(VulkanRenderer* renderer) {
     // The renderer will destroy them after MAX_FRAMES_IN_FLIGHT frames (fence-based approach)
     // This eliminates the need for vkDeviceWaitIdle() which was causing massive lag!
 
+#if USE_INDIRECT_DRAWING
+    // INDIRECT DRAWING: Chunks don't own individual GPU buffers!
+    // They only write to mega-buffers, so there's nothing to destroy here.
+    // This makes chunk unloading nearly instant (no GPU synchronization needed).
+    return;
+#else
+    // LEGACY PATH: Queue individual chunk buffers for deletion
     // Queue opaque buffers for deletion
     if (m_vertexBuffer != VK_NULL_HANDLE || m_vertexBufferMemory != VK_NULL_HANDLE) {
         renderer->queueBufferDeletion(m_vertexBuffer, m_vertexBufferMemory);
@@ -1274,6 +1281,7 @@ void Chunk::destroyBuffers(VulkanRenderer* renderer) {
         m_transparentIndexBuffer = VK_NULL_HANDLE;
         m_transparentIndexBufferMemory = VK_NULL_HANDLE;
     }
+#endif
 }
 
 void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
@@ -1304,7 +1312,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
         if (!renderer->allocateMegaBufferSpace(vertexBufferSize, indexBufferSize, false,
                                                 m_megaBufferVertexOffset, m_megaBufferIndexOffset)) {
             std::cerr << "ERROR: Failed to allocate mega-buffer space for chunk at ("
-                     << m_worldX << ", " << m_worldZ << ")" << std::endl;
+                     << m_x << ", " << m_z << ")" << std::endl;
             return;
         }
 
@@ -1349,7 +1357,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
                                                 m_megaBufferTransparentVertexOffset,
                                                 m_megaBufferTransparentIndexOffset)) {
             std::cerr << "ERROR: Failed to allocate transparent mega-buffer space for chunk at ("
-                     << m_worldX << ", " << m_worldZ << ")" << std::endl;
+                     << m_x << ", " << m_z << ")" << std::endl;
             return;
         }
 
