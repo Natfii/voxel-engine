@@ -296,6 +296,13 @@ private:
     std::queue<std::tuple<int, int, int>> m_chunksReadyForUpload;  ///< Chunks ready for GPU upload
     mutable std::mutex m_readyForUploadMutex;                      ///< Protects m_chunksReadyForUpload
 
+    // CRITICAL BUG FIX: Prevent chunk deletion during async mesh generation
+    // Tracks chunks currently being meshed by detached threads
+    // removeChunk() checks this set and defers deletion until meshing completes
+    std::unordered_set<ChunkCoord> m_chunksBeingMeshed;  ///< Chunks with active mesh generation threads
+    mutable std::mutex m_chunksMeshingMutex;             ///< Protects m_chunksBeingMeshed
+    std::atomic<int> m_activeMeshThreads;                ///< Count of active mesh threads (for throttling)
+
     // === Player Position ===
     glm::vec3 m_lastPlayerPos;            ///< Last known player position
     mutable std::mutex m_playerPosMutex;  ///< Protects m_lastPlayerPos

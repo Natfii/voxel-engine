@@ -20,6 +20,7 @@ WorldStreaming::WorldStreaming(World* world, BiomeMap* biomeMap, VulkanRenderer*
     , m_renderer(renderer)
     , m_running(false)
     , m_activeWorkers(0)
+    , m_activeMeshThreads(0)
     , m_lastPlayerPos(0.0f, 0.0f, 0.0f)
     , m_totalChunksLoaded(0)
     , m_totalChunksUnloaded(0)
@@ -239,6 +240,20 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
                     Logger::debug() << "Integrated chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
                     m_totalChunksLoaded++;
 
+                    // THREAD THROTTLING: Wait if too many mesh threads active
+                    const int MAX_MESH_THREADS = 8;
+                    while (m_activeMeshThreads.load() >= MAX_MESH_THREADS) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+
+                    // CRITICAL BUG FIX: Track chunk to prevent deletion during meshing
+                    {
+                        std::lock_guard<std::mutex> lock(m_chunksMeshingMutex);
+                        m_chunksBeingMeshed.insert(ChunkCoord{chunkX, chunkY, chunkZ});
+                    }
+
+                    m_activeMeshThreads++;
+
                     // Spawn DETACHED mesh generation thread (non-blocking!)
                     std::thread meshThread([this, chunkX, chunkY, chunkZ]() {
                         try {
@@ -248,9 +263,16 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
                                 chunkPtr->generateMesh(m_world);
 
                                 // Add to ready queue for GPU upload (next frame)
+                                // CRITICAL: Cap queue size to prevent unbounded growth
                                 {
                                     std::lock_guard<std::mutex> lock(m_readyForUploadMutex);
-                                    m_chunksReadyForUpload.push({chunkX, chunkY, chunkZ});
+                                    const size_t MAX_QUEUE_SIZE = 100;
+                                    if (m_chunksReadyForUpload.size() < MAX_QUEUE_SIZE) {
+                                        m_chunksReadyForUpload.push({chunkX, chunkY, chunkZ});
+                                    } else {
+                                        Logger::warning() << "Ready queue full, dropping chunk ("
+                                                         << chunkX << ", " << chunkY << ", " << chunkZ << ")";
+                                    }
                                 }
 
                                 Logger::debug() << "Mesh generation complete for chunk ("
@@ -260,6 +282,14 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
                             Logger::error() << "Failed to mesh chunk (" << chunkX << ", "
                                           << chunkY << ", " << chunkZ << "): " << e.what();
                         }
+
+                        // CRITICAL BUG FIX: Remove from tracking set (allow deletion now)
+                        {
+                            std::lock_guard<std::mutex> lock(m_chunksMeshingMutex);
+                            m_chunksBeingMeshed.erase(ChunkCoord{chunkX, chunkY, chunkZ});
+                        }
+
+                        m_activeMeshThreads--;
                     });
 
                     // CRITICAL: Detach thread so main thread doesn't wait!
@@ -526,6 +556,16 @@ void WorldStreaming::unloadDistantChunks(const glm::vec3& playerPos, float unloa
 
     // Remove marked chunks (water already cleaned up in batch above)
     for (const auto& coord : chunksToUnload) {
+        // CRITICAL BUG FIX: Skip chunks being meshed to prevent use-after-free
+        {
+            std::lock_guard<std::mutex> lock(m_chunksMeshingMutex);
+            if (m_chunksBeingMeshed.count(coord) > 0) {
+                Logger::debug() << "Skipping unload of chunk (" << coord.x << ", " << coord.y << ", "
+                               << coord.z << ") - mesh generation in progress";
+                continue;  // Don't delete while meshing!
+            }
+        }
+
         if (m_world->removeChunk(coord.x, coord.y, coord.z, m_renderer, true)) {  // Skip water cleanup
             Logger::debug() << "Unloaded distant chunk (" << coord.x << ", " << coord.y << ", " << coord.z << ")";
             m_totalChunksUnloaded++;
