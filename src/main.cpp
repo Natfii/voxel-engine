@@ -1034,7 +1034,15 @@ int main() {
             }
             auto afterStreaming = std::chrono::high_resolution_clock::now();
 
-            worldStreaming.processCompletedChunks(1);  // Upload max 1 chunk per frame for smooth 60 FPS
+            // OPTIMIZATION: Process multiple chunks per frame with indirect drawing
+            // With mega-buffers, chunk uploads are much faster (no individual GPU buffer creation)
+            // Old limit: 1 chunk/frame = 60 chunks/sec (too slow when moving!)
+            // New limit: 5 chunks/frame = 300 chunks/sec (smooth streaming)
+#if USE_INDIRECT_DRAWING
+            worldStreaming.processCompletedChunks(5);  // Fast uploads with mega-buffers
+#else
+            worldStreaming.processCompletedChunks(1);  // Conservative for legacy path
+#endif
             auto afterChunkProcess = std::chrono::high_resolution_clock::now();
 
             // Calculate matrices
