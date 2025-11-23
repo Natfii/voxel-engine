@@ -1177,6 +1177,12 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
         m_lightingSystem->notifyChunkUnload(chunkPtr);
     }
 
+    // PERFORMANCE FIX (2025-11-23): Notify water simulation to clean up water cells
+    // Without this, water cells accumulate infinitely causing frame time increase
+    if (m_waterSimulation) {
+        m_waterSimulation->notifyChunkUnload(chunkX, chunkY, chunkZ);
+    }
+
     // Destroy Vulkan buffers (can't keep GPU resources in cache)
     if (renderer) {
         chunkPtr->destroyBuffers(renderer);

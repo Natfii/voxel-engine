@@ -471,6 +471,43 @@ void WaterSimulation::markAsWaterBody(const std::unordered_set<glm::ivec3>& cell
     m_waterBodies.push_back(body);
 }
 
+void WaterSimulation::notifyChunkUnload(int chunkX, int chunkY, int chunkZ) {
+    // PERFORMANCE FIX (2025-11-23): Clean up water cells from unloaded chunks
+    // Without this, water cells accumulate infinitely as player moves
+
+    // Calculate chunk bounds in world coordinates (32x32x32 chunks)
+    int minX = chunkX * 32;
+    int minY = chunkY * 32;
+    int minZ = chunkZ * 32;
+    int maxX = minX + 32;
+    int maxY = minY + 32;
+    int maxZ = minZ + 32;
+
+    // Remove all water cells in this chunk
+    for (auto it = m_waterCells.begin(); it != m_waterCells.end();) {
+        const glm::ivec3& pos = it->first;
+        if (pos.x >= minX && pos.x < maxX &&
+            pos.y >= minY && pos.y < maxY &&
+            pos.z >= minZ && pos.z < maxZ) {
+            m_dirtyCells.erase(pos);  // Also remove from dirty set
+            it = m_waterCells.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Remove water sources in this chunk
+    m_waterSources.erase(
+        std::remove_if(m_waterSources.begin(), m_waterSources.end(),
+            [minX, minY, minZ, maxX, maxY, maxZ](const WaterSource& source) {
+                return source.position.x >= minX && source.position.x < maxX &&
+                       source.position.y >= minY && source.position.y < maxY &&
+                       source.position.z >= minZ && source.position.z < maxZ;
+            }),
+        m_waterSources.end()
+    );
+}
+
 bool WaterSimulation::isBlockSolid(int x, int y, int z, World* world) const {
     int blockID = world->getBlockAt(x, y, z);
     if (blockID == 0) return false; // Air
