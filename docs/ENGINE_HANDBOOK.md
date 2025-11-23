@@ -2198,39 +2198,17 @@ animated_tiles: 1             # Animation frames (1 = static, 2+ = animated)
 
 ### Biome/Climate Restrictions
 
-Control which biomes a block can naturally spawn in based on temperature and moisture:
+**IMPORTANT:** Blocks MUST specify ALL four climate properties to spawn naturally. If omitted, the block will NOT spawn during world generation.
 
 ```yaml
-min_temperature: 0            # Minimum biome temperature (0-100, omit for no restriction)
-max_temperature: 30           # Maximum biome temperature (0-100, omit for no restriction)
-min_moisture: 40              # Minimum biome moisture (0-100, omit for no restriction)
-max_moisture: 100             # Maximum biome moisture (0-100, omit for no restriction)
+min_temperature: 0            # Minimum biome temperature (0-100)
+max_temperature: 100          # Maximum biome temperature (0-100)
+min_moisture: 0               # Minimum biome moisture (0-100)
+max_moisture: 100             # Maximum biome moisture (0-100)
 ```
 
-**How it works:**
-- If omitted, block can spawn in any biome (no climate restrictions)
-- If specified, block only spawns in biomes where `biome.temperature` and `biome.moisture` are within ranges
-- Useful for climate-specific blocks: ice, cacti, mushrooms, coral, etc.
-
-**Examples:**
-```yaml
-# Ice block - only spawns in cold biomes
-name: "Ice"
-min_temperature: 0
-max_temperature: 20
-
-# Cactus - only spawns in hot, dry biomes
-name: "Cactus"
-min_temperature: 70
-max_temperature: 100
-min_moisture: 0
-max_moisture: 30
-
-# Mushroom - only spawns in wet biomes (any temperature)
-name: "Mushroom"
-min_moisture: 70
-max_moisture: 100
-```
+- If ALL climate properties are omitted: Block does NOT spawn naturally (player-placed only)
+- If specified: Block spawns in biomes matching the temperature/moisture ranges
 
 ### Liquid Properties
 
@@ -2271,6 +2249,10 @@ flammability: 0
 transparency: 0.6
 liquid: true
 animated_tiles: 4
+min_temperature: 0
+max_temperature: 100
+min_moisture: 0
+max_moisture: 100
 liquid_properties:
   fog_color: [0.1, 0.3, 0.5]
   fog_density: 0.8

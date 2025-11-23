@@ -85,10 +85,30 @@ struct BlockDefinition {
     int animatedTiles = 1;             ///< Number of tiles for animation (1=static, 2=2x2 grid, etc.)
 
     // ========== Biome/Climate Properties ==========
-    int minTemperature = -1;           ///< Minimum biome temperature (0-100, -1 = no restriction)
-    int maxTemperature = -1;           ///< Maximum biome temperature (0-100, -1 = no restriction)
-    int minMoisture = -1;              ///< Minimum biome moisture (0-100, -1 = no restriction)
-    int maxMoisture = -1;              ///< Maximum biome moisture (0-100, -1 = no restriction)
+    int minTemperature = -1;           ///< Minimum biome temperature (0-100, -1 = not specified)
+    int maxTemperature = -1;           ///< Maximum biome temperature (0-100, -1 = not specified)
+    int minMoisture = -1;              ///< Minimum biome moisture (0-100, -1 = not specified)
+    int maxMoisture = -1;              ///< Maximum biome moisture (0-100, -1 = not specified)
+
+    /**
+     * @brief Check if block can spawn naturally during world generation
+     * @return true if ALL climate properties are specified, false otherwise
+     */
+    bool canSpawnNaturally() const {
+        return minTemperature >= 0 && maxTemperature >= 0 && minMoisture >= 0 && maxMoisture >= 0;
+    }
+
+    /**
+     * @brief Check if block can spawn in a biome with given climate
+     * @param temperature Biome temperature (0-100)
+     * @param moisture Biome moisture (0-100)
+     * @return true if block's climate requirements match the biome
+     */
+    bool matchesClimate(int temperature, int moisture) const {
+        if (!canSpawnNaturally()) return false;
+        return temperature >= minTemperature && temperature <= maxTemperature &&
+               moisture >= minMoisture && moisture <= maxMoisture;
+    }
 
     // ========== Lighting Properties ==========
     bool isEmissive = false;           ///< If true, block emits light (torch, lava, etc.)
