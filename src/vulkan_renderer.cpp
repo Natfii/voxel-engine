@@ -3042,3 +3042,17 @@ void VulkanRenderer::batchCopyToMegaBuffer(VkBuffer srcVertexBuffer, VkBuffer sr
                    transparent ? m_megaTransparentIndexBuffer : m_megaIndexBuffer,
                    1, &indexCopyRegion);
 }
+
+void VulkanRenderer::resetMegaBuffers() {
+    std::lock_guard<std::mutex> lock(m_megaBufferMutex);
+    
+    Logger::info() << "Resetting mega-buffers (reclaiming space)...";
+    
+    // Reset allocation offsets to beginning
+    m_megaVertexOffset = 0;
+    m_megaIndexOffset = 0;
+    m_megaTransparentVertexOffset = 0;
+    m_megaTransparentIndexOffset = 0;
+    
+    Logger::info() << "Mega-buffers reset complete - all space reclaimed";
+}

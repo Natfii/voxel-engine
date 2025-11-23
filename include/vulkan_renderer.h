@@ -401,6 +401,14 @@ public:
      */
     void resetPipelineCache();
 
+    /**
+     * @brief Reset mega-buffer allocation offsets (clears all chunk data)
+     *
+     * Call this when mega-buffer is full to reclaim space.
+     * WARNING: All chunks must re-upload their data after this!
+     */
+    void resetMegaBuffers();
+
     // ========== Mega-Buffer Getters (for Indirect Drawing) ==========
     VkBuffer getMegaVertexBuffer() const { return m_megaVertexBuffer; }
     VkBuffer getMegaIndexBuffer() const { return m_megaIndexBuffer; }
@@ -764,8 +772,8 @@ private:
     // Mega-buffers: Single large buffers containing all chunk geometry
     // This reduces draw calls from 300+ per frame to just 2 (opaque + transparent)
 
-    static constexpr VkDeviceSize MEGA_BUFFER_VERTEX_SIZE = 256 * 1024 * 1024;  // 256 MB for vertices
-    static constexpr VkDeviceSize MEGA_BUFFER_INDEX_SIZE = 256 * 1024 * 1024;   // 256 MB for indices
+    static constexpr VkDeviceSize MEGA_BUFFER_VERTEX_SIZE = 1024 * 1024 * 1024;  // 1 GB for vertices (increased from 256MB)
+    static constexpr VkDeviceSize MEGA_BUFFER_INDEX_SIZE = 1024 * 1024 * 1024;   // 1 GB for indices (increased from 256MB)
 
     // Opaque geometry mega-buffers
     VkBuffer m_megaVertexBuffer = VK_NULL_HANDLE;
