@@ -1036,13 +1036,15 @@ int main() {
 
             // OPTIMIZATION: Process multiple chunks per frame with indirect drawing
             // With mega-buffers + sync fixes, can handle more chunks per frame
+            // CRITICAL: Main thread waits for ALL parallel mesh generations to complete!
             // History:
-            //   v1: 1 chunk/frame = 60 chunks/sec (bottleneck)
-            //   v2: 5 chunks/frame = 300 chunks/sec (better but still lag)
-            //   v3: 10 chunks/frame = 600 chunks/sec (smooth after sync fixes!)
-            // Sync fixes eliminated 50-200ms fence stalls, now safe to increase
+            //   v1: 1 chunk/frame = 60 chunks/sec (very smooth but slow)
+            //   v2: 5 chunks/frame = 300 chunks/sec (good balance)
+            //   v3: 10 chunks/frame = 600 chunks/sec (causes ~200ms stalls!)
+            //   v4: 2 chunks/frame = 120 chunks/sec (SMOOTH - no stalls, fast enough)
+            // With neighbor margin + parallel meshing, lower limit prevents frame time spikes
 #if USE_INDIRECT_DRAWING
-            worldStreaming.processCompletedChunks(10);  // Smooth exploration with sync fixes
+            worldStreaming.processCompletedChunks(2);  // Smooth frame times, no stalls
 #else
             worldStreaming.processCompletedChunks(1);   // Conservative for legacy path
 #endif
