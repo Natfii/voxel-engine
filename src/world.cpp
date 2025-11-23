@@ -838,6 +838,11 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
     // ========== PASS 1: RENDER OPAQUE GEOMETRY ==========
+#if USE_INDIRECT_DRAWING
+    // GPU OPTIMIZATION: Build indirect draw commands for all visible chunks
+    std::vector<VkDrawIndexedIndirectCommand> opaqueDrawCommands;
+    opaqueDrawCommands.reserve(m_chunks.size());  // Preallocate for performance
+
     for (auto& chunk : m_chunks) {
         // Skip chunks with no opaque vertices
         if (chunk->getVertexCount() == 0) {
@@ -874,7 +879,94 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
         }
 
         // Stage 2: Frustum culling (catches chunks behind camera)
-        // Get chunk AABB bounds
+        glm::vec3 chunkMin = chunk->getMin();
+        glm::vec3 chunkMax = chunk->getMax();
+
+        if (!frustumAABBIntersect(frustum, chunkMin, chunkMax, frustumMargin)) {
+            frustumCulled++;
+            continue;
+        }
+
+        // Chunk passed culling - add to indirect draw command buffer
+        VkDrawIndexedIndirectCommand cmd{};
+        cmd.indexCount = chunk->getIndexCount();
+        cmd.instanceCount = 1;
+        cmd.firstIndex = static_cast<uint32_t>(chunk->m_megaBufferIndexOffset / sizeof(uint32_t));
+        cmd.vertexOffset = static_cast<int32_t>(chunk->m_megaBufferBaseVertex);
+        cmd.firstInstance = 0;
+        opaqueDrawCommands.push_back(cmd);
+
+        renderedCount++;
+
+        // If chunk has transparent geometry, add to transparent list
+        if (chunk->getTransparentVertexCount() > 0) {
+            transparentChunks.push_back(std::make_pair(chunk, distanceSquared));
+        }
+    }
+
+    // Execute single indirect draw call for all opaque chunks
+    if (!opaqueDrawCommands.empty() && renderer != nullptr) {
+        // Upload draw commands to indirect buffer
+        void* data;
+        VkDeviceMemory indirectBufferMemory = renderer->getIndirectDrawBufferMemory();
+        VkBuffer indirectBuffer = renderer->getIndirectDrawBuffer();
+
+        vkMapMemory(renderer->getDevice(), indirectBufferMemory, 0,
+                   opaqueDrawCommands.size() * sizeof(VkDrawIndexedIndirectCommand), 0, &data);
+        memcpy(data, opaqueDrawCommands.data(),
+               opaqueDrawCommands.size() * sizeof(VkDrawIndexedIndirectCommand));
+        vkUnmapMemory(renderer->getDevice(), indirectBufferMemory);
+
+        // Bind mega-buffers
+        VkBuffer vertexBuffers[] = {renderer->getMegaVertexBuffer()};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(commandBuffer, renderer->getMegaIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+
+        // SINGLE DRAW CALL for all opaque chunks!
+        vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, 0,
+                                static_cast<uint32_t>(opaqueDrawCommands.size()),
+                                sizeof(VkDrawIndexedIndirectCommand));
+    }
+
+#else
+    // LEGACY PATH: Per-chunk draw calls
+    for (auto& chunk : m_chunks) {
+        // Skip chunks with no opaque vertices
+        if (chunk->getVertexCount() == 0) {
+            // Still need to check for transparent geometry
+            if (chunk->getTransparentVertexCount() > 0) {
+                // Stage 1: Distance culling
+                glm::vec3 delta = chunk->getCenter() - cameraPos;
+                float distanceSquared = glm::dot(delta, delta);
+
+                if (distanceSquared <= renderDistanceSquared) {
+                    // Stage 2: Frustum culling
+                    glm::vec3 chunkMin = chunk->getMin();
+                    glm::vec3 chunkMax = chunk->getMax();
+
+                    if (frustumAABBIntersect(frustum, chunkMin, chunkMax, frustumMargin)) {
+                        transparentChunks.push_back(std::make_pair(chunk, distanceSquared));
+                    } else{
+                        frustumCulled++;
+                    }
+                } else {
+                    distanceCulled++;
+                }
+            }
+            continue;
+        }
+
+        // Stage 1: Distance culling (fast, eliminates far chunks)
+        glm::vec3 delta = chunk->getCenter() - cameraPos;
+        float distanceSquared = glm::dot(delta, delta);
+
+        if (distanceSquared > renderDistanceSquared) {
+            distanceCulled++;
+            continue;
+        }
+
+        // Stage 2: Frustum culling (catches chunks behind camera)
         glm::vec3 chunkMin = chunk->getMin();
         glm::vec3 chunkMax = chunk->getMax();
 
@@ -892,6 +984,7 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
             transparentChunks.push_back(std::make_pair(chunk, distanceSquared));
         }
     }
+#endif
 
     // ========== PASS 2: RENDER TRANSPARENT GEOMETRY (SORTED) ==========
     if (!transparentChunks.empty() && renderer != nullptr) {
@@ -914,10 +1007,51 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
             m_lastSortPosition = cameraPos;
         }
 
-        // Render transparent chunks in sorted order
+#if USE_INDIRECT_DRAWING
+        // Build indirect draw commands for transparent geometry
+        std::vector<VkDrawIndexedIndirectCommand> transparentDrawCommands;
+        transparentDrawCommands.reserve(transparentChunks.size());
+
+        for (const auto& pair : transparentChunks) {
+            Chunk* chunk = pair.first;
+            VkDrawIndexedIndirectCommand cmd{};
+            cmd.indexCount = chunk->getTransparentIndexCount();
+            cmd.instanceCount = 1;
+            cmd.firstIndex = static_cast<uint32_t>(chunk->m_megaBufferTransparentIndexOffset / sizeof(uint32_t));
+            cmd.vertexOffset = static_cast<int32_t>(chunk->m_megaBufferTransparentBaseVertex);
+            cmd.firstInstance = 0;
+            transparentDrawCommands.push_back(cmd);
+        }
+
+        if (!transparentDrawCommands.empty()) {
+            // Upload transparent draw commands
+            void* data;
+            VkDeviceMemory transparentIndirectBufferMemory = renderer->getIndirectDrawTransparentBufferMemory();
+            VkBuffer transparentIndirectBuffer = renderer->getIndirectDrawTransparentBuffer();
+
+            vkMapMemory(renderer->getDevice(), transparentIndirectBufferMemory, 0,
+                       transparentDrawCommands.size() * sizeof(VkDrawIndexedIndirectCommand), 0, &data);
+            memcpy(data, transparentDrawCommands.data(),
+                   transparentDrawCommands.size() * sizeof(VkDrawIndexedIndirectCommand));
+            vkUnmapMemory(renderer->getDevice(), transparentIndirectBufferMemory);
+
+            // Bind transparent mega-buffers
+            VkBuffer vertexBuffers[] = {renderer->getMegaTransparentVertexBuffer()};
+            VkDeviceSize offsets[] = {0};
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(commandBuffer, renderer->getMegaTransparentIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+
+            // SINGLE DRAW CALL for all transparent chunks!
+            vkCmdDrawIndexedIndirect(commandBuffer, transparentIndirectBuffer, 0,
+                                    static_cast<uint32_t>(transparentDrawCommands.size()),
+                                    sizeof(VkDrawIndexedIndirectCommand));
+        }
+#else
+        // Legacy: Render transparent chunks individually
         for (const auto& pair : transparentChunks) {
             pair.first->render(commandBuffer, true);  // true = transparent
         }
+#endif
     }
 
     // Store stats in DebugState for display

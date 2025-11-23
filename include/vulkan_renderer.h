@@ -6,6 +6,11 @@
 
 #pragma once
 
+// ========== GPU OPTIMIZATION FLAGS ==========
+// Enable indirect drawing (reduces 300+ draw calls to 2 per frame)
+// Set to 1 to enable, 0 to use legacy per-chunk drawing
+#define USE_INDIRECT_DRAWING 1
+
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
@@ -363,6 +368,25 @@ public:
                            bool transparent);
 
     /**
+     * @brief Batched upload to mega-buffer (integrates with batch copy system)
+     *
+     * Records buffer copies to mega-buffer in current batch command buffer.
+     * Use with beginBufferCopyBatch() / submitBufferCopyBatch().
+     *
+     * @param srcVertexBuffer Source vertex staging buffer
+     * @param srcIndexBuffer Source index staging buffer
+     * @param vertexSize Size of vertex data
+     * @param indexSize Size of index data
+     * @param vertexOffset Target offset in mega vertex buffer
+     * @param indexOffset Target offset in mega index buffer
+     * @param transparent Whether this is transparent geometry
+     */
+    void batchCopyToMegaBuffer(VkBuffer srcVertexBuffer, VkBuffer srcIndexBuffer,
+                               VkDeviceSize vertexSize, VkDeviceSize indexSize,
+                               VkDeviceSize vertexOffset, VkDeviceSize indexOffset,
+                               bool transparent);
+
+    /**
      * @brief Bind pipeline with state caching (avoids redundant binds)
      *
      * Only calls vkCmdBindPipeline if the pipeline differs from currently bound.
@@ -376,6 +400,16 @@ public:
      * @brief Reset pipeline state cache (call at frame start)
      */
     void resetPipelineCache();
+
+    // ========== Mega-Buffer Getters (for Indirect Drawing) ==========
+    VkBuffer getMegaVertexBuffer() const { return m_megaVertexBuffer; }
+    VkBuffer getMegaIndexBuffer() const { return m_megaIndexBuffer; }
+    VkBuffer getMegaTransparentVertexBuffer() const { return m_megaTransparentVertexBuffer; }
+    VkBuffer getMegaTransparentIndexBuffer() const { return m_megaTransparentIndexBuffer; }
+    VkBuffer getIndirectDrawBuffer() const { return m_indirectDrawBuffer; }
+    VkDeviceMemory getIndirectDrawBufferMemory() const { return m_indirectDrawBufferMemory; }
+    VkBuffer getIndirectDrawTransparentBuffer() const { return m_indirectDrawTransparentBuffer; }
+    VkDeviceMemory getIndirectDrawTransparentBufferMemory() const { return m_indirectDrawTransparentBufferMemory; }
 
     // ========== Deferred Deletion (Fence-Based Resource Cleanup) ==========
 

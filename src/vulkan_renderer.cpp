@@ -3012,3 +3012,33 @@ void VulkanRenderer::bindPipelineCached(VkCommandBuffer commandBuffer, VkPipelin
 void VulkanRenderer::resetPipelineCache() {
     m_currentlyBoundPipeline = VK_NULL_HANDLE;
 }
+
+void VulkanRenderer::batchCopyToMegaBuffer(VkBuffer srcVertexBuffer, VkBuffer srcIndexBuffer,
+                                           VkDeviceSize vertexSize, VkDeviceSize indexSize,
+                                           VkDeviceSize vertexOffset, VkDeviceSize indexOffset,
+                                           bool transparent) {
+    if (m_batchCommandBuffer == VK_NULL_HANDLE) {
+        std::cerr << "Error: No batch command buffer active. Call beginBufferCopyBatch() first." << std::endl;
+        return;
+    }
+
+    // Copy vertex data to mega-buffer at offset
+    VkBufferCopy vertexCopyRegion{};
+    vertexCopyRegion.srcOffset = 0;
+    vertexCopyRegion.dstOffset = vertexOffset;
+    vertexCopyRegion.size = vertexSize;
+
+    vkCmdCopyBuffer(m_batchCommandBuffer, srcVertexBuffer,
+                   transparent ? m_megaTransparentVertexBuffer : m_megaVertexBuffer,
+                   1, &vertexCopyRegion);
+
+    // Copy index data to mega-buffer at offset
+    VkBufferCopy indexCopyRegion{};
+    indexCopyRegion.srcOffset = 0;
+    indexCopyRegion.dstOffset = indexOffset;
+    indexCopyRegion.size = indexSize;
+
+    vkCmdCopyBuffer(m_batchCommandBuffer, srcIndexBuffer,
+                   transparent ? m_megaTransparentIndexBuffer : m_megaIndexBuffer,
+                   1, &indexCopyRegion);
+}

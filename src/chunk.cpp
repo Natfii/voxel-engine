@@ -1281,6 +1281,111 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
         return;  // No vertices to upload
     }
 
+#if USE_INDIRECT_DRAWING
+    // ========== INDIRECT DRAWING PATH (MEGA-BUFFER) ==========
+    VkDevice device = renderer->getDevice();
+
+    // Initialize staging buffers to NULL
+    m_vertexStagingBuffer = VK_NULL_HANDLE;
+    m_vertexStagingBufferMemory = VK_NULL_HANDLE;
+    m_indexStagingBuffer = VK_NULL_HANDLE;
+    m_indexStagingBufferMemory = VK_NULL_HANDLE;
+    m_transparentVertexStagingBuffer = VK_NULL_HANDLE;
+    m_transparentVertexStagingBufferMemory = VK_NULL_HANDLE;
+    m_transparentIndexStagingBuffer = VK_NULL_HANDLE;
+    m_transparentIndexStagingBufferMemory = VK_NULL_HANDLE;
+
+    // ========== ALLOCATE AND UPLOAD OPAQUE GEOMETRY ==========
+    if (m_vertexCount > 0) {
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_indices.size();
+
+        // Allocate space in mega-buffer
+        if (!renderer->allocateMegaBufferSpace(vertexBufferSize, indexBufferSize, false,
+                                                m_megaBufferVertexOffset, m_megaBufferIndexOffset)) {
+            std::cerr << "ERROR: Failed to allocate mega-buffer space for chunk at ("
+                     << m_worldX << ", " << m_worldZ << ")" << std::endl;
+            return;
+        }
+
+        // Calculate base vertex for indexed drawing
+        m_megaBufferBaseVertex = static_cast<uint32_t>(m_megaBufferVertexOffset / sizeof(Vertex));
+
+        // Create staging buffers
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_vertexStagingBuffer, m_vertexStagingBufferMemory);
+
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_indexStagingBuffer, m_indexStagingBufferMemory);
+
+        // Copy data to staging buffers
+        void* data;
+        vkMapMemory(device, m_vertexStagingBufferMemory, 0, vertexBufferSize, 0, &data);
+        memcpy(data, m_vertices.data(), (size_t)vertexBufferSize);
+        vkUnmapMemory(device, m_vertexStagingBufferMemory);
+
+        vkMapMemory(device, m_indexStagingBufferMemory, 0, indexBufferSize, 0, &data);
+        memcpy(data, m_indices.data(), (size_t)indexBufferSize);
+        vkUnmapMemory(device, m_indexStagingBufferMemory);
+
+        // Record batched copy to mega-buffer
+        renderer->batchCopyToMegaBuffer(m_vertexStagingBuffer, m_indexStagingBuffer,
+                                       vertexBufferSize, indexBufferSize,
+                                       m_megaBufferVertexOffset, m_megaBufferIndexOffset,
+                                       false);
+    }
+
+    // ========== ALLOCATE AND UPLOAD TRANSPARENT GEOMETRY ==========
+    if (m_transparentVertexCount > 0) {
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_transparentVertices.size();
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_transparentIndices.size();
+
+        // Allocate space in transparent mega-buffer
+        if (!renderer->allocateMegaBufferSpace(vertexBufferSize, indexBufferSize, true,
+                                                m_megaBufferTransparentVertexOffset,
+                                                m_megaBufferTransparentIndexOffset)) {
+            std::cerr << "ERROR: Failed to allocate transparent mega-buffer space for chunk at ("
+                     << m_worldX << ", " << m_worldZ << ")" << std::endl;
+            return;
+        }
+
+        // Calculate base vertex for transparent indexed drawing
+        m_megaBufferTransparentBaseVertex = static_cast<uint32_t>(m_megaBufferTransparentVertexOffset / sizeof(Vertex));
+
+        // Create staging buffers
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_transparentVertexStagingBuffer, m_transparentVertexStagingBufferMemory);
+
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_transparentIndexStagingBuffer, m_transparentIndexStagingBufferMemory);
+
+        // Copy data to staging buffers
+        void* data;
+        vkMapMemory(device, m_transparentVertexStagingBufferMemory, 0, vertexBufferSize, 0, &data);
+        memcpy(data, m_transparentVertices.data(), (size_t)vertexBufferSize);
+        vkUnmapMemory(device, m_transparentVertexStagingBufferMemory);
+
+        vkMapMemory(device, m_transparentIndexStagingBufferMemory, 0, indexBufferSize, 0, &data);
+        memcpy(data, m_transparentIndices.data(), (size_t)indexBufferSize);
+        vkUnmapMemory(device, m_transparentIndexStagingBufferMemory);
+
+        // Record batched copy to transparent mega-buffer
+        renderer->batchCopyToMegaBuffer(m_transparentVertexStagingBuffer, m_transparentIndexStagingBuffer,
+                                       vertexBufferSize, indexBufferSize,
+                                       m_megaBufferTransparentVertexOffset, m_megaBufferTransparentIndexOffset,
+                                       true);
+    }
+
+#else
+    // ========== LEGACY PATH (PER-CHUNK BUFFERS) ==========
     // PERFORMANCE FIX: Use deferred deletion instead of vkDeviceWaitIdle()
     // Old buffers are queued for destruction after MAX_FRAMES_IN_FLIGHT frames
     destroyBuffers(renderer);
@@ -1384,6 +1489,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
         // Record copy command (doesn't submit yet)
         renderer->batchCopyBuffer(m_transparentIndexStagingBuffer, m_transparentIndexBuffer, indexBufferSize);
     }
+#endif
 
     // NOTE: Don't clean up staging buffers yet - caller will call cleanupStagingBuffers() after batch submit
     // NOTE: Don't free CPU-side mesh data yet - we keep it in case of errors
