@@ -102,9 +102,17 @@ struct BlockDefinition {
      * @brief Check if block can spawn in a biome with given climate
      * @param temperature Biome temperature (0-100)
      * @param moisture Biome moisture (0-100)
-     * @return true if block's climate requirements match the biome
+     * @param biomeMandated If true, block is explicitly required by biome (ignores climate restrictions)
+     * @return true if block can spawn in this biome
+     *
+     * Biome-mandated blocks (primary_surface_block, primary_stone_block, etc.) ALWAYS spawn
+     * regardless of climate properties. This is an "ultimate call" that overrides restrictions.
      */
-    bool matchesClimate(int temperature, int moisture) const {
+    bool matchesClimate(int temperature, int moisture, bool biomeMandated = false) const {
+        // Biome-mandated blocks override climate restrictions
+        if (biomeMandated) return true;
+
+        // Regular blocks must have climate properties AND match the range
         if (!canSpawnNaturally()) return false;
         return temperature >= minTemperature && temperature <= maxTemperature &&
                moisture >= minMoisture && moisture <= maxMoisture;

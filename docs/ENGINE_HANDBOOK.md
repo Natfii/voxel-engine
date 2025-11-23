@@ -2207,8 +2207,18 @@ min_moisture: 0               # Minimum biome moisture (0-100)
 max_moisture: 100             # Maximum biome moisture (0-100)
 ```
 
+**Rules:**
 - If ALL climate properties are omitted: Block does NOT spawn naturally (player-placed only)
 - If specified: Block spawns in biomes matching the temperature/moisture ranges
+
+**EXCEPTION - Biome Override (Ultimate Call):**
+Blocks explicitly specified in a biome's definition ALWAYS spawn in that biome, regardless of climate properties:
+- `primary_surface_block` - Ground layer blocks (e.g., grass, sand, snow)
+- `primary_stone_block` - Underground blocks (e.g., stone, sandstone)
+- `primary_log_block` - Tree trunk blocks
+- `primary_leave_block` - Tree foliage blocks
+
+These biome-mandated blocks override climate restrictions. A block can have no climate properties but still spawn if a biome explicitly requires it.
 
 ### Liquid Properties
 
@@ -2303,16 +2313,23 @@ vegetation_density: 50        # 0-100 grass/flowers/mushrooms rate
 ```yaml
 required_blocks: "6,7"         # Comma-separated block IDs that MUST spawn
 blacklisted_blocks: "4,5"      # Comma-separated block IDs that CANNOT spawn
-primary_surface_block: 3       # Surface layer block (default: grass = 3)
-primary_stone_block: 1         # Underground block (default: stone = 1)
-primary_log_block: 6           # Tree trunk block (-1 = use default)
-primary_leave_block: 7         # Tree foliage block (-1 = use default)
+primary_surface_block: 3       # Surface layer block (default: grass = 3) **OVERRIDES CLIMATE**
+primary_stone_block: 1         # Underground block (default: stone = 1) **OVERRIDES CLIMATE**
+primary_log_block: 6           # Tree trunk block (-1 = use default) **OVERRIDES CLIMATE**
+primary_leave_block: 7         # Tree foliage block (-1 = use default) **OVERRIDES CLIMATE**
 ```
+
+**IMPORTANT - Climate Override:**
+The four `primary_*` block properties act as **ultimate calls** that override block climate restrictions:
+- Blocks specified here ALWAYS spawn in this biome, even if they lack climate properties
+- Blocks specified here ALWAYS spawn even if their climate range doesn't match the biome
+- This allows you to use player-only blocks (no climate properties) as biome terrain
+- Example: A crafted "Frozen Stone" block with no climate properties can still be `primary_stone_block` in an ice biome
 
 **Usage Example:**
 - Desert biome: `blacklisted_blocks: "3"` (no grass blocks)
 - Mushroom biome: `required_blocks: "8,9"` (must have mushroom blocks)
-- Ice biome: `primary_surface_block: 10` (ice instead of grass)
+- Ice biome: `primary_surface_block: 10` (ice spawns regardless of ice block's climate properties)
 
 ### Structure Control
 
