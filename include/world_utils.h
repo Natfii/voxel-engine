@@ -66,9 +66,10 @@ inline BlockCoordinates worldToBlockCoords(float worldX, float worldY, float wor
 
     // Convert world coordinates to block coordinates
     // Blocks are 1.0 units in size
-    int blockX = static_cast<int>(std::floor(worldX));
-    int blockY = static_cast<int>(std::floor(worldY));
-    int blockZ = static_cast<int>(std::floor(worldZ));
+    // PERFORMANCE: Fast path for positive coordinates (simple cast), slow path for negatives (floor)
+    int blockX = (worldX >= 0.0f) ? static_cast<int>(worldX) : static_cast<int>(std::floor(worldX));
+    int blockY = (worldY >= 0.0f) ? static_cast<int>(worldY) : static_cast<int>(std::floor(worldY));
+    int blockZ = (worldZ >= 0.0f) ? static_cast<int>(worldZ) : static_cast<int>(std::floor(worldZ));
 
     // PERFORMANCE: Use bit shifts instead of division (24-39x faster!)
     // Division by 32: 24-39 CPU cycles

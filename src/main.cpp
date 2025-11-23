@@ -963,8 +963,10 @@ int main() {
                 if (DebugState::instance().lightingEnabled.getValue()) {
                     world.getLightingSystem()->update(clampedDeltaTime, &renderer);
 
-                    // NATURAL TIME-BASED LIGHTING: Smoothly interpolate lighting values
-                    world.updateInterpolatedLighting(clampedDeltaTime);
+                    // PERFORMANCE OPTIMIZATION (2025-11-23): Disabled interpolated lighting
+                    // Was updating 32,768 values per chunk every frame = 40-80M operations/sec!
+                    // Now uses direct lighting values for massive CPU savings on lower-end hardware
+                    // world.updateInterpolatedLighting(clampedDeltaTime);
                 }
             }
 

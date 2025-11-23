@@ -6,7 +6,7 @@ durability: 3           # Harder than snow but still breakable
 liquid: false           # Solid frozen water
 affected_by_gravity: false
 flammability: 0
-transparency: 0.4       # 40% transparent - can see through ice
+transparency: 0.0       # FIXED (2025-11-23): Changed from 0.4 to 0.0 - ice now behaves like solid block for lighting
 
 # Biome compatibility
 temperature_range: "0-20"   # Only in very cold climates

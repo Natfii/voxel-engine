@@ -205,14 +205,15 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     // Age 100 (old) = very flat, plains-like (low variation)
 
     // Calculate height variation based on age
-    // Young terrain (age=0): variation = 30 blocks
+    // ADJUSTED (2025-11-23): Reduced from 30→20 to prevent extreme mountains
+    // Young terrain (age=0): variation = 20 blocks (was 30)
     // Old terrain (age=100): variation = 5 blocks
     float ageNormalized = biome->age / 100.0f;  // 0.0 to 1.0
 
     // Apply age bias from menu (-1.0 = flatter, +1.0 = more mountainous)
     ageNormalized = std::clamp(ageNormalized - m_ageBias, 0.0f, 1.0f);
 
-    float heightVariation = 30.0f - (ageNormalized * 25.0f);  // 30 to 5
+    float heightVariation = 20.0f - (ageNormalized * 15.0f);  // 20 to 5 (was 30 to 5)
 
     // Apply biome's height multiplier for special terrain (mountains, etc.)
     float baseHeightMultiplier = biome->height_multiplier;
@@ -262,9 +263,10 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
             float mountainDensity = mountainCount / float(totalSamples);
 
             // Scale height multiplier based on mountain range size
-            // Small isolated mountains: 1.0x multiplier (stay at base height)
-            // Large mountain ranges: up to 2.0x multiplier (grow much taller)
-            sizeScaling = 0.5f + (mountainDensity * 1.5f);  // Range: 0.5x to 2.0x
+            // ADJUSTED (2025-11-23): Reduced from 2.0x→1.5x max to prevent extreme mountains
+            // Small isolated mountains: 0.7x multiplier (slightly shorter)
+            // Large mountain ranges: up to 1.5x multiplier (was 2.0x)
+            sizeScaling = 0.7f + (mountainDensity * 0.8f);  // Range: 0.7x to 1.5x (was 0.5x to 2.0x)
 
             // Store in cache
             {

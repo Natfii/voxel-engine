@@ -98,6 +98,15 @@ void WaterSimulation::update(float deltaTime, World* world, const glm::vec3& pla
 void WaterSimulation::updateWaterCell(const glm::ivec3& pos, WaterCell& cell, World* world, float deltaTime) {
     if (cell.level == 0) return;
 
+    // FIXED (2025-11-23): Don't update water source blocks - they should maintain their level
+    // Source blocks only spread water, they don't lose it to gravity/evaporation
+    // Their level is maintained by updateWaterSources()
+    if (hasWaterSource(pos)) {
+        // Source blocks spread water but don't lose water themselves
+        spreadHorizontally(pos, cell, world);
+        return;
+    }
+
     // Track original level for particle spawning
     uint8_t originalLevel = cell.level;
 
