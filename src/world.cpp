@@ -524,28 +524,36 @@ bool World::hasHorizontalNeighbors(Chunk* chunk) {
 }
 
 void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
-    if (m_pendingDecorations.empty()) return;
+    // THREAD SAFETY (2025-11-23): Lock for checking emptiness
+    {
+        std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+        if (m_pendingDecorations.empty()) return;
+    }
 
     // OPTIMIZATION (2025-11-23): Parallel decoration for 3× faster processing
     // Phase 1: Collect chunks ready for decoration
     std::vector<Chunk*> chunksToDecorate;
     std::vector<Chunk*> chunksToRemove;
 
-    auto it = m_pendingDecorations.begin();
-    while (it != m_pendingDecorations.end() && chunksToDecorate.size() < static_cast<size_t>(maxChunks)) {
-        Chunk* chunk = *it;
+    {
+        // THREAD SAFETY: Lock while iterating pending decorations
+        std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+        auto it = m_pendingDecorations.begin();
+        while (it != m_pendingDecorations.end() && chunksToDecorate.size() < static_cast<size_t>(maxChunks)) {
+            Chunk* chunk = *it;
 
-        if (chunk && chunk->needsDecoration() && hasHorizontalNeighbors(chunk)) {
-            chunksToDecorate.push_back(chunk);
-            chunksToRemove.push_back(chunk);
-        } else if (chunk && !chunk->needsDecoration()) {
-            Logger::debug() << "Removing chunk (" << chunk->getChunkX()
-                           << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ()
-                           << ") from pending decorations - loaded from disk";
-            chunksToRemove.push_back(chunk);
+            if (chunk && chunk->needsDecoration() && hasHorizontalNeighbors(chunk)) {
+                chunksToDecorate.push_back(chunk);
+                chunksToRemove.push_back(chunk);
+            } else if (chunk && !chunk->needsDecoration()) {
+                Logger::debug() << "Removing chunk (" << chunk->getChunkX()
+                               << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ()
+                               << ") from pending decorations - loaded from disk";
+                chunksToRemove.push_back(chunk);
+            }
+            ++it;
         }
-        ++it;
-    }
+    } // Release lock before parallel decoration
 
     // Phase 2: Parallel decoration (CPU-only, independent operations)
     if (!chunksToDecorate.empty()) {
@@ -646,14 +654,22 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
             }
         }
 
+        size_t pendingCount;
+        {
+            std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+            pendingCount = m_pendingDecorations.size();
+        }
         Logger::info() << "Processed " << chunksToDecorate.size()
                       << " pending decorations in parallel ("
-                      << m_pendingDecorations.size() << " still pending)";
+                      << pendingCount << " still pending)";
     }
 
     // Remove processed chunks from pending set
-    for (Chunk* chunk : chunksToRemove) {
-        m_pendingDecorations.erase(chunk);
+    {
+        std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+        for (Chunk* chunk : chunksToRemove) {
+            m_pendingDecorations.erase(chunk);
+        }
     }
 }
 
@@ -1273,10 +1289,15 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
                     chunkPtr->setNeedsDecoration(false);  // Mark as decorated
                 } else {
                     // Neighbors not ready yet - defer decoration until later
-                    m_pendingDecorations.insert(chunkPtr);
+                    size_t pendingCount;
+                    {
+                        std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+                        m_pendingDecorations.insert(chunkPtr);
+                        pendingCount = m_pendingDecorations.size();
+                    }
                     Logger::debug() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                                    << ") waiting for neighbors before decoration (pending: "
-                                   << m_pendingDecorations.size() << ")";
+                                   << pendingCount << ")";
                 }
             } else {
                 Logger::debug() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
@@ -1389,7 +1410,10 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
     Chunk* chunkPtr = it->second.get();
 
     // DECORATION FIX: Remove from pending decorations if present
-    m_pendingDecorations.erase(chunkPtr);
+    {
+        std::lock_guard<std::mutex> decorLock(m_pendingDecorationsMutex);
+        m_pendingDecorations.erase(chunkPtr);
+    }
     auto vecIt = std::find(m_chunks.begin(), m_chunks.end(), chunkPtr);
     if (vecIt != m_chunks.end()) {
         std::swap(*vecIt, m_chunks.back());
@@ -1420,7 +1444,10 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
                        << "), returning to pool instead";
         releaseChunk(std::move(it->second));
         m_chunkMap.erase(it);
-        m_dirtyChunks.erase(coord);  // Remove from dirty set if present
+        {
+            std::lock_guard<std::mutex> dirtyLock(m_dirtyChunksMutex);
+            m_dirtyChunks.erase(coord);  // Remove from dirty set if present
+        }
         return true;
     }
 
@@ -1438,10 +1465,13 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
         // This prevents constant disk writes during fast movement
         // Modified chunks will be saved during next autosave or manual save
         // If they're modified again before autosave, that's fine - we'll save the latest version
-        if (m_dirtyChunks.count(evictCoord) > 0) {
-            Logger::debug() << "Evicted dirty chunk (" << evictCoord.x << ", " << evictCoord.y << ", " << evictCoord.z
-                           << ") - will save during next autosave";
-            // Keep chunk in dirty set for next autosave
+        {
+            std::lock_guard<std::mutex> dirtyLock(m_dirtyChunksMutex);
+            if (m_dirtyChunks.count(evictCoord) > 0) {
+                Logger::debug() << "Evicted dirty chunk (" << evictCoord.x << ", " << evictCoord.y << ", " << evictCoord.z
+                               << ") - will save during next autosave";
+                // Keep chunk in dirty set for next autosave
+            }
         }
 
         // Return evicted chunk to pool for reuse (CHUNK POOLING)
@@ -2193,7 +2223,10 @@ int World::saveModifiedChunks() {
     }
 
     // Clear dirty flags after successful save
-    m_dirtyChunks.clear();
+    {
+        std::lock_guard<std::mutex> dirtyLock(m_dirtyChunksMutex);
+        m_dirtyChunks.clear();
+    }
 
     if (savedCount > 0) {
         Logger::info() << "Autosave: saved " << savedCount << " modified chunks";
@@ -2203,16 +2236,18 @@ int World::saveModifiedChunks() {
 }
 
 void World::markChunkDirty(int chunkX, int chunkY, int chunkZ) {
-    // THREAD SAFETY FIX: Protect m_dirtyChunks with mutex
-    // Without this, concurrent calls from block placement + autosave cause crashes
-    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+    // THREAD SAFETY FIX (2025-11-23): Use dedicated mutex for m_dirtyChunks
+    // This prevents parallel decoration from serializing on the chunk map mutex
+    // PERFORMANCE: Fine-grained locking allows parallel threads to mark chunks dirty concurrently
+    std::lock_guard<std::mutex> lock(m_dirtyChunksMutex);
     ChunkCoord coord{chunkX, chunkY, chunkZ};
     m_dirtyChunks.insert(coord);
 }
 
 void World::markChunkDirtyUnsafe(int chunkX, int chunkY, int chunkZ) {
-    // UNSAFE: Caller must already hold m_chunkMapMutex
-    // Used internally by functions that already hold the lock to prevent deadlock
+    // NOTE (2025-11-23): Now safe to call even with m_chunkMapMutex held
+    // m_dirtyChunks has its own dedicated mutex, no deadlock risk
+    std::lock_guard<std::mutex> lock(m_dirtyChunksMutex);
     ChunkCoord coord{chunkX, chunkY, chunkZ};
     m_dirtyChunks.insert(coord);
 }

@@ -1615,6 +1615,8 @@ int Chunk::getBlock(int x, int y, int z) const {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
         return -1;  // Out of bounds
     }
+    // THREAD SAFETY (2025-11-23): Lock for concurrent reads during parallel mesh generation
+    std::lock_guard<std::mutex> lock(m_blockDataMutex);
     return m_blocks[x][y][z];
 }
 
@@ -1622,6 +1624,8 @@ void Chunk::setBlock(int x, int y, int z, int blockID) {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
         return;  // Out of bounds
     }
+    // THREAD SAFETY (2025-11-23): Lock for concurrent writes during parallel decoration
+    std::lock_guard<std::mutex> lock(m_blockDataMutex);
     m_blocks[x][y][z] = blockID;
 
     // PERFORMANCE: Update heightmap for fast sky light calculation
@@ -1633,6 +1637,8 @@ uint8_t Chunk::getBlockMetadata(int x, int y, int z) const {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
         return 0;  // Out of bounds
     }
+    // THREAD SAFETY (2025-11-23): Lock for concurrent reads
+    std::lock_guard<std::mutex> lock(m_blockDataMutex);
     return m_blockMetadata[x][y][z];
 }
 
@@ -1640,6 +1646,8 @@ void Chunk::setBlockMetadata(int x, int y, int z, uint8_t metadata) {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
         return;  // Out of bounds
     }
+    // THREAD SAFETY (2025-11-23): Lock for concurrent writes (water level changes)
+    std::lock_guard<std::mutex> lock(m_blockDataMutex);
     m_blockMetadata[x][y][z] = metadata;
 }
 

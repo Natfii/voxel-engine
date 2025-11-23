@@ -9,6 +9,7 @@
 #include <array>
 #include <memory>
 #include <string>
+#include <mutex>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include "voxelmath.h"
@@ -652,6 +653,7 @@ private:
     int m_x, m_y, m_z;                      ///< Chunk coordinates in chunk space
     int m_blocks[WIDTH][HEIGHT][DEPTH];    ///< Block ID storage (32 KB)
     uint8_t m_blockMetadata[WIDTH][HEIGHT][DEPTH]; ///< Block metadata (water levels, etc.) (32 KB)
+    mutable std::mutex m_blockDataMutex;    ///< THREAD SAFETY: Protects m_blocks and m_blockMetadata for parallel decoration
     std::array<BlockLight, WIDTH * HEIGHT * DEPTH> m_lightData; ///< Light data (sky + block light, 32 KB)
     bool m_lightingDirty;                   ///< True if lighting changed (needs mesh regen)
     bool m_needsDecoration;                 ///< True if chunk is freshly generated and needs decoration
