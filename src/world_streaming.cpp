@@ -199,18 +199,21 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
         m_completedChunks.erase(m_completedChunks.begin(), m_completedChunks.begin() + count);
     }
 
-    // Upload to GPU (main thread only - Vulkan not thread-safe)
+    // PHASE 1: Add chunks to world and process decoration/lighting (DEFERRED MESH & GPU UPLOAD)
+    // Store chunk coordinates for parallel mesh generation
+    std::vector<std::tuple<int, int, int>> addedChunkCoords;
+
     for (auto& chunk : chunksToUpload) {
         if (chunk) {
             try {
-                // Add chunk to world's chunk map
-                // addStreamedChunk will decorate, light, regenerate mesh, and upload to GPU
                 int chunkX = chunk->getChunkX();
                 int chunkY = chunk->getChunkY();
                 int chunkZ = chunk->getChunkZ();
                 uint32_t vertexCount = chunk->getVertexCount();
 
-                bool added = m_world->addStreamedChunk(std::move(chunk), m_renderer);
+                // Add chunk to world with DEFERRED mesh generation AND GPU upload
+                // Decoration and lighting happen, but mesh generation is deferred for parallelization
+                bool added = m_world->addStreamedChunk(std::move(chunk), m_renderer, true, true);
 
                 // Remove from in-flight tracking
                 {
@@ -223,17 +226,19 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
                                    << chunkY << ", " << chunkZ
                                    << ") - Vertices: " << vertexCount;
                     m_totalChunksLoaded++;
+
+                    // Store coordinates for parallel mesh generation
+                    addedChunkCoords.push_back({chunkX, chunkY, chunkZ});
                 } else {
                     Logger::warning() << "Failed to integrate chunk (" << chunkX << ", "
                                   << chunkY << ", " << chunkZ << ") - duplicate or out of bounds";
                 }
             } catch (const std::exception& e) {
-                // Track the failure for retry
                 int chunkX = chunk ? chunk->getChunkX() : -1;
                 int chunkY = chunk ? chunk->getChunkY() : -1;
                 int chunkZ = chunk ? chunk->getChunkZ() : -1;
 
-                Logger::error() << "Failed to upload chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): " << e.what();
+                Logger::error() << "Failed to process chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): " << e.what();
 
                 if (chunk) {
                     trackFailedChunk(chunkX, chunkY, chunkZ, std::string("Buffer creation failed: ") + e.what());
@@ -243,6 +248,74 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
                     m_chunksInFlight.erase(ChunkCoord{chunkX, chunkY, chunkZ});
                 }
             }
+        }
+    }
+
+    // PHASE 2: PARALLEL MESH GENERATION (all chunks meshed simultaneously)
+    // OPTIMIZATION (2025-11-23): Mesh generation is CPU-intensive, parallelize for huge speedup
+    // World::getBlockAt uses shared_lock, allowing concurrent reads from multiple threads
+    if (!addedChunkCoords.empty()) {
+        try {
+            Logger::info() << "Beginning parallel mesh generation for " << addedChunkCoords.size() << " chunks";
+
+            std::vector<std::thread> threads;
+            std::mutex errorMutex;
+            std::vector<std::string> errors;
+
+            for (const auto& [chunkX, chunkY, chunkZ] : addedChunkCoords) {
+                threads.emplace_back([this, chunkX, chunkY, chunkZ, &errorMutex, &errors]() {
+                    try {
+                        Chunk* chunkPtr = m_world->getChunkAt(chunkX, chunkY, chunkZ);
+                        if (chunkPtr) {
+                            chunkPtr->generateMesh(m_world);
+                        }
+                    } catch (const std::exception& e) {
+                        std::lock_guard<std::mutex> lock(errorMutex);
+                        std::ostringstream oss;
+                        oss << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): " << e.what();
+                        errors.push_back(oss.str());
+                    }
+                });
+            }
+
+            // Wait for all mesh generation to complete
+            for (auto& thread : threads) {
+                thread.join();
+            }
+
+            // Log any errors
+            for (const auto& error : errors) {
+                Logger::error() << "Failed to mesh chunk: " << error;
+            }
+
+            Logger::info() << "Completed parallel mesh generation for " << addedChunkCoords.size() << " chunks";
+        } catch (const std::exception& e) {
+            Logger::error() << "Failed parallel mesh generation: " << e.what();
+        }
+    }
+
+    // PHASE 3: BATCHED GPU UPLOAD (all chunks in ONE vkQueueSubmit)
+    // OPTIMIZATION (2025-11-23): Batch all chunk uploads into single GPU submission
+    // Reduces vkQueueSubmit overhead from N calls to 1 call (90% reduction for 10 chunks)
+    if (!addedChunkCoords.empty() && m_renderer) {
+        try {
+            Logger::info() << "Beginning batched GPU upload for " << addedChunkCoords.size() << " chunks";
+
+            m_renderer->beginBatchedChunkUploads();
+
+            for (const auto& [chunkX, chunkY, chunkZ] : addedChunkCoords) {
+                Chunk* chunkPtr = m_world->getChunkAt(chunkX, chunkY, chunkZ);
+                if (chunkPtr) {
+                    m_renderer->addChunkToBatch(chunkPtr);
+                }
+            }
+
+            m_renderer->submitBatchedChunkUploads();
+
+            Logger::info() << "Completed batched GPU upload for " << addedChunkCoords.size()
+                          << " chunks in single vkQueueSubmit";
+        } catch (const std::exception& e) {
+            Logger::error() << "Failed batched GPU upload: " << e.what();
         }
     }
 }

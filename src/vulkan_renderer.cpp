@@ -2134,6 +2134,66 @@ void VulkanRenderer::submitAsyncChunkUpload(Chunk* chunk) {
     }
 }
 
+void VulkanRenderer::beginBatchedChunkUploads() {
+    // Start a new batch command buffer (same as beginAsyncChunkUpload)
+    beginBufferCopyBatch();
+    m_batchIsAsync = true;
+
+    // Clear staging buffer collection for this batch
+    m_batchStagingBuffers.clear();
+}
+
+void VulkanRenderer::addChunkToBatch(Chunk* chunk) {
+    // Record this chunk's upload commands into the batch command buffer
+    // The chunk calls createVertexBufferBatched() which uses batchCopyToMegaBuffer()
+    chunk->createVertexBufferBatched(this);
+
+    // Collect staging buffers from this chunk (ownership will transfer on submit)
+    if (chunk->m_vertexStagingBuffer != VK_NULL_HANDLE) {
+        m_batchStagingBuffers.push_back({chunk->m_vertexStagingBuffer, chunk->m_vertexStagingBufferMemory});
+    }
+    if (chunk->m_indexStagingBuffer != VK_NULL_HANDLE) {
+        m_batchStagingBuffers.push_back({chunk->m_indexStagingBuffer, chunk->m_indexStagingBufferMemory});
+    }
+    if (chunk->m_transparentVertexStagingBuffer != VK_NULL_HANDLE) {
+        m_batchStagingBuffers.push_back({chunk->m_transparentVertexStagingBuffer, chunk->m_transparentVertexStagingBufferMemory});
+    }
+    if (chunk->m_transparentIndexStagingBuffer != VK_NULL_HANDLE) {
+        m_batchStagingBuffers.push_back({chunk->m_transparentIndexStagingBuffer, chunk->m_transparentIndexStagingBufferMemory});
+    }
+
+    // Clear chunk's staging buffer references (ownership transferred to batch)
+    chunk->m_vertexStagingBuffer = VK_NULL_HANDLE;
+    chunk->m_vertexStagingBufferMemory = VK_NULL_HANDLE;
+    chunk->m_indexStagingBuffer = VK_NULL_HANDLE;
+    chunk->m_indexStagingBufferMemory = VK_NULL_HANDLE;
+    chunk->m_transparentVertexStagingBuffer = VK_NULL_HANDLE;
+    chunk->m_transparentVertexStagingBufferMemory = VK_NULL_HANDLE;
+    chunk->m_transparentIndexStagingBuffer = VK_NULL_HANDLE;
+    chunk->m_transparentIndexStagingBufferMemory = VK_NULL_HANDLE;
+}
+
+void VulkanRenderer::submitBatchedChunkUploads() {
+    // Submit all uploads in a single vkQueueSubmit call
+    submitBufferCopyBatch(true);
+
+    // Add all collected staging buffers to the pending upload
+    std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
+    if (!m_pendingUploads.empty()) {
+        auto& upload = m_pendingUploads.back();
+
+        // Transfer all staging buffers from batch to pending upload
+        upload.stagingBuffers.insert(
+            upload.stagingBuffers.end(),
+            m_batchStagingBuffers.begin(),
+            m_batchStagingBuffers.end()
+        );
+
+        // Clear the batch staging buffers (ownership transferred)
+        m_batchStagingBuffers.clear();
+    }
+}
+
 void VulkanRenderer::processAsyncUploads() {
     std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
 

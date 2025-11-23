@@ -229,9 +229,11 @@ public:
      *
      * @param chunk Chunk to add (ownership transferred)
      * @param renderer Vulkan renderer for buffer creation (after decoration/lighting)
+     * @param deferGPUUpload If true, mesh generation happens but GPU upload is deferred
+     * @param deferMeshGeneration If true, even mesh generation is deferred
      * @return True if chunk was added, false if duplicate/out of bounds
      */
-    bool addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer);
+    bool addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer, bool deferGPUUpload = false, bool deferMeshGeneration = false);
 
     /**
      * @brief Removes a chunk from the world

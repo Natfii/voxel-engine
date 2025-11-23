@@ -322,6 +322,39 @@ public:
      */
     void submitAsyncChunkUpload(class Chunk* chunk);
 
+    /**
+     * @brief Begin a multi-chunk batched GPU upload
+     *
+     * Starts a batch that can contain multiple chunks' uploads.
+     * All chunks will share a single command buffer and vkQueueSubmit.
+     *
+     * Pattern:
+     *   renderer->beginBatchedChunkUploads();
+     *   for (chunk : chunks) {
+     *       renderer->addChunkToBatch(chunk);
+     *   }
+     *   renderer->submitBatchedChunkUploads();
+     */
+    void beginBatchedChunkUploads();
+
+    /**
+     * @brief Add a single chunk to the current batch
+     *
+     * Records this chunk's upload commands into the batch command buffer.
+     * Does NOT submit - call submitBatchedChunkUploads() after all chunks added.
+     *
+     * @param chunk Chunk to upload
+     */
+    void addChunkToBatch(class Chunk* chunk);
+
+    /**
+     * @brief Submit all batched chunk uploads at once
+     *
+     * Submits a single vkQueueSubmit containing all chunks added via addChunkToBatch().
+     * Staging buffers will be cleaned up asynchronously when GPU completes.
+     */
+    void submitBatchedChunkUploads();
+
     // ========== Indirect Drawing API (GPU Optimization) ==========
 
     /**
@@ -748,6 +781,9 @@ private:
     // Batched buffer copying
     VkCommandBuffer m_batchCommandBuffer = VK_NULL_HANDLE;
     bool m_batchIsAsync = false;  // Track if current batch should be async
+
+    // Multi-chunk batch upload tracking
+    std::vector<std::pair<VkBuffer, VkDeviceMemory>> m_batchStagingBuffers;  // Staging buffers for current batch
 
     // Async upload tracking
     struct PendingUpload {
