@@ -673,4 +673,21 @@ private:
      * @return True if decompression succeeded, false if data corrupted
      */
     bool decompressMetadata(const std::vector<uint8_t>& input);
+
+    /**
+     * @brief Compresses lighting data using Run-Length Encoding (LIGHTING PERSISTENCE)
+     *
+     * OPTIMIZATION (2025-11-23): Saves 32 KB lighting to ~1-3 KB compressed.
+     * Eliminates 3-5 second lighting recalculation on world load!
+     *
+     * @param output Vector to write compressed lighting data to
+     */
+    void compressLighting(std::vector<uint8_t>& output) const;
+
+    /**
+     * @brief Decompresses lighting data from Run-Length Encoding
+     * @param input Compressed lighting data
+     * @return True if decompression succeeded, false if data corrupted
+     */
+    bool decompressLighting(const std::vector<uint8_t>& input);
 };

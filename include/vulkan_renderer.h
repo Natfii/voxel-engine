@@ -478,6 +478,24 @@ public:
      */
     void transitionCubeMapLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
 
+    /**
+     * @brief Batch transition multiple images in a single command buffer (OPTIMIZATION)
+     *
+     * Reduces command buffer submissions and synchronization overhead by batching
+     * multiple pipeline barriers into a single vkCmdPipelineBarrier call.
+     *
+     * @param images Vector of images to transition
+     * @param formats Vector of image formats (must match images size)
+     * @param layerCounts Vector of layer counts (1 for regular textures, 6 for cube maps)
+     * @param oldLayout Current layout
+     * @param newLayout Desired layout
+     */
+    void batchTransitionImageLayouts(const std::vector<VkImage>& images,
+                                     const std::vector<VkFormat>& formats,
+                                     const std::vector<uint32_t>& layerCounts,
+                                     VkImageLayout oldLayout,
+                                     VkImageLayout newLayout);
+
 private:
     // Initialization
     void createInstance();

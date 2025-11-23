@@ -16,7 +16,8 @@
       "Bash(cmd /c compile_shaders.bat)",
       "Bash(rm:*)",
       "Bash(git restore:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(\"C:\\Users\\Natal\\Documents\\GitHub\\voxel-engine\\todo.txt\")"
     ],
     "deny": [],
     "ask": []

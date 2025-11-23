@@ -1908,6 +1908,76 @@ void VulkanRenderer::transitionCubeMapLayout(VkImage image, VkFormat format, VkI
     endSingleTimeCommands(commandBuffer);
 }
 
+// ========== OPTIMIZATION (2025-11-23): BATCHED PIPELINE BARRIERS ==========
+// Batch multiple image layout transitions into a single command buffer with one vkCmdPipelineBarrier call.
+// This reduces command buffer submissions from N to 1, improving initialization performance.
+void VulkanRenderer::batchTransitionImageLayouts(const std::vector<VkImage>& images,
+                                                 const std::vector<VkFormat>& formats,
+                                                 const std::vector<uint32_t>& layerCounts,
+                                                 VkImageLayout oldLayout,
+                                                 VkImageLayout newLayout) {
+    if (images.empty()) return;
+
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+    // Create barrier for each image
+    std::vector<VkImageMemoryBarrier> barriers(images.size());
+
+    VkPipelineStageFlags sourceStage;
+    VkPipelineStageFlags destinationStage;
+
+    // Determine pipeline stages and access masks based on layouts
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+
+        for (size_t i = 0; i < images.size(); i++) {
+            barriers[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barriers[i].oldLayout = oldLayout;
+            barriers[i].newLayout = newLayout;
+            barriers[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[i].image = images[i];
+            barriers[i].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barriers[i].subresourceRange.baseMipLevel = 0;
+            barriers[i].subresourceRange.levelCount = 1;
+            barriers[i].subresourceRange.baseArrayLayer = 0;
+            barriers[i].subresourceRange.layerCount = layerCounts[i];
+            barriers[i].srcAccessMask = 0;
+            barriers[i].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        }
+    } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+        for (size_t i = 0; i < images.size(); i++) {
+            barriers[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barriers[i].oldLayout = oldLayout;
+            barriers[i].newLayout = newLayout;
+            barriers[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[i].image = images[i];
+            barriers[i].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barriers[i].subresourceRange.baseMipLevel = 0;
+            barriers[i].subresourceRange.levelCount = 1;
+            barriers[i].subresourceRange.baseArrayLayer = 0;
+            barriers[i].subresourceRange.layerCount = layerCounts[i];
+            barriers[i].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barriers[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        }
+    } else {
+        throw std::invalid_argument("unsupported layout transition in batch!");
+    }
+
+    // Single vkCmdPipelineBarrier call for all images (OPTIMIZATION!)
+    vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0,
+                        0, nullptr,
+                        0, nullptr,
+                        static_cast<uint32_t>(barriers.size()), barriers.data());
+
+    endSingleTimeCommands(commandBuffer);
+}
+
 void VulkanRenderer::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
                                   VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
     VkBufferCreateInfo bufferInfo{};
@@ -2314,7 +2384,7 @@ void VulkanRenderer::createProceduralCubeMap() {
                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                  m_skyboxImage, m_skyboxMemory);
 
-    // Transition to transfer dst
+    // Transition to transfer dst - batched with night skybox later for performance
     transitionCubeMapLayout(m_skyboxImage, VK_FORMAT_R8G8B8A8_SRGB,
                            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
@@ -2339,37 +2409,14 @@ void VulkanRenderer::createProceduralCubeMap() {
 
     endSingleTimeCommands(commandBuffer);
 
-    // Transition to shader read
-    transitionCubeMapLayout(m_skyboxImage, VK_FORMAT_R8G8B8A8_SRGB,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    // OPTIMIZATION (2025-11-23): Final transition deferred - will batch with night skybox
+    // See createSkybox() for batched final transition
 
     // Cleanup staging buffer
     vkDestroyBuffer(m_device, stagingBuffer, nullptr);
     vkFreeMemory(m_device, stagingBufferMemory, nullptr);
 
-    // Create cube map view
-    m_skyboxView = createCubeMapView(m_skyboxImage, VK_FORMAT_R8G8B8A8_SRGB);
-
-    // Create cube map sampler
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.anisotropyEnable = VK_FALSE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-
-    if (vkCreateSampler(m_device, &samplerInfo, nullptr, &m_skyboxSampler) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create cube map sampler!");
-    }
-
+    // NOTE: View and sampler creation moved to createSkybox() after batched transition
     std::cout << "Created procedural cube map skybox (256x256 per face)" << std::endl;
 }
 
@@ -2517,17 +2564,14 @@ void VulkanRenderer::createNightCubeMap() {
 
     endSingleTimeCommands(commandBuffer);
 
-    // Transition to shader read
-    transitionCubeMapLayout(m_nightSkyboxImage, VK_FORMAT_R8G8B8A8_SRGB,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    // OPTIMIZATION (2025-11-23): Final transition deferred - will batch with day skybox
+    // See createSkybox() for batched final transition
 
     // Cleanup staging buffer
     vkDestroyBuffer(m_device, stagingBuffer, nullptr);
     vkFreeMemory(m_device, stagingBufferMemory, nullptr);
 
-    // Create cube map view
-    m_nightSkyboxView = createCubeMapView(m_nightSkyboxImage, VK_FORMAT_R8G8B8A8_SRGB);
-
+    // NOTE: View creation moved to createSkybox() after batched transition
     std::cout << "Created night cube map skybox (256x256 per face)" << std::endl;
 }
 
@@ -2536,6 +2580,43 @@ void VulkanRenderer::createSkybox() {
     // Generate procedural cube maps
     createProceduralCubeMap();
     createNightCubeMap();
+
+    // ========== OPTIMIZATION (2025-11-23): BATCHED PIPELINE BARRIERS ==========
+    // Batch the final transition for both cube maps into a single vkCmdPipelineBarrier call
+    // Old: 2 separate transitions = 2 command buffer submissions
+    // New: 1 batched transition = 1 command buffer submission (50% reduction!)
+    std::cout << "Batching cube map transitions for performance..." << std::endl;
+    batchTransitionImageLayouts(
+        {m_skyboxImage, m_nightSkyboxImage},                    // Images to transition
+        {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB},    // Formats
+        {6, 6},                                                  // Layer counts (cube maps)
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,                   // Old layout
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL                // New layout
+    );
+
+    // Create cube map views (after transition to SHADER_READ_ONLY_OPTIMAL)
+    m_skyboxView = createCubeMapView(m_skyboxImage, VK_FORMAT_R8G8B8A8_SRGB);
+    m_nightSkyboxView = createCubeMapView(m_nightSkyboxImage, VK_FORMAT_R8G8B8A8_SRGB);
+
+    // Create cube map sampler (shared by both skyboxes)
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.maxAnisotropy = 1.0f;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+    if (vkCreateSampler(m_device, &samplerInfo, nullptr, &m_skyboxSampler) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create cube map sampler!");
+    }
 
     // Skybox cube vertices (positions only, no UVs - we use direction for sampling)
     // Large cube centered at origin
