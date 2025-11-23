@@ -1,7 +1,35 @@
 cmake_minimum_required(VERSION 3.10)
-project(voxel-engine)
 
+# COMPATIBILITY NOTE: Supports CMake 3.10+ and Visual Studio 2017/2019/2022
+# - CMake 3.10+ (2018): Baseline for older systems
+# - CMake 3.21+ (2021): Recommended for VS 2022 (version 17) and modern features
+# - CMake 3.29+ (2024): Latest stable with enhanced Vulkan/C++20 support
+#
+# - VS 2017 (version 15): Minimum supported
+# - VS 2019 (version 16): Fully supported
+# - VS 2022 (version 17): Recommended (best C++20 support)
+#
+# This CMakeLists.txt uses features compatible with CMake 3.10 while
+# taking advantage of newer features when available via conditional checks.
+
+project(voxel-engine VERSION 1.0.0 LANGUAGES CXX)
+
+# Use C++17 for broad compatibility (C++20 if available)
+# C++17 is well-supported by VS 2017/2019/2022, GCC 7+, Clang 5+
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Modern CMake 3.21+: Use organized output directories
+# Falls back gracefully for older CMake versions
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+    message(STATUS "Using modern CMake ${CMAKE_VERSION} with organized output directories")
+else()
+    message(STATUS "Using CMake ${CMAKE_VERSION} (consider upgrading to 3.21+ for better features)")
+endif()
 
 # Define GLFW to not include OpenGL headers
 add_compile_definitions(GLFW_INCLUDE_VULKAN GLFW_INCLUDE_NONE)
@@ -104,8 +132,9 @@ add_executable(voxel-engine src/main.cpp)
 target_link_libraries(voxel-engine PRIVATE voxel-engine-lib)
 
 
-# Copy assets directory to build output directory
-# (includes blocks, biomes, textures, and all subdirectories)
+# Modern CMake: Copy runtime assets to output directory
+# Uses generator expressions for correct paths across configurations (Debug/Release/etc.)
+
 add_custom_command(TARGET voxel-engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/assets
@@ -113,7 +142,6 @@ add_custom_command(TARGET voxel-engine POST_BUILD
     COMMENT "Copying assets to build directory"
 )
 
-# Copy config.ini to build output directory
 add_custom_command(TARGET voxel-engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/config.ini
@@ -121,15 +149,13 @@ add_custom_command(TARGET voxel-engine POST_BUILD
     COMMENT "Copying config.ini to build directory"
 )
 
-# Copy shaders directory to build output directory
 add_custom_command(TARGET voxel-engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/shaders
         $<TARGET_FILE_DIR:voxel-engine>/shaders
-    COMMENT "Copying shaders to build directory"
+    COMMENT "Copying compiled shaders to build directory"
 )
 
-# Copy docs directory to build output directory
 add_custom_command(TARGET voxel-engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/docs

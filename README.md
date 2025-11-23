@@ -4,6 +4,8 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 
 ![Vulkan](https://img.shields.io/badge/Vulkan-1.3-red)
 ![C++](https://img.shields.io/badge/C++-17-blue)
+![CMake](https://img.shields.io/badge/CMake-3.10%2B-green)
+![VS](https://img.shields.io/badge/Visual%20Studio-2017%2F2019%2F2022-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
 
 ## Features
@@ -62,16 +64,48 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 
 ### Prerequisites
 
-- **Windows**: Visual Studio 2019+, Vulkan SDK, CMake 3.10+
-- **Linux**: GCC 7+, Vulkan development libraries, GLFW3, CMake 3.10+
+- **Windows**:
+  - Visual Studio 2017/2019/2022 (2022 recommended, Community is free)
+  - CMake 3.10+ (3.29+ recommended)
+  - Vulkan SDK 1.2+
+- **Linux**:
+  - GCC 7+ or Clang 5+
+  - CMake 3.10+
+  - Vulkan development libraries
+  - GLFW3
+
+**Note**: The Windows build script will detect your installed tools and provide download links if anything is missing!
 
 ### Building
 
-#### Windows
+#### Windows (Enhanced Build System)
+
+The build script automatically detects your toolchain and provides helpful guidance:
+
 ```cmd
+# Normal build (detects CMake, VS 2017/2019/2022, Vulkan SDK)
 build.bat
+
+# Clean build (removes old build directory)
+build.bat -clean
+
+# Show help
+build.bat -help
+
+# Run the game
 run.bat
 ```
+
+**Features:**
+- ✅ Auto-detects Visual Studio 2017/2019/2022 (prefers latest)
+- ✅ Auto-detects CMake in PATH or common install locations
+- ✅ Provides download links if tools are missing
+- ✅ Helpful error messages with troubleshooting tips
+- ✅ Backward compatible with older toolchains
+
+**Supported Configurations:**
+- CMake: 3.10+ (minimum), 3.21+ (recommended), 3.29+ (latest)
+- Visual Studio: 2017 (minimum), 2019 (supported), 2022 (recommended)
 
 #### Linux
 ```bash
