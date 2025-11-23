@@ -2144,47 +2144,225 @@ validation_layers = false      # Vulkan validation layers
 
 ## Block Definition (.yaml)
 
-```yaml
-name: "block_name"
-textures:
-  all: "texture.png"          # All faces (simple)
-  # OR
-  top: "texture_top.png"      # Individual faces
-  bottom: "texture_bottom.png"
-  sides: "texture_side.png"
-  # OR
-  north: "texture_north.png"  # All 6 faces
-  south: "texture_south.png"
-  east: "texture_east.png"
-  west: "texture_west.png"
-  up: "texture_up.png"
-  down: "texture_down.png"
+Blocks are defined in YAML files placed in `assets/blocks/`. Each block can have textures, gameplay properties, and liquid physics.
 
-properties:
-  solid: true                 # Collision enabled
-  transparent: false          # Can see through
-  light_level: 0              # Emitted light (0-15)
-  hardness: 1.0               # Break time multiplier
+### Basic Example
+
+```yaml
+id: 10                        # OPTIONAL: Block ID (omit for auto-assignment)
+name: "Stone Brick"           # REQUIRED: Display name
+texture: "stone_brick.png"    # Simple texture (all faces)
+durability: 5                 # Break resistance
+affected_by_gravity: false    # Falls like sand if true
+flammability: 0               # Fire spread rate (0 = fireproof)
+transparency: 0.0             # 0.0 = opaque, 1.0 = fully transparent
+liquid: false                 # Is this block a liquid?
+```
+
+### Block ID Assignment
+
+- **Explicit ID**: Specify `id: 10` for guaranteed stable IDs (recommended for world-gen blocks)
+- **Auto-Assigned ID**: Omit `id` field for automatic assignment starting from highest explicit ID + 1
+- **Reserved IDs**: 0 = Air (cannot be changed)
+
+### Texture Options
+
+**Simple Texture (all faces same):**
+```yaml
+texture: "myblock.png"        # PNG file in assets/blocks/
+# OR
+texture: "#FF5733"            # Hex color code (RGB)
+```
+
+**Cube Map (per-face textures):**
+```yaml
+cube_map:
+  all: "default.png"          # Default for unspecified faces
+  top: "top.png"              # +Y face
+  bottom: "bottom.png"        # -Y face
+  front: "front.png"          # -Z face
+  back: "back.png"            # +Z face
+  left: "left.png"            # -X face
+  right: "right.png"          # +X face
+```
+
+### Gameplay Properties
+
+```yaml
+durability: 5                 # Break time (0 = instant, higher = harder)
+affected_by_gravity: false    # Falls when unsupported (like sand)
+flammability: 0               # Fire spread rate (0 = fireproof, 100 = very flammable)
+transparency: 0.0             # Visual transparency (0.0-1.0)
+liquid: false                 # Liquid physics enabled
+animated_tiles: 1             # Animation frames (1 = static, 2+ = animated)
+```
+
+### Liquid Properties
+
+For liquid blocks, define underwater visual effects:
+
+```yaml
+liquid: true
+liquid_properties:
+  fog_color: [0.1, 0.3, 0.5]      # RGB fog color underwater (0.0-1.0)
+  fog_density: 0.8                # Fog density (0.0-1.0)
+  fog_start: 1.0                  # Distance where fog begins
+  fog_end: 8.0                    # Distance where fog is fully opaque
+  tint_color: [0.4, 0.7, 1.0]     # RGB tint when submerged
+  darken_factor: 0.4              # Darkening multiplier (0.0-1.0)
+```
+
+### Custom Metadata
+
+Use `metadata` for custom properties:
+
+```yaml
+metadata:
+  harvest_tool: "pickaxe"
+  harvest_level: 2
+  drop_item: "cobblestone"
+  custom_flag: true
+```
+
+### Complete Example
+
+```yaml
+id: 5
+name: "Water"
+texture: "water.png"
+durability: 0
+affected_by_gravity: false
+flammability: 0
+transparency: 0.6
+liquid: true
+animated_tiles: 4
+liquid_properties:
+  fog_color: [0.1, 0.3, 0.5]
+  fog_density: 0.8
+  fog_start: 1.0
+  fog_end: 8.0
+  tint_color: [0.4, 0.7, 1.0]
+  darken_factor: 0.4
 ```
 
 ## Biome Definition (.yaml)
 
+Biomes control terrain generation, vegetation, structures, and **block compatibility**. Place YAML files in `assets/biomes/`.
+
+### Required Properties
+
 ```yaml
-name: "biome_name"
-temperature: 60               # 0-100 (0=cold, 100=hot)
-moisture: 50                  # 0-100 (0=dry, 100=wet)
-age: 40                       # 0-100 (0=mountains, 100=plains)
-activity: 70                  # 0-100 (structure spawn rate)
+name: "grasslands"            # Biome identifier (lowercase, underscores)
+temperature: 60               # 0-100 (0=coldest, 100=hottest)
+moisture: 50                  # 0-100 (0=driest, 100=wettest)
+age: 40                       # 0-100 (0=mountains, 100=flat plains)
+activity: 70                  # 0-100 (structure/settlement spawn rate)
+```
 
-surface_block: "grass"
-sub_surface_block: "dirt"
-stone_block: "stone"
-primary_tree_block: "oak_log"
-primary_leave_block: "oak_leaves"
+### Spawning and Generation
 
-spawn_location: "AboveGround"  # Underground/AboveGround/Both
-lowest_y: 0
+```yaml
+spawn_location: "AboveGround"  # "Underground" / "AboveGround" / "Both"
+lowest_y: 0                    # Minimum Y level for biome
+underwater_biome: false        # Can spawn as ocean floor
+river_compatible: true         # Can rivers cut through
+biome_rarity_weight: 50        # 1-100 (higher = more common)
+parent_biome: "plains"         # Inherit from parent biome
+height_multiplier: 1.0         # Terrain height scale (2.0 = double height)
+```
+
+### Vegetation
+
+```yaml
+trees_spawn: true             # Enable tree generation
+tree_density: 50              # 0-100 tree spawn rate
+vegetation_density: 50        # 0-100 grass/flowers/mushrooms rate
+```
+
+### Block Compatibility (Block Control)
+
+**These properties control which blocks can spawn in this biome:**
+
+```yaml
+required_blocks: "6,7"         # Comma-separated block IDs that MUST spawn
+blacklisted_blocks: "4,5"      # Comma-separated block IDs that CANNOT spawn
+primary_surface_block: 3       # Surface layer block (default: grass = 3)
+primary_stone_block: 1         # Underground block (default: stone = 1)
+primary_log_block: 6           # Tree trunk block (-1 = use default)
+primary_leave_block: 7         # Tree foliage block (-1 = use default)
+```
+
+**Usage Example:**
+- Desert biome: `blacklisted_blocks: "3"` (no grass blocks)
+- Mushroom biome: `required_blocks: "8,9"` (must have mushroom blocks)
+- Ice biome: `primary_surface_block: 10` (ice instead of grass)
+
+### Structure Control
+
+```yaml
+required_structures: "village,well"      # Structures that must spawn
+blacklisted_structures: "desert_temple"  # Structures that cannot spawn
+```
+
+### Creature Control
+
+```yaml
+blacklisted_creatures: "zombie,skeleton" # Creatures that cannot spawn
+hostile_spawn: true                      # Allow hostile mobs
+```
+
+### Weather and Atmosphere
+
+```yaml
+primary_weather: "rain"                  # Primary weather type
+blacklisted_weather: "snow,hail"         # Weather types that cannot occur
+fog_color: "135,179,230"                 # RGB fog color (0-255)
+```
+
+### Ore Distribution
+
+```yaml
+ore_spawn_rates: "coal:1.5,iron:2.0,gold:0.5"
+# Format: "ore_name:multiplier,..."
+# 1.0 = normal, 2.0 = double, 0.5 = half
+```
+
+### Complete Example
+
+```yaml
+name: "snowy_mountains"
+temperature: 10
+moisture: 60
+age: 20
+activity: 30
+
+spawn_location: "AboveGround"
+lowest_y: 64
 underwater_biome: false
+river_compatible: true
+biome_rarity_weight: 25
+height_multiplier: 2.5
+
+trees_spawn: true
+tree_density: 20
+vegetation_density: 10
+
+required_blocks: "11,12"        # Snow, ice blocks
+blacklisted_blocks: "3,4"       # No grass or sand
+primary_surface_block: 11       # Snow
+primary_stone_block: 1          # Stone
+primary_log_block: 13           # Spruce log
+primary_leave_block: 14         # Spruce leaves
+
+blacklisted_structures: "desert_temple,cactus"
+blacklisted_creatures: "desert_zombie"
+hostile_spawn: true
+
+primary_weather: "snow"
+blacklisted_weather: "rain"
+fog_color: "200,220,255"
+
+ore_spawn_rates: "coal:1.2,emerald:2.0"
 ```
 
 ## Structure Definition (.yaml)

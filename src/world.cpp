@@ -767,7 +767,7 @@ void World::registerWaterBlocks() {
     // Register water in all existing chunks
     for (auto& chunk : m_chunks) {
         size_t beforeSize = m_waterSimulation->getActiveWaterChunks().size();
-        registerWaterInChunk(chunk.get());
+        registerWaterInChunk(chunk);
         size_t afterSize = m_waterSimulation->getActiveWaterChunks().size();
 
         // Approximate count (not exact since multiple chunks can add to same water chunk)
