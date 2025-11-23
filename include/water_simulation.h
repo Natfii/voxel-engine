@@ -95,6 +95,9 @@ public:
     void clearDirtyChunks() { m_dirtyChunks.clear(); }
     void markChunkDirty(const glm::ivec3& chunkPos) { m_dirtyChunks.insert(chunkPos); }
 
+    // Chunk lifecycle
+    void notifyChunkUnload(int chunkX, int chunkY, int chunkZ);
+
     // Configuration
     void setEvaporationEnabled(bool enabled) { m_enableEvaporation = enabled; }
     void setFlowSpeed(float speed) { m_flowSpeed = speed; }

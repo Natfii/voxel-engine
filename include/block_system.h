@@ -84,6 +84,40 @@ struct BlockDefinition {
     bool isLiquid = false;             ///< If true, no outline when targeting
     int animatedTiles = 1;             ///< Number of tiles for animation (1=static, 2=2x2 grid, etc.)
 
+    // ========== Biome/Climate Properties ==========
+    int minTemperature = -1;           ///< Minimum biome temperature (0-100, -1 = not specified)
+    int maxTemperature = -1;           ///< Maximum biome temperature (0-100, -1 = not specified)
+    int minMoisture = -1;              ///< Minimum biome moisture (0-100, -1 = not specified)
+    int maxMoisture = -1;              ///< Maximum biome moisture (0-100, -1 = not specified)
+
+    /**
+     * @brief Check if block can spawn naturally during world generation
+     * @return true if ALL climate properties are specified, false otherwise
+     */
+    bool canSpawnNaturally() const {
+        return minTemperature >= 0 && maxTemperature >= 0 && minMoisture >= 0 && maxMoisture >= 0;
+    }
+
+    /**
+     * @brief Check if block can spawn in a biome with given climate
+     * @param temperature Biome temperature (0-100)
+     * @param moisture Biome moisture (0-100)
+     * @param biomeMandated If true, block is explicitly required by biome (ignores climate restrictions)
+     * @return true if block can spawn in this biome
+     *
+     * Biome-mandated blocks (primary_surface_block, primary_stone_block, etc.) ALWAYS spawn
+     * regardless of climate properties. This is an "ultimate call" that overrides restrictions.
+     */
+    bool matchesClimate(int temperature, int moisture, bool biomeMandated = false) const {
+        // Biome-mandated blocks override climate restrictions
+        if (biomeMandated) return true;
+
+        // Regular blocks must have climate properties AND match the range
+        if (!canSpawnNaturally()) return false;
+        return temperature >= minTemperature && temperature <= maxTemperature &&
+               moisture >= minMoisture && moisture <= maxMoisture;
+    }
+
     // ========== Lighting Properties ==========
     bool isEmissive = false;           ///< If true, block emits light (torch, lava, etc.)
     uint8_t lightLevel = 0;            ///< Light emission level (0-15, e.g., 14 for torch, 15 for lava)

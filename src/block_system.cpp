@@ -190,6 +190,19 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         if (doc["animated_tiles"]) {
             def.animatedTiles = doc["animated_tiles"].as<int>();
         }
+        // Optional: climate properties (temperature/moisture ranges for biome spawning)
+        if (doc["min_temperature"]) {
+            def.minTemperature = doc["min_temperature"].as<int>();
+        }
+        if (doc["max_temperature"]) {
+            def.maxTemperature = doc["max_temperature"].as<int>();
+        }
+        if (doc["min_moisture"]) {
+            def.minMoisture = doc["min_moisture"].as<int>();
+        }
+        if (doc["max_moisture"]) {
+            def.maxMoisture = doc["max_moisture"].as<int>();
+        }
         // Optional: liquid_properties (for custom fog/tint when submerged)
         if (doc["liquid_properties"]) {
             auto lp = doc["liquid_properties"];
@@ -293,6 +306,19 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
             // Optional: animated_tiles (for water animation, etc.)
             if (doc["animated_tiles"]) {
                 def.animatedTiles = doc["animated_tiles"].as<int>();
+            }
+            // Optional: climate properties (temperature/moisture ranges for biome spawning)
+            if (doc["min_temperature"]) {
+                def.minTemperature = doc["min_temperature"].as<int>();
+            }
+            if (doc["max_temperature"]) {
+                def.maxTemperature = doc["max_temperature"].as<int>();
+            }
+            if (doc["min_moisture"]) {
+                def.minMoisture = doc["min_moisture"].as<int>();
+            }
+            if (doc["max_moisture"]) {
+                def.maxMoisture = doc["max_moisture"].as<int>();
             }
             // Optional: liquid_properties (for custom fog/tint when submerged)
             if (doc["liquid_properties"]) {

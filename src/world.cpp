@@ -532,8 +532,8 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
     while (it != m_pendingDecorations.end() && processed < maxChunks) {
         Chunk* chunk = *it;
 
-        // Check if chunk is still valid and now has all neighbors
-        if (chunk && hasHorizontalNeighbors(chunk)) {
+        // Check if chunk is still valid, needs decoration, and now has all neighbors
+        if (chunk && chunk->needsDecoration() && hasHorizontalNeighbors(chunk)) {
             try {
                 Logger::info() << "Decorating pending chunk (" << chunk->getChunkX()
                               << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ()
@@ -541,6 +541,7 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
 
                 // Decorate the chunk now that neighbors are ready
                 decorateChunk(chunk);
+                chunk->setNeedsDecoration(false);  // Mark as decorated
 
                 // Reinitialize lighting after adding decorations
                 initializeChunkLighting(chunk);
@@ -562,6 +563,12 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
                 Logger::error() << "Failed to decorate pending chunk: " << e.what();
                 it = m_pendingDecorations.erase(it);  // Remove anyway to prevent infinite retry
             }
+        } else if (chunk && !chunk->needsDecoration()) {
+            // Chunk loaded from disk - remove from pending decorations
+            Logger::debug() << "Removing chunk (" << chunk->getChunkX()
+                           << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ()
+                           << ") from pending decorations - loaded from disk";
+            it = m_pendingDecorations.erase(it);
         } else {
             // Still waiting for neighbors, keep in queue
             ++it;
@@ -711,42 +718,63 @@ void World::updateInterpolatedLighting(float deltaTime) {
     }
 }
 
-void World::registerWaterBlocks() {
-    Logger::info() << "Registering water blocks with simulation system...";
+void World::registerWaterInChunk(Chunk* chunk) {
+    if (!chunk) return;
 
-    int waterBlocksFound = 0;
     auto& registry = BlockRegistry::instance();
+    int chunkX = chunk->getChunkX();
+    int chunkY = chunk->getChunkY();
+    int chunkZ = chunk->getChunkZ();
 
-    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+    // Scan all blocks in chunk
+    for (int localX = 0; localX < Chunk::WIDTH; localX++) {
+        for (int localY = 0; localY < Chunk::HEIGHT; localY++) {
+            for (int localZ = 0; localZ < Chunk::DEPTH; localZ++) {
+                int blockID = chunk->getBlock(localX, localY, localZ);
 
-    for (auto& chunk : m_chunks) {
-        int chunkX = chunk->getChunkX();
-        int chunkY = chunk->getChunkY();
-        int chunkZ = chunk->getChunkZ();
+                // Check if this is a liquid block
+                if (blockID > 0 && blockID < registry.count() && registry.get(blockID).isLiquid) {
+                    // Calculate world coordinates
+                    int worldX = chunkX * Chunk::WIDTH + localX;
+                    int worldY = chunkY * Chunk::HEIGHT + localY;
+                    int worldZ = chunkZ * Chunk::DEPTH + localZ;
 
-        // Scan all blocks in chunk
-        for (int localX = 0; localX < Chunk::WIDTH; localX++) {
-            for (int localY = 0; localY < Chunk::HEIGHT; localY++) {
-                for (int localZ = 0; localZ < Chunk::DEPTH; localZ++) {
-                    int blockID = chunk->getBlock(localX, localY, localZ);
+                    // Register with simulation system
+                    m_waterSimulation->setWaterLevel(worldX, worldY, worldZ, 255, 1);
 
-                    // Check if this is a liquid block
-                    if (blockID > 0 && blockID < registry.count() && registry.get(blockID).isLiquid) {
-                        // Calculate world coordinates
-                        int worldX = chunkX * Chunk::WIDTH + localX;
-                        int worldY = chunkY * Chunk::HEIGHT + localY;
-                        int worldZ = chunkZ * Chunk::DEPTH + localZ;
-
-                        // Register with simulation system
-                        m_waterSimulation->setWaterLevel(worldX, worldY, worldZ, 255, 1);
-                        waterBlocksFound++;
+                    // FIXED (2025-11-23): Mark naturally generated water as sources so they flow
+                    // Water blocks with metadata=0 are source blocks (oceans, lakes, placed water)
+                    // This makes them maintain their level and flow continuously like Minecraft
+                    uint8_t metadata = chunk->getBlockMetadata(localX, localY, localZ);
+                    if (metadata == 0) {
+                        glm::ivec3 waterPos(worldX, worldY, worldZ);
+                        m_waterSimulation->addWaterSource(waterPos, 1);
                     }
                 }
             }
         }
     }
+}
 
-    Logger::info() << "Registered " << waterBlocksFound << " water blocks with simulation";
+void World::registerWaterBlocks() {
+    Logger::info() << "Registering water blocks with simulation system...";
+
+    int waterBlocksFound = 0;
+    int waterSourcesCreated = 0;
+
+    std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
+
+    // Register water in all existing chunks
+    for (auto& chunk : m_chunks) {
+        size_t beforeSize = m_waterSimulation->getActiveWaterChunks().size();
+        registerWaterInChunk(chunk);
+        size_t afterSize = m_waterSimulation->getActiveWaterChunks().size();
+
+        // Approximate count (not exact since multiple chunks can add to same water chunk)
+        waterBlocksFound += (afterSize - beforeSize) * 64;  // Rough estimate
+    }
+
+    Logger::info() << "Registered water blocks in " << m_chunks.size() << " chunks with simulation";
 }
 
 void World::createBuffers(VulkanRenderer* renderer) {
@@ -1009,9 +1037,9 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
 
     lock.unlock();  // Release lock before decoration (can be slow)
 
-    // PERFORMANCE DEBUG: Skip heavy operations during streaming to isolate bottleneck
-    // TODO: Remove this and do proper async decoration/lighting
-    const bool SKIP_DECORATION_FOR_FPS = true;
+    // FIXED (2025-11-23): Re-enabled decoration for streamed chunks
+    // Trees now spawn properly when moving far from spawn
+    const bool SKIP_DECORATION_FOR_FPS = false;
 
     // MAIN THREAD: Decorate, Light, Mesh, Upload - IN THAT ORDER
     // This is safe because:
@@ -1024,17 +1052,25 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         try {
             Logger::debug() << "Processing surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): decorate → light → mesh → upload";
 
-            // DECORATION FIX: Only decorate if all horizontal neighbors are loaded
-            // This prevents trees from being placed with missing neighbor data
-            if (hasHorizontalNeighbors(chunkPtr)) {
-                // Step 1: Add decorations (trees, structures)
-                decorateChunk(chunkPtr);
+            // FIXED (2025-11-23): Only decorate freshly generated chunks, not loaded ones
+            // This prevents overwriting player edits when chunks reload from disk/cache
+            if (chunkPtr->needsDecoration()) {
+                // DECORATION FIX: Only decorate if all horizontal neighbors are loaded
+                // This prevents trees from being placed with missing neighbor data
+                if (hasHorizontalNeighbors(chunkPtr)) {
+                    // Step 1: Add decorations (trees, structures)
+                    decorateChunk(chunkPtr);
+                    chunkPtr->setNeedsDecoration(false);  // Mark as decorated
+                } else {
+                    // Neighbors not ready yet - defer decoration until later
+                    m_pendingDecorations.insert(chunkPtr);
+                    Logger::debug() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                                   << ") waiting for neighbors before decoration (pending: "
+                                   << m_pendingDecorations.size() << ")";
+                }
             } else {
-                // Neighbors not ready yet - defer decoration until later
-                m_pendingDecorations.insert(chunkPtr);
                 Logger::debug() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
-                               << ") waiting for neighbors before decoration (pending: "
-                               << m_pendingDecorations.size() << ")";
+                               << ") loaded from disk/cache - skipping decoration to preserve player edits";
             }
 
             // Step 2: Initialize lighting ONCE after all blocks are in place
@@ -1103,6 +1139,10 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         }
     }
 
+    // FIXED (2025-11-23): Register water blocks in streamed chunks with simulation
+    // This ensures water in dynamically loaded chunks can flow properly
+    registerWaterInChunk(chunkPtr);
+
     Logger::debug() << "Added streamed chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") to world";
 
     return true;
@@ -1135,6 +1175,12 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
     // This prevents dangling pointers in the lighting dirty chunks set
     if (m_lightingSystem) {
         m_lightingSystem->notifyChunkUnload(chunkPtr);
+    }
+
+    // PERFORMANCE FIX (2025-11-23): Notify water simulation to clean up water cells
+    // Without this, water cells accumulate infinitely causing frame time increase
+    if (m_waterSimulation) {
+        m_waterSimulation->notifyChunkUnload(chunkX, chunkY, chunkZ);
     }
 
     // Destroy Vulkan buffers (can't keep GPU resources in cache)
@@ -1956,6 +2002,11 @@ std::unique_ptr<Chunk> World::getChunkFromCache(int chunkX, int chunkY, int chun
         // Move chunk out of cache (caller takes ownership)
         std::unique_ptr<Chunk> chunk = std::move(it->second);
         m_unloadedChunksCache.erase(it);
+
+        // FIXED (2025-11-23): Mark cached chunks as NOT needing decoration
+        // These chunks were already decorated before being cached
+        chunk->setNeedsDecoration(false);
+
         Logger::debug() << "Cache hit! Retrieved chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                        << ") from RAM cache (remaining cached: " << m_unloadedChunksCache.size() << ")";
         return chunk;

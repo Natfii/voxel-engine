@@ -2178,10 +2178,17 @@ void VulkanRenderer::flushDeletionQueue() {
     std::lock_guard<std::mutex> lock(m_deletionQueueMutex);
 
     // CRITICAL FIX: Limit deletions per frame to prevent massive stalls
-    // Deleting 200+ buffers at once causes 400ms frame stall (vkDestroyBuffer is ~1ms each)
-    // Spread deletions over multiple frames (10 per frame = 20ms overhead max)
-    const int MAX_DELETIONS_PER_FRAME = 10;
+    // GPU memory cleanup is EXPENSIVE - even 10 buffers causes 1682ms vkWaitForFences stall
+    // The comment "~1ms each" was CPU time, but GPU memory release is much slower
+    // REDUCED: 10 -> 2 buffers per frame to prevent multi-second stalls
+    const int MAX_DELETIONS_PER_FRAME = 2;  // Ultra-conservative to prevent GPU stalls
     int deletionsThisFrame = 0;
+
+    // Log queue size periodically for debugging
+    static int frameCounter = 0;
+    if (++frameCounter % 300 == 0 && !m_deletionQueue.empty()) {  // Every 5 seconds at 60 FPS
+        Logger::debug() << "GPU deletion queue size: " << m_deletionQueue.size() << " buffers pending";
+    }
 
     // Delete resources from frames that are at least MAX_FRAMES_IN_FLIGHT old
     // This ensures the GPU is done using them (fence-based approach)

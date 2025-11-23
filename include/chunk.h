@@ -418,6 +418,18 @@ public:
      */
     void markLightingDirty() { m_lightingDirty = true; }
 
+    /**
+     * @brief Checks if this chunk needs decoration (freshly generated)
+     * @return True if chunk needs tree/structure placement
+     */
+    bool needsDecoration() const { return m_needsDecoration; }
+
+    /**
+     * @brief Sets whether this chunk needs decoration
+     * @param needs True for freshly generated chunks, false for loaded chunks
+     */
+    void setNeedsDecoration(bool needs) { m_needsDecoration = needs; }
+
     // ========== Heightmap (Fast Sky Light) ==========
 
     /**
@@ -592,6 +604,7 @@ private:
     uint8_t m_blockMetadata[WIDTH][HEIGHT][DEPTH]; ///< Block metadata (water levels, etc.) (32 KB)
     std::array<BlockLight, WIDTH * HEIGHT * DEPTH> m_lightData; ///< Light data (sky + block light, 32 KB)
     bool m_lightingDirty;                   ///< True if lighting changed (needs mesh regen)
+    bool m_needsDecoration;                 ///< True if chunk is freshly generated and needs decoration
 
     // ========== Heightmap (PERFORMANCE: Fast sky light calculation) ==========
     std::array<int16_t, WIDTH * DEPTH> m_heightMap; ///< Highest solid block Y per XZ column (2 KB, 32x32 grid)

@@ -470,6 +470,12 @@ public:
     void updateInterpolatedLighting(float deltaTime);
 
     /**
+     * @brief Register water blocks in a single chunk with the simulation system
+     * Called for both initial world generation and dynamically loaded chunks
+     */
+    void registerWaterInChunk(Chunk* chunk);
+
+    /**
      * @brief Scans all generated chunks and registers water blocks with simulation
      * Should be called after chunk generation to initialize water flow physics
      */
