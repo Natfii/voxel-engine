@@ -85,6 +85,10 @@ Chunk::Chunk(int x, int y, int z)
     // Initialize interpolated lighting to 0 (prevents accessing uninitialized memory)
     m_interpolatedLightData.fill(InterpolatedLight());
 
+    // BUG FIX: Initialize heightmap to -1 (indicates all air columns)
+    // Without this, heightmap contains garbage memory causing incorrect lighting
+    m_heightMap.fill(-1);
+
     // Calculate world-space bounds for culling
     // Blocks are 1.0 world units in size
     float worldX = m_x * WIDTH;
@@ -125,6 +129,10 @@ void Chunk::reset(int x, int y, int z) {
     m_lightData.fill(BlockLight(0, 0));
     m_interpolatedLightData.fill(InterpolatedLight());
     m_lightingDirty = false;
+
+    // BUG FIX: Reset heightmap to -1 (all air)
+    // Without this, recycled chunks use stale heightmap from previous location
+    m_heightMap.fill(-1);
 
     // Recalculate bounds
     float worldX = m_x * WIDTH;
@@ -352,6 +360,10 @@ void Chunk::generate(BiomeMap* biomeMap) {
             }
         }
     }
+
+    // PERFORMANCE: Build heightmap for fast sky light calculation
+    // This replaces expensive BFS propagation with O(1) lookups
+    rebuildHeightMap();
 }
 
 /**
@@ -804,7 +816,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                             if (callerHoldsLock) {
                                 // Can't query other chunks - use local data if available
                                 if (sampleX >= 0 && sampleX < WIDTH && sampleY >= 0 && sampleY < HEIGHT && sampleZ >= 0 && sampleZ < DEPTH) {
-                                    skyLight = getInterpolatedSkyLight(sampleX, sampleY, sampleZ);
+                                    // PERFORMANCE: Use heightmap for instant sky light (no BFS!)
+                                    skyLight = static_cast<float>(calculateSkyLightFromHeightmap(sampleX, sampleY, sampleZ));
                                     blockLight = getInterpolatedBlockLight(sampleX, sampleY, sampleZ);
                                 }
                             } else {
@@ -814,7 +827,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                                     int localX = static_cast<int>(sampleWorldPos.x) - (chunk->getChunkX() * WIDTH);
                                     int localY = static_cast<int>(sampleWorldPos.y) - (chunk->getChunkY() * HEIGHT);
                                     int localZ = static_cast<int>(sampleWorldPos.z) - (chunk->getChunkZ() * DEPTH);
-                                    skyLight = chunk->getInterpolatedSkyLight(localX, localY, localZ);
+                                    // PERFORMANCE: Use heightmap for instant sky light (no BFS!)
+                                    skyLight = static_cast<float>(chunk->calculateSkyLightFromHeightmap(localX, localY, localZ));
                                     blockLight = chunk->getInterpolatedBlockLight(localX, localY, localZ);
                                 }
                             }
@@ -1475,6 +1489,10 @@ void Chunk::setBlock(int x, int y, int z, int blockID) {
         return;  // Out of bounds
     }
     m_blocks[x][y][z] = blockID;
+
+    // PERFORMANCE: Update heightmap for fast sky light calculation
+    // Only update if this block change might affect the highest block in the column
+    updateHeightAt(x, z);
 }
 
 uint8_t Chunk::getBlockMetadata(int x, int y, int z) const {
@@ -1577,6 +1595,48 @@ void Chunk::setBlockLight(int x, int y, int z, uint8_t value) {
     }
     int index = x + y * WIDTH + z * WIDTH * HEIGHT;
     m_lightData[index].blockLight = value & 0x0F;  // Clamp to 4 bits (0-15)
+}
+
+// ========== Heightmap Implementation (Fast Sky Light) ==========
+
+void Chunk::updateHeightAt(int x, int z) {
+    if (x < 0 || x >= WIDTH || z < 0 || z >= DEPTH) return;
+
+    // Scan from top to bottom to find highest OPAQUE block
+    // BUG FIX: Must check transparency to avoid treating water/ice/leaves as solid
+    int16_t highestY = -1;
+    for (int y = HEIGHT - 1; y >= 0; y--) {
+        int blockID = m_blocks[x][y][z];
+        if (blockID != 0) {  // Not air
+            // Check if block is opaque (blocks sunlight)
+            auto& registry = BlockRegistry::instance();
+            if (blockID >= 0 && blockID < registry.count()) {
+                const BlockDefinition& blockDef = registry.get(blockID);
+                // Only FULLY opaque blocks (transparency == 0) should block sunlight
+                // This allows water, ice, glass, and leaves to let sunlight through
+                // Minecraft-style: transparent blocks don't stop sunlight column
+                if (blockDef.transparency == 0.0f) {
+                    highestY = static_cast<int16_t>(y);
+                    break;
+                }
+            } else {
+                // Invalid block ID - treat as opaque to be safe
+                highestY = static_cast<int16_t>(y);
+                break;
+            }
+        }
+    }
+
+    m_heightMap[x * DEPTH + z] = highestY;
+}
+
+void Chunk::rebuildHeightMap() {
+    // Rebuild entire heightmap by scanning all columns
+    for (int x = 0; x < WIDTH; x++) {
+        for (int z = 0; z < DEPTH; z++) {
+            updateHeightAt(x, z);
+        }
+    }
 }
 
 /**

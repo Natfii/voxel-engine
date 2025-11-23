@@ -124,7 +124,9 @@ void main() {
     // Calculate face normal from derivatives (works for flat-shaded blocks)
     vec3 dFdxPos = dFdx(fragWorldPos);
     vec3 dFdyPos = dFdy(fragWorldPos);
-    vec3 faceNormal = normalize(cross(dFdxPos, dFdyPos));
+    // FIX: Negate the cross product to get correct front-facing normals
+    // Without negation, top faces appear dark and bottom faces appear bright (lit from below)
+    vec3 faceNormal = -normalize(cross(dFdxPos, dFdyPos));
 
     // Sun always comes from above in retro style
     vec3 sunDirection = vec3(0.0, 1.0, 0.0);  // Pointing straight up

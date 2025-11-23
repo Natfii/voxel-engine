@@ -518,21 +518,24 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
 
     // CRITICAL FIX: If player is ALREADY stuck inside a block, push them out
     // But only if they're SIGNIFICANTLY stuck (not just barely touching)
+    // OPTIMIZATION: Only check every 10 frames (unstuck is rare, this saves 90% of these checks)
     using namespace PhysicsConstants;
+    static int unstuckCheckCounter = 0;
+    if (++unstuckCheckCounter % 10 == 0) {
+        if (checkCollision(Position, world)) {
+            // Player is currently inside a block - calculate correction
+            glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+            float blockGridY = std::floor(feetPos.y) + 1.0f;  // Floor + 1 to place on top of block
+            float correctionY = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
 
-    if (checkCollision(Position, world)) {
-        // Player is currently inside a block - calculate correction
-        glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
-        float blockGridY = std::floor(feetPos.y) + 1.0f;  // Floor + 1 to place on top of block
-        float correctionY = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
+            // Only apply correction if it's significant (player is really stuck, not just touching edge)
+            if (std::abs(correctionY) > STUCK_THRESHOLD) {
+                Position.y += correctionY;
+                m_velocity.y = 0.0f; // Stop vertical velocity when unsticking
 
-        // Only apply correction if it's significant (player is really stuck, not just touching edge)
-        if (std::abs(correctionY) > STUCK_THRESHOLD) {
-            Position.y += correctionY;
-            m_velocity.y = 0.0f; // Stop vertical velocity when unsticking
-
-            if (shouldDebug && debugCounter % 60 == 0) {
-                Logger::debug() << "Player stuck in block! Pushing up by " << correctionY;
+                if (shouldDebug && debugCounter % 60 == 0) {
+                    Logger::debug() << "Player stuck in block! Pushing up by " << correctionY;
+                }
             }
         }
     }
@@ -581,23 +584,29 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     }
 
     // ===== Test X axis (horizontal movement) =====
-    testPos = Position + glm::vec3(movement.x, 0.0f, 0.0f);
+    // OPTIMIZATION: Skip collision check if movement is negligible (saves ~33% of checks when standing still)
+    if (std::abs(movement.x) > 0.001f) {
+        testPos = Position + glm::vec3(movement.x, 0.0f, 0.0f);
 
-    // Use horizontal collision check (from step height up) to allow ledge walking
-    if (checkHorizontalCollision(testPos, world)) {
-        // Collision detected - stop horizontal movement
-        movement.x = 0.0f;
-        m_velocity.x = 0.0f;
+        // Use horizontal collision check (from step height up) to allow ledge walking
+        if (checkHorizontalCollision(testPos, world)) {
+            // Collision detected - stop horizontal movement
+            movement.x = 0.0f;
+            m_velocity.x = 0.0f;
+        }
     }
 
     // ===== Test Z axis (horizontal movement) =====
-    testPos = Position + glm::vec3(0.0f, 0.0f, movement.z);
+    // OPTIMIZATION: Skip collision check if movement is negligible (saves ~33% of checks when standing still)
+    if (std::abs(movement.z) > 0.001f) {
+        testPos = Position + glm::vec3(0.0f, 0.0f, movement.z);
 
-    // Use horizontal collision check (from step height up) to allow ledge walking
-    if (checkHorizontalCollision(testPos, world)) {
-        // Collision detected - stop horizontal movement
-        movement.z = 0.0f;
-        m_velocity.z = 0.0f;
+        // Use horizontal collision check (from step height up) to allow ledge walking
+        if (checkHorizontalCollision(testPos, world)) {
+            // Collision detected - stop horizontal movement
+            movement.z = 0.0f;
+            m_velocity.z = 0.0f;
+        }
     }
 
 }

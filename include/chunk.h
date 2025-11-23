@@ -418,6 +418,66 @@ public:
      */
     void markLightingDirty() { m_lightingDirty = true; }
 
+    // ========== Heightmap (Fast Sky Light) ==========
+
+    /**
+     * @brief Gets the height of the highest solid block in a column
+     *
+     * Used for fast sky light calculation: blocks above heightmap get full sunlight.
+     *
+     * @param x Local X coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @return Y coordinate of highest solid block, or -1 if column is all air
+     */
+    int16_t getHeightAt(int x, int z) const {
+        if (x < 0 || x >= WIDTH || z < 0 || z >= DEPTH) return -1;
+        return m_heightMap[x * DEPTH + z];
+    }
+
+    /**
+     * @brief Updates heightmap for a column after block change
+     *
+     * Call this whenever a block is placed or broken to keep heightmap accurate.
+     *
+     * @param x Local X coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     */
+    void updateHeightAt(int x, int z);
+
+    /**
+     * @brief Rebuilds entire heightmap by scanning all blocks
+     *
+     * Call this once after chunk generation to initialize heightmap.
+     * Scans from top to bottom to find highest solid block in each column.
+     */
+    void rebuildHeightMap();
+
+    /**
+     * @brief Calculates sky light using heightmap (O(1) lookup, no BFS!)
+     *
+     * PERFORMANCE: Replaces expensive BFS propagation with instant calculation.
+     * Blocks above heightmap = full sunlight (15), blocks below = dark (0).
+     *
+     * @param x Local X coordinate (0-31)
+     * @param y Local Y coordinate (0-31)
+     * @param z Local Z coordinate (0-31)
+     * @return Sky light level (0-15)
+     */
+    uint8_t calculateSkyLightFromHeightmap(int x, int y, int z) const {
+        if (x < 0 || x >= WIDTH || z < 0 || z >= DEPTH) return 0;
+        if (y < 0 || y >= HEIGHT) return 0;
+
+        int16_t heightAtColumn = m_heightMap[x * DEPTH + z];
+
+        // Blocks above highest solid block get full sunlight
+        // This is classic Minecraft behavior (caves get sunlight, but fast!)
+        if (y > heightAtColumn) {
+            return 15;  // Full sunlight
+        } else {
+            return 0;   // No sunlight (underground/inside blocks)
+        }
+    }
+
     /**
      * @brief Checks if chunk lighting is dirty
      * @return True if lighting needs mesh regeneration
@@ -532,6 +592,9 @@ private:
     uint8_t m_blockMetadata[WIDTH][HEIGHT][DEPTH]; ///< Block metadata (water levels, etc.) (32 KB)
     std::array<BlockLight, WIDTH * HEIGHT * DEPTH> m_lightData; ///< Light data (sky + block light, 32 KB)
     bool m_lightingDirty;                   ///< True if lighting changed (needs mesh regen)
+
+    // ========== Heightmap (PERFORMANCE: Fast sky light calculation) ==========
+    std::array<int16_t, WIDTH * DEPTH> m_heightMap; ///< Highest solid block Y per XZ column (2 KB, 32x32 grid)
 
     // ========== Interpolated Lighting (Smooth Time-Based Transitions) ==========
     struct InterpolatedLight {

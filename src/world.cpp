@@ -1334,13 +1334,17 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
         setBlockMetadataAtUnsafe(worldX, worldY, worldZ, 0);
 
         // Unregister water from simulation
+        glm::ivec3 waterPos(static_cast<int>(worldX), static_cast<int>(worldY), static_cast<int>(worldZ));
         m_waterSimulation->setWaterLevel(
-            static_cast<int>(worldX),
-            static_cast<int>(worldY),
-            static_cast<int>(worldZ),
+            waterPos.x,
+            waterPos.y,
+            waterPos.z,
             0,  // Zero level removes the water cell
             0   // No fluid type
         );
+
+        // FIX: Remove from water sources list to prevent it from regenerating
+        m_waterSimulation->removeWaterSource(waterPos);
 
         // Flood fill to remove all connected flowing water (level > 0)
         std::vector<glm::vec3> toCheck;
@@ -1531,13 +1535,17 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
         setBlockMetadataAtUnsafe(worldX, worldY, worldZ, 0);  // Level 0 = source block
 
         // Register water block with simulation system so it can flow
+        glm::ivec3 waterPos(static_cast<int>(worldX), static_cast<int>(worldY), static_cast<int>(worldZ));
         m_waterSimulation->setWaterLevel(
-            static_cast<int>(worldX),
-            static_cast<int>(worldY),
-            static_cast<int>(worldZ),
+            waterPos.x,
+            waterPos.y,
+            waterPos.z,
             255,  // Full water level (source block)
             1     // Fluid type: 1=water, 2=lava
         );
+
+        // FIX: Add as water source so it maintains its level and flows continuously
+        m_waterSimulation->addWaterSource(waterPos, 1);
     }
 
     // LIGHTING FIX: Store lighting info BEFORE calling lighting system

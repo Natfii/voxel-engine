@@ -44,6 +44,7 @@ private:
     // Menu state
     bool showSeedDialog = false;
     bool showLoadDialog = false;
+    bool startGameRequested = false;  // Track if "Start Game" was clicked (vs "Back")
     char seedInputBuffer[32] = "1124345";  // Default seed
     bool randomSeedRequested = false;
     int spawnRadiusSlider = 2;  // Initial spawn radius (2-8 chunks) - GPU warm-up ensures 60 FPS
