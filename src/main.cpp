@@ -1035,13 +1035,16 @@ int main() {
             auto afterStreaming = std::chrono::high_resolution_clock::now();
 
             // OPTIMIZATION: Process multiple chunks per frame with indirect drawing
-            // With mega-buffers, chunk uploads are much faster (no individual GPU buffer creation)
-            // Old limit: 1 chunk/frame = 60 chunks/sec (too slow when moving!)
-            // New limit: 5 chunks/frame = 300 chunks/sec (smooth streaming)
+            // With mega-buffers + sync fixes, can handle more chunks per frame
+            // History:
+            //   v1: 1 chunk/frame = 60 chunks/sec (bottleneck)
+            //   v2: 5 chunks/frame = 300 chunks/sec (better but still lag)
+            //   v3: 10 chunks/frame = 600 chunks/sec (smooth after sync fixes!)
+            // Sync fixes eliminated 50-200ms fence stalls, now safe to increase
 #if USE_INDIRECT_DRAWING
-            worldStreaming.processCompletedChunks(5);  // Fast uploads with mega-buffers
+            worldStreaming.processCompletedChunks(10);  // Smooth exploration with sync fixes
 #else
-            worldStreaming.processCompletedChunks(1);  // Conservative for legacy path
+            worldStreaming.processCompletedChunks(1);   // Conservative for legacy path
 #endif
             auto afterChunkProcess = std::chrono::high_resolution_clock::now();
 
