@@ -891,8 +891,8 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
         VkDrawIndexedIndirectCommand cmd{};
         cmd.indexCount = chunk->getIndexCount();
         cmd.instanceCount = 1;
-        cmd.firstIndex = static_cast<uint32_t>(chunk->m_megaBufferIndexOffset / sizeof(uint32_t));
-        cmd.vertexOffset = static_cast<int32_t>(chunk->m_megaBufferBaseVertex);
+        cmd.firstIndex = static_cast<uint32_t>(chunk->getMegaBufferIndexOffset() / sizeof(uint32_t));
+        cmd.vertexOffset = static_cast<int32_t>(chunk->getMegaBufferBaseVertex());
         cmd.firstInstance = 0;
         opaqueDrawCommands.push_back(cmd);
 
@@ -1017,8 +1017,8 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
             VkDrawIndexedIndirectCommand cmd{};
             cmd.indexCount = chunk->getTransparentIndexCount();
             cmd.instanceCount = 1;
-            cmd.firstIndex = static_cast<uint32_t>(chunk->m_megaBufferTransparentIndexOffset / sizeof(uint32_t));
-            cmd.vertexOffset = static_cast<int32_t>(chunk->m_megaBufferTransparentBaseVertex);
+            cmd.firstIndex = static_cast<uint32_t>(chunk->getMegaBufferTransparentIndexOffset() / sizeof(uint32_t));
+            cmd.vertexOffset = static_cast<int32_t>(chunk->getMegaBufferTransparentBaseVertex());
             cmd.firstInstance = 0;
             transparentDrawCommands.push_back(cmd);
         }

@@ -168,3 +168,4 @@ shaders/*.spv
 .claude
 nul
 todo.txt
+.ai-instructions

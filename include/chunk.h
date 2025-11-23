@@ -286,6 +286,56 @@ public:
      */
     uint32_t getTransparentVertexCount() const { return m_transparentVertexCount; }
 
+    /**
+     * @brief Gets the number of indices in this chunk's opaque mesh
+     * @return Index count (0 if empty/no visible faces)
+     */
+    uint32_t getIndexCount() const { return m_indexCount; }
+
+    /**
+     * @brief Gets the number of indices in this chunk's transparent mesh
+     * @return Transparent index count (0 if no transparent geometry)
+     */
+    uint32_t getTransparentIndexCount() const { return m_transparentIndexCount; }
+
+    // ========== Indirect Drawing Getters (GPU Optimization) ==========
+
+    /**
+     * @brief Gets the vertex offset in the mega-buffer (for indirect drawing)
+     * @return Byte offset in opaque vertex mega-buffer
+     */
+    VkDeviceSize getMegaBufferVertexOffset() const { return m_megaBufferVertexOffset; }
+
+    /**
+     * @brief Gets the index offset in the mega-buffer (for indirect drawing)
+     * @return Byte offset in opaque index mega-buffer
+     */
+    VkDeviceSize getMegaBufferIndexOffset() const { return m_megaBufferIndexOffset; }
+
+    /**
+     * @brief Gets the base vertex for indexed drawing (for indirect drawing)
+     * @return Base vertex offset
+     */
+    uint32_t getMegaBufferBaseVertex() const { return m_megaBufferBaseVertex; }
+
+    /**
+     * @brief Gets the transparent vertex offset in the mega-buffer (for indirect drawing)
+     * @return Byte offset in transparent vertex mega-buffer
+     */
+    VkDeviceSize getMegaBufferTransparentVertexOffset() const { return m_megaBufferTransparentVertexOffset; }
+
+    /**
+     * @brief Gets the transparent index offset in the mega-buffer (for indirect drawing)
+     * @return Byte offset in transparent index mega-buffer
+     */
+    VkDeviceSize getMegaBufferTransparentIndexOffset() const { return m_megaBufferTransparentIndexOffset; }
+
+    /**
+     * @brief Gets the transparent base vertex for indexed drawing (for indirect drawing)
+     * @return Transparent base vertex offset
+     */
+    uint32_t getMegaBufferTransparentBaseVertex() const { return m_megaBufferTransparentBaseVertex; }
+
     // ========== Block Access ==========
 
     /**
