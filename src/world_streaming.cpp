@@ -415,11 +415,12 @@ void WorldStreaming::unloadDistantChunks(const glm::vec3& playerPos, float unloa
         }
     });
 
-    // PERFORMANCE FIX (2025-11-23): Re-enable chunk unloading with conservative rate
+    // PERFORMANCE FIX (2025-11-23): Re-enable chunk unloading with ultra-conservative rate
     // Previous: DISABLED (0) - caused infinite memory accumulation and frame time increase
-    // New: 5 chunks per call = smooth, prevents memory leak
-    // At 50 FPS this allows ~250 chunks/sec unload rate, enough to keep up with movement
-    const int MAX_UNLOADS_PER_CALL = 5;  // Conservative rate to prevent GPU stalls
+    // GPU buffer deletion causes MASSIVE stalls (1682ms for 5 chunks!)
+    // New: 1 chunk per call = ~4 chunks/sec at 4Hz streaming update rate
+    // This is slow but prevents multi-second frame freezes
+    const int MAX_UNLOADS_PER_CALL = 1;  // Ultra-conservative to prevent GPU stalls
     if (chunksToUnload.size() > MAX_UNLOADS_PER_CALL) {
         chunksToUnload.resize(MAX_UNLOADS_PER_CALL);
     }

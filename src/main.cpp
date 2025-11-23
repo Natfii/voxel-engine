@@ -1028,8 +1028,8 @@ int main() {
 
             if (streamingUpdateTimer >= STREAMING_UPDATE_INTERVAL) {
                 streamingUpdateTimer = 0.0f;
-                const float loadDistance = renderDistance + 32.0f;    // Load chunks slightly beyond render distance
-                const float unloadDistance = renderDistance + 64.0f;  // Unload chunks well beyond render distance
+                const float loadDistance = renderDistance + 32.0f;     // Load chunks slightly beyond render distance
+                const float unloadDistance = renderDistance + 128.0f;  // INCREASED: Much larger buffer to prevent thrashing
                 worldStreaming.updatePlayerPosition(player.Position, loadDistance, unloadDistance);
             }
             auto afterStreaming = std::chrono::high_resolution_clock::now();
