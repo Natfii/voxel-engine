@@ -1258,7 +1258,14 @@ void VulkanRenderer::createSyncObjects() {
 
 // Begin frame
 bool VulkanRenderer::beginFrame() {
-    // First try to acquire an image to see if swap chain is valid
+    // CRITICAL FIX (2025-11-23): Wait for frame resources BEFORE acquiring swap chain image
+    // This allows GPU to work on previous frame while CPU waits, reducing idle time
+    // Old order: acquire image → wait fence (CPU idle while GPU finishes)
+    // New order: wait fence → acquire image (GPU works while CPU waits, then both ready)
+    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+
+    // Now acquire an image from the swap chain
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
                                             m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_imageIndex);
 
@@ -1268,10 +1275,6 @@ bool VulkanRenderer::beginFrame() {
     } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("failed to acquire swap chain image!");
     }
-
-    // Now that we have an image, wait for the previous frame to finish
-    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
-    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
 
     vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
 
@@ -2134,9 +2137,17 @@ void VulkanRenderer::submitAsyncChunkUpload(Chunk* chunk) {
 void VulkanRenderer::processAsyncUploads() {
     std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
 
+    // CRITICAL FIX (2025-11-23): Limit staging buffer deletions per frame to prevent stalls
+    // Each chunk has 4 staging buffers (vertex, index, transparent vertex, transparent index)
+    // With 5 chunks/frame, could delete 20+ buffers unbounded
+    // vkDestroyBuffer/vkFreeMemory can cause implicit GPU synchronization
+    // Limit to 5 upload completions per frame = max 20 buffer deletions
+    const int MAX_UPLOAD_COMPLETIONS_PER_FRAME = 5;
+    int completionsThisFrame = 0;
+
     // Check all pending uploads for completion
     auto it = m_pendingUploads.begin();
-    while (it != m_pendingUploads.end()) {
+    while (it != m_pendingUploads.end() && completionsThisFrame < MAX_UPLOAD_COMPLETIONS_PER_FRAME) {
         // Check if this upload is complete (non-blocking check)
         VkResult result = vkGetFenceStatus(m_device, it->fence);
 
@@ -2153,6 +2164,7 @@ void VulkanRenderer::processAsyncUploads() {
 
             // Remove from pending list
             it = m_pendingUploads.erase(it);
+            completionsThisFrame++;
         } else if (result == VK_NOT_READY) {
             // Still in progress - check next one
             ++it;
