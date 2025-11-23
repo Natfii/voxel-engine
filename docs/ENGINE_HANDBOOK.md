@@ -1,7 +1,7 @@
 # Voxel Engine: Complete Handbook
 
-**Version:** 1.2
-**Last Updated:** 2025-11-22
+**Version:** 1.3
+**Last Updated:** 2025-11-23
 **Status:** Production Ready
 
 ---
@@ -26,6 +26,15 @@
 A modern voxel-based game engine built with **Vulkan**, featuring procedural terrain generation, infinite world streaming, dynamic lighting, and advanced rendering techniques. The engine provides a complete framework for voxel-based games with Minecraft-inspired mechanics and optimizations.
 
 ## Recent Updates
+
+**November 23, 2025 - Build System Modernization:**
+- ✅ **Enhanced Build Script** - Auto-detects CMake, Visual Studio 2017/2019/2022, and Vulkan SDK
+- ✅ **Backward Compatibility** - Supports CMake 3.10+ and Visual Studio 2017+ (prefers latest)
+- ✅ **Smart Tool Detection** - Checks PATH and common install locations for CMake
+- ✅ **Helpful Error Messages** - Provides download links and installation instructions if tools are missing
+- ✅ **Build Flags** - Added -clean and -help flags for easier workflow
+- ✅ **Modern CMake** - Updated CMakeLists.txt with improved features and compatibility
+- ✅ **Documentation Updates** - Comprehensive build guides in README and handbook
 
 **November 22, 2025 - Lighting Overhaul & Performance:**
 - ✅ **Heightmap-Based Sky Lighting** - Replaced BFS flood-fill with O(1) heightmap lookups (100x+ faster lighting)
@@ -158,21 +167,64 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 ### Windows
 
 **Prerequisites:**
-- Visual Studio 2019+ with "Desktop development with C++" workload
-- Vulkan SDK from https://vulkan.lunarg.com/sdk/home#windows
-- CMake 3.10+
+- **Visual Studio**:
+  2017/2019/2022 (2022 Community recommended - free download)
+  - Must include "Desktop development with C++" workload
+  - Download: https://visualstudio.microsoft.com/downloads/
 
-**Build Steps:**
+- **CMake**:
+  3.10+ (minimum), 3.21+ (recommended), 3.29+ (latest)
+  - Download: https://cmake.org/download/
+  - Make sure to select "Add CMake to system PATH" during installation
+
+- **Vulkan SDK**:
+  1.2+ required
+  - Download: https://vulkan.lunarg.com/sdk/home#windows
+  - **IMPORTANT**: Restart computer after installation!
+
+**Enhanced Build System:**
+
+The build script automatically detects your toolchain and provides helpful guidance:
+
 ```cmd
-# Install Vulkan SDK (restart computer after)
 # Clone repository
 git clone <repository-url>
 cd voxel-engine
 
-# Build and run
+# Build (auto-detects CMake, Visual Studio, Vulkan SDK)
 build.bat
+
+# Clean build (if you encounter issues)
+build.bat -clean
+
+# Show help
+build.bat -help
+
+# Run the game
 run.bat
 ```
+
+**Build System Features:**
+- ✅ Auto-detects Visual Studio 2017/2019/2022 (prefers latest)
+- ✅ Auto-detects CMake in PATH or common install locations
+- ✅ Provides download links if tools are missing
+- ✅ Helpful error messages with troubleshooting tips
+- ✅ Backward compatible with older toolchains
+- ✅ Compiles shaders automatically
+- ✅ Configures and builds project in one step
+
+**Supported Configurations:**
+| Tool | Minimum | Recommended | Latest |
+|------|---------|-------------|--------|
+| CMake | 3.10+ | 3.21+ | 3.29+ |
+| Visual Studio | 2017 | 2019 | 2022 |
+| C++ Standard | C++17 | C++17 | C++20 (future) |
+
+**Note on Visual Studio Locations:**
+- VS 2022: `C:\Program Files\Microsoft Visual Studio\2022\` (64-bit)
+- VS 2019/2017: `C:\Program Files (x86)\Microsoft Visual Studio\{year}\` (x86)
+
+The build script automatically checks both locations!
 
 ### Linux
 
