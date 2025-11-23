@@ -290,6 +290,12 @@ private:
     std::vector<std::unique_ptr<Chunk>> m_completedChunks;  ///< Chunks ready for buffer upload
     mutable std::mutex m_completedMutex;                    ///< Protects m_completedChunks
 
+    // === Async Mesh Generation (PERFORMANCE FIX 2025-11-23) ===
+    // Chunks that have finished mesh generation and are ready for GPU upload
+    // Background threads push here after meshing, main thread pops for upload
+    std::queue<std::tuple<int, int, int>> m_chunksReadyForUpload;  ///< Chunks ready for GPU upload
+    mutable std::mutex m_readyForUploadMutex;                      ///< Protects m_chunksReadyForUpload
+
     // === Player Position ===
     glm::vec3 m_lastPlayerPos;            ///< Last known player position
     mutable std::mutex m_playerPosMutex;  ///< Protects m_lastPlayerPos

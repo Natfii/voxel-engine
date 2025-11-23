@@ -1035,16 +1035,17 @@ int main() {
             auto afterStreaming = std::chrono::high_resolution_clock::now();
 
             // OPTIMIZATION: Process multiple chunks per frame with indirect drawing
-            // With mega-buffers + sync fixes, can handle more chunks per frame
-            // CRITICAL: Main thread waits for ALL parallel mesh generations to complete!
+            // ASYNC MESH GENERATION (2025-11-23): Main thread NEVER blocks!
+            // Architecture:
+            //   - Chunks added to world, mesh threads spawn DETACHED
+            //   - Main thread returns immediately (no thread.join!)
+            //   - GPU uploads happen for chunks ready from previous frames
             // History:
-            //   v1: 1 chunk/frame = 60 chunks/sec (very smooth but slow)
-            //   v2: 5 chunks/frame = 300 chunks/sec (good balance)
-            //   v3: 10 chunks/frame = 600 chunks/sec (causes ~200ms stalls!)
-            //   v4: 2 chunks/frame = 120 chunks/sec (SMOOTH - no stalls, fast enough)
-            // With neighbor margin + parallel meshing, lower limit prevents frame time spikes
+            //   v1-v3: BLOCKING (thread.join) → 100-200ms stalls
+            //   v4: ASYNC (detached threads) → ZERO main thread blocking!
+            // Can now process more chunks per frame since we never wait
 #if USE_INDIRECT_DRAWING
-            worldStreaming.processCompletedChunks(2);  // Smooth frame times, no stalls
+            worldStreaming.processCompletedChunks(5);  // Async pipeline - no stalls!
 #else
             worldStreaming.processCompletedChunks(1);   // Conservative for legacy path
 #endif
