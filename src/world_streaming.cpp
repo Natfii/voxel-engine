@@ -503,9 +503,24 @@ void WorldStreaming::unloadDistantChunks(const glm::vec3& playerPos, float unloa
         chunksToUnload.resize(MAX_UNLOADS_PER_CALL);
     }
 
-    // Remove marked chunks
+    // PERFORMANCE OPTIMIZATION (2025-11-23): Batch water cleanup for 50× speedup
+    // Instead of cleaning water for each chunk individually (50 iterations of all water cells),
+    // clean all chunks at once (1 iteration of all water cells)
+    if (!chunksToUnload.empty()) {
+        // Convert ChunkCoord to tuple format for batch API
+        std::vector<std::tuple<int, int, int>> chunkTuples;
+        chunkTuples.reserve(chunksToUnload.size());
+        for (const auto& coord : chunksToUnload) {
+            chunkTuples.emplace_back(coord.x, coord.y, coord.z);
+        }
+
+        // Single batch water cleanup for all chunks (50× faster than individual calls)
+        m_world->getWaterSimulation()->notifyChunkUnloadBatch(chunkTuples);
+    }
+
+    // Remove marked chunks (water already cleaned up in batch above)
     for (const auto& coord : chunksToUnload) {
-        if (m_world->removeChunk(coord.x, coord.y, coord.z, m_renderer)) {
+        if (m_world->removeChunk(coord.x, coord.y, coord.z, m_renderer, true)) {  // Skip water cleanup
             Logger::debug() << "Unloaded distant chunk (" << coord.x << ", " << coord.y << ", " << coord.z << ")";
             m_totalChunksUnloaded++;
 
@@ -516,7 +531,7 @@ void WorldStreaming::unloadDistantChunks(const glm::vec3& playerPos, float unloa
     }
 
     if (!chunksToUnload.empty()) {
-        Logger::info() << "Unloaded " << chunksToUnload.size() << " distant chunks";
+        Logger::info() << "Unloaded " << chunksToUnload.size() << " distant chunks (batch water cleanup)";
     }
 }
 

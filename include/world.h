@@ -245,9 +245,10 @@ public:
      * @param chunkY Chunk Y coordinate
      * @param chunkZ Chunk Z coordinate
      * @param renderer Vulkan renderer for buffer cleanup
+     * @param skipWaterCleanup Skip water cleanup (used when batch cleanup already done)
      * @return True if chunk was removed, false if not found
      */
-    bool removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* renderer);
+    bool removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* renderer, bool skipWaterCleanup = false);
 
     /**
      * @brief Gets the block ID at the specified world position

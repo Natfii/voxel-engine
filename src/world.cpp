@@ -1401,7 +1401,7 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
     return true;
 }
 
-bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* renderer) {
+bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* renderer, bool skipWaterCleanup) {
     // Thread-safe removal
     std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
@@ -1435,7 +1435,8 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
 
     // PERFORMANCE FIX (2025-11-23): Notify water simulation to clean up water cells
     // Without this, water cells accumulate infinitely causing frame time increase
-    if (m_waterSimulation) {
+    // Skip if batch cleanup already performed (50× faster)
+    if (m_waterSimulation && !skipWaterCleanup) {
         m_waterSimulation->notifyChunkUnload(chunkX, chunkY, chunkZ);
     }
 

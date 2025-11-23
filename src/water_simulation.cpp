@@ -508,6 +508,55 @@ void WaterSimulation::notifyChunkUnload(int chunkX, int chunkY, int chunkZ) {
     );
 }
 
+void WaterSimulation::notifyChunkUnloadBatch(const std::vector<std::tuple<int, int, int>>& chunks) {
+    // PERFORMANCE OPTIMIZATION (2025-11-23): Batch water cleanup for 50× speedup
+    // Instead of iterating water cells 50 times (once per chunk), iterate ONCE
+    // and check each water cell against all chunks in the batch
+
+    if (chunks.empty()) return;
+
+    // Build spatial hash of chunk bounds for O(1) lookup
+    // Maps chunk coordinate to (minX, minY, minZ, maxX, maxY, maxZ)
+    std::unordered_set<glm::ivec3> chunkSet;
+    for (const auto& [chunkX, chunkY, chunkZ] : chunks) {
+        chunkSet.insert(glm::ivec3(chunkX, chunkY, chunkZ));
+    }
+
+    // Single pass through all water cells - check if cell is in any unloading chunk
+    for (auto it = m_waterCells.begin(); it != m_waterCells.end();) {
+        const glm::ivec3& pos = it->first;
+
+        // Convert world position to chunk coordinates
+        glm::ivec3 cellChunk(
+            pos.x >> 5,  // Divide by 32 (chunk size)
+            pos.y >> 5,
+            pos.z >> 5
+        );
+
+        // Check if this water cell is in any of the chunks being unloaded
+        if (chunkSet.find(cellChunk) != chunkSet.end()) {
+            m_dirtyCells.erase(pos);  // Also remove from dirty set
+            it = m_waterCells.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Single pass through water sources - check if source is in any unloading chunk
+    m_waterSources.erase(
+        std::remove_if(m_waterSources.begin(), m_waterSources.end(),
+            [&chunkSet](const WaterSource& source) {
+                glm::ivec3 sourceChunk(
+                    static_cast<int>(source.position.x) >> 5,
+                    static_cast<int>(source.position.y) >> 5,
+                    static_cast<int>(source.position.z) >> 5
+                );
+                return chunkSet.find(sourceChunk) != chunkSet.end();
+            }),
+        m_waterSources.end()
+    );
+}
+
 bool WaterSimulation::isBlockSolid(int x, int y, int z, World* world) const {
     int blockID = world->getBlockAt(x, y, z);
     if (blockID == 0) return false; // Air

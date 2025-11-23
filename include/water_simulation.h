@@ -98,6 +98,16 @@ public:
     // Chunk lifecycle
     void notifyChunkUnload(int chunkX, int chunkY, int chunkZ);
 
+    /**
+     * @brief Batch unload notification for multiple chunks (50× faster)
+     *
+     * Iterates water cells once and checks against all chunks in batch.
+     * Much more efficient than calling notifyChunkUnload() for each chunk individually.
+     *
+     * @param chunks Vector of chunk coordinates to unload (x, y, z)
+     */
+    void notifyChunkUnloadBatch(const std::vector<std::tuple<int, int, int>>& chunks);
+
     // Configuration
     void setEvaporationEnabled(bool enabled) { m_enableEvaporation = enabled; }
     void setFlowSpeed(float speed) { m_flowSpeed = speed; }
