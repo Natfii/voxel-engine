@@ -1,0 +1,47 @@
+# AI Assistant Instructions for Voxel Engine Project
+
+## 📖 READ FIRST: docs/ENGINE_HANDBOOK.md
+
+**ALWAYS** start by reading `docs/ENGINE_HANDBOOK.md` - it is the authoritative source of truth for this project.
+
+## Workflow
+
+1. **READ** `docs/ENGINE_HANDBOOK.md` before making ANY changes
+2. **UNDERSTAND** the existing architecture and recent updates
+3. **IMPLEMENT** your changes following established patterns
+4. **UPDATE** the handbook when adding/modifying features:
+   - Add to "Recent Updates" section at the top
+   - Update relevant sections with new details
+   - Increment version number if significant changes
+   - Update "Last Updated" date
+5. **KEEP ACCURATE** - the handbook must always reflect reality
+
+## Key Principles
+
+- The handbook is **gospel** - trust it over assumptions
+- Document **why** decisions were made, not just what was done
+- Include **performance metrics** when available
+- Maintain **backward compatibility** notes
+- Keep **troubleshooting** sections current
+
+## Recent Major Systems
+
+- **Indirect Drawing** (Nov 2025) - 300+ draw calls → 2 per frame
+- **Chunk Unloading Fix** (Nov 2025) - 50x faster unloading
+- **Lighting System** (Nov 2025) - Heightmap-based sky lighting
+- **Zombie Code Purge** (Nov 2025) - Removed duplicate systems
+
+## Important Files
+
+- `docs/ENGINE_HANDBOOK.md` - **READ THIS FIRST**
+- `include/vulkan_renderer.h` - Feature flags (USE_INDIRECT_DRAWING, etc.)
+- `src/world_streaming.cpp` - Chunk loading/unloading
+- `src/chunk.cpp` - Chunk mesh generation
+- `src/world.cpp` - World rendering
+
+## Conventions
+
+- Use `#if USE_INDIRECT_DRAWING` for conditional compilation
+- Update version numbers: `1.9` → `2.0` for major features
+- Document performance impacts with actual measurements
+- Keep code comments focused on "why", not "what"

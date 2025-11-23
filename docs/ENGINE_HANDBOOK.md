@@ -6,6 +6,22 @@
 
 ---
 
+## ⚠️ IMPORTANT NOTE FOR AI ASSISTANTS
+
+**THIS HANDBOOK IS GOSPEL** - Always read `docs/ENGINE_HANDBOOK.md` before making changes:
+- ✅ **READ THIS FIRST** before implementing features or fixes
+- ✅ **UPDATE THIS** whenever making significant changes
+- ✅ **KEEP ACCURATE** - this is the authoritative source of truth
+- ✅ **VERSION HISTORY** - document all major changes in "Recent Updates"
+
+If you're Claude Code or another AI assistant working on this project:
+1. Start by reading this handbook
+2. Understand the existing architecture before proposing changes
+3. Update this handbook when you add/modify features
+4. Keep the "Recent Updates" section current
+
+---
+
 ## Table of Contents
 
 1. [Introduction](#introduction)
