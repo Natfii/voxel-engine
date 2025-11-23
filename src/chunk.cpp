@@ -72,7 +72,8 @@ Chunk::Chunk(int x, int y, int z)
       m_transparentIndexStagingBuffer(VK_NULL_HANDLE),
       m_transparentIndexStagingBufferMemory(VK_NULL_HANDLE),
       m_visible(false),
-      m_lightingDirty(false) {
+      m_lightingDirty(false),
+      m_needsDecoration(false) {
 
     // Initialize all blocks to air, metadata to 0, and lighting to darkness
     // OPTIMIZATION: Use memset instead of nested loops (10-20x faster)
@@ -364,6 +365,10 @@ void Chunk::generate(BiomeMap* biomeMap) {
     // PERFORMANCE: Build heightmap for fast sky light calculation
     // This replaces expensive BFS propagation with O(1) lookups
     rebuildHeightMap();
+
+    // FIXED (2025-11-23): Mark freshly generated chunks as needing decoration
+    // This prevents re-decorating chunks loaded from disk (which would overwrite player edits)
+    m_needsDecoration = true;
 }
 
 /**
@@ -2054,6 +2059,10 @@ bool Chunk::load(const std::string& worldPath) {
             file.read(reinterpret_cast<char*>(m_blockMetadata), WIDTH * HEIGHT * DEPTH * sizeof(uint8_t));
             file.close();
             Logger::debug() << "Loaded chunk (" << m_x << ", " << m_y << ", " << m_z << ") from legacy format";
+
+            // FIXED (2025-11-23): Mark loaded chunks as NOT needing decoration
+            // Prevents overwriting player edits when chunks reload
+            m_needsDecoration = false;
             return true;
 
         } else if (version == 2) {
@@ -2086,6 +2095,9 @@ bool Chunk::load(const std::string& worldPath) {
             // NOTE: Version 2 doesn't have lighting data, so caller must initialize lighting!
             Logger::debug() << "Loaded chunk (" << m_x << ", " << m_y << ", " << m_z << ") from RLE format v2 ("
                            << blockDataSize << "+" << metadataSize << " bytes) - lighting will be calculated";
+
+            // FIXED (2025-11-23): Mark loaded chunks as NOT needing decoration
+            m_needsDecoration = false;
             return true;
 
         } else if (version == 3) {
@@ -2128,6 +2140,9 @@ bool Chunk::load(const std::string& worldPath) {
             // SUCCESS: Chunk loaded with lighting! No need for lighting recalculation!
             Logger::debug() << "Loaded chunk (" << m_x << ", " << m_y << ", " << m_z << ") from RLE format v3 WITH LIGHTING ("
                            << blockDataSize << "+" << metadataSize << "+" << lightingSize << " bytes) - instant lighting!";
+
+            // FIXED (2025-11-23): Mark loaded chunks as NOT needing decoration
+            m_needsDecoration = false;
             return true;
 
         } else {

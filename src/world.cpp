@@ -532,8 +532,8 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
     while (it != m_pendingDecorations.end() && processed < maxChunks) {
         Chunk* chunk = *it;
 
-        // Check if chunk is still valid and now has all neighbors
-        if (chunk && hasHorizontalNeighbors(chunk)) {
+        // Check if chunk is still valid, needs decoration, and now has all neighbors
+        if (chunk && chunk->needsDecoration() && hasHorizontalNeighbors(chunk)) {
             try {
                 Logger::info() << "Decorating pending chunk (" << chunk->getChunkX()
                               << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ()
@@ -541,6 +541,7 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
 
                 // Decorate the chunk now that neighbors are ready
                 decorateChunk(chunk);
+                chunk->setNeedsDecoration(false);  // Mark as decorated
 
                 // Reinitialize lighting after adding decorations
                 initializeChunkLighting(chunk);
@@ -562,6 +563,12 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
                 Logger::error() << "Failed to decorate pending chunk: " << e.what();
                 it = m_pendingDecorations.erase(it);  // Remove anyway to prevent infinite retry
             }
+        } else if (chunk && !chunk->needsDecoration()) {
+            // Chunk loaded from disk - remove from pending decorations
+            Logger::debug() << "Removing chunk (" << chunk->getChunkX()
+                           << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ()
+                           << ") from pending decorations - loaded from disk";
+            it = m_pendingDecorations.erase(it);
         } else {
             // Still waiting for neighbors, keep in queue
             ++it;
@@ -1045,17 +1052,25 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         try {
             Logger::debug() << "Processing surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): decorate → light → mesh → upload";
 
-            // DECORATION FIX: Only decorate if all horizontal neighbors are loaded
-            // This prevents trees from being placed with missing neighbor data
-            if (hasHorizontalNeighbors(chunkPtr)) {
-                // Step 1: Add decorations (trees, structures)
-                decorateChunk(chunkPtr);
+            // FIXED (2025-11-23): Only decorate freshly generated chunks, not loaded ones
+            // This prevents overwriting player edits when chunks reload from disk/cache
+            if (chunkPtr->needsDecoration()) {
+                // DECORATION FIX: Only decorate if all horizontal neighbors are loaded
+                // This prevents trees from being placed with missing neighbor data
+                if (hasHorizontalNeighbors(chunkPtr)) {
+                    // Step 1: Add decorations (trees, structures)
+                    decorateChunk(chunkPtr);
+                    chunkPtr->setNeedsDecoration(false);  // Mark as decorated
+                } else {
+                    // Neighbors not ready yet - defer decoration until later
+                    m_pendingDecorations.insert(chunkPtr);
+                    Logger::debug() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                                   << ") waiting for neighbors before decoration (pending: "
+                                   << m_pendingDecorations.size() << ")";
+                }
             } else {
-                // Neighbors not ready yet - defer decoration until later
-                m_pendingDecorations.insert(chunkPtr);
                 Logger::debug() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
-                               << ") waiting for neighbors before decoration (pending: "
-                               << m_pendingDecorations.size() << ")";
+                               << ") loaded from disk/cache - skipping decoration to preserve player edits";
             }
 
             // Step 2: Initialize lighting ONCE after all blocks are in place
@@ -1981,6 +1996,11 @@ std::unique_ptr<Chunk> World::getChunkFromCache(int chunkX, int chunkY, int chun
         // Move chunk out of cache (caller takes ownership)
         std::unique_ptr<Chunk> chunk = std::move(it->second);
         m_unloadedChunksCache.erase(it);
+
+        // FIXED (2025-11-23): Mark cached chunks as NOT needing decoration
+        // These chunks were already decorated before being cached
+        chunk->setNeedsDecoration(false);
+
         Logger::debug() << "Cache hit! Retrieved chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                        << ") from RAM cache (remaining cached: " << m_unloadedChunksCache.size() << ")";
         return chunk;
