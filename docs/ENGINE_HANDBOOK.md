@@ -1300,8 +1300,7 @@ voxel-engine/
 │   ├── blocks/               # Block definitions (YAML)
 │   ├── biomes/               # Biome definitions (YAML)
 │   ├── structures/           # Structure definitions (YAML)
-│   ├── textures/             # Block textures (PNG)
-│   └── skybox/               # Skybox textures
+
 ├── docs/                     # Documentation
 │   ├── BUILD_INSTRUCTIONS.MD # Build Guides
 │   └── ENGINE_HANDBOOK.MD    # Systems guides
