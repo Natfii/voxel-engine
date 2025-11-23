@@ -896,7 +896,7 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     // ========== PASS 2: RENDER TRANSPARENT GEOMETRY (SORTED) ==========
     if (!transparentChunks.empty() && renderer != nullptr) {
         // Bind transparent pipeline (depth test enabled, depth write disabled)
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->getTransparentPipeline());
+        renderer->bindPipelineCached(commandBuffer, renderer->getTransparentPipeline());
 
         // IMPORTANT: Rebind descriptor sets (contains texture atlas)
         VkDescriptorSet descriptorSet = renderer->getCurrentDescriptorSet();

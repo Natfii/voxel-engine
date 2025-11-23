@@ -317,6 +317,66 @@ public:
      */
     void submitAsyncChunkUpload(class Chunk* chunk);
 
+    // ========== Indirect Drawing API (GPU Optimization) ==========
+
+    /**
+     * @brief Initialize mega-buffers for indirect drawing
+     *
+     * Creates large device-local buffers to hold all chunk geometry.
+     * Call once during initialization.
+     */
+    void initializeMegaBuffers();
+
+    /**
+     * @brief Allocate space in mega-buffer for a chunk
+     *
+     * Returns offsets where chunk data should be written.
+     * Thread-safe for concurrent chunk loading.
+     *
+     * @param vertexSize Size of vertex data in bytes
+     * @param indexSize Size of index data in bytes
+     * @param transparent Whether this is for transparent geometry
+     * @param outVertexOffset Output: offset in vertex mega-buffer
+     * @param outIndexOffset Output: offset in index mega-buffer
+     * @return True if allocation succeeded, false if mega-buffer is full
+     */
+    bool allocateMegaBufferSpace(VkDeviceSize vertexSize, VkDeviceSize indexSize,
+                                  bool transparent,
+                                  VkDeviceSize& outVertexOffset, VkDeviceSize& outIndexOffset);
+
+    /**
+     * @brief Upload chunk geometry to mega-buffer
+     *
+     * Copies vertex and index data to the specified offsets in mega-buffers.
+     *
+     * @param vertexData Pointer to vertex data
+     * @param vertexSize Size of vertex data in bytes
+     * @param indexData Pointer to index data
+     * @param indexSize Size of index data in bytes
+     * @param vertexOffset Target offset in vertex mega-buffer
+     * @param indexOffset Target offset in index mega-buffer
+     * @param transparent Whether this is transparent geometry
+     */
+    void uploadToMegaBuffer(const void* vertexData, VkDeviceSize vertexSize,
+                           const void* indexData, VkDeviceSize indexSize,
+                           VkDeviceSize vertexOffset, VkDeviceSize indexOffset,
+                           bool transparent);
+
+    /**
+     * @brief Bind pipeline with state caching (avoids redundant binds)
+     *
+     * Only calls vkCmdBindPipeline if the pipeline differs from currently bound.
+     *
+     * @param commandBuffer Command buffer
+     * @param pipeline Pipeline to bind
+     */
+    void bindPipelineCached(VkCommandBuffer commandBuffer, VkPipeline pipeline);
+
+    /**
+     * @brief Reset pipeline state cache (call at frame start)
+     */
+    void resetPipelineCache();
+
     // ========== Deferred Deletion (Fence-Based Resource Cleanup) ==========
 
     /**
@@ -655,7 +715,7 @@ private:
     };
     std::deque<PendingUpload> m_pendingUploads;
     std::mutex m_pendingUploadsMutex;
-    static const int MAX_PENDING_UPLOADS = 10;  // Limit concurrent uploads
+    static const int MAX_PENDING_UPLOADS = 25;  // Limit concurrent uploads (increased for better throughput)
 
     // Deferred deletion queue (fence-based resource cleanup)
     struct DeferredDeletion {
@@ -665,6 +725,40 @@ private:
     };
     std::deque<DeferredDeletion> m_deletionQueue;
     std::mutex m_deletionQueueMutex;
+
+    // ========== Indirect Drawing System (GPU Optimization) ==========
+    // Mega-buffers: Single large buffers containing all chunk geometry
+    // This reduces draw calls from 300+ per frame to just 2 (opaque + transparent)
+
+    static constexpr VkDeviceSize MEGA_BUFFER_VERTEX_SIZE = 256 * 1024 * 1024;  // 256 MB for vertices
+    static constexpr VkDeviceSize MEGA_BUFFER_INDEX_SIZE = 256 * 1024 * 1024;   // 256 MB for indices
+
+    // Opaque geometry mega-buffers
+    VkBuffer m_megaVertexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_megaVertexBufferMemory = VK_NULL_HANDLE;
+    VkBuffer m_megaIndexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_megaIndexBufferMemory = VK_NULL_HANDLE;
+    VkDeviceSize m_megaVertexOffset = 0;  // Current write offset in vertex mega-buffer
+    VkDeviceSize m_megaIndexOffset = 0;   // Current write offset in index mega-buffer
+
+    // Transparent geometry mega-buffers
+    VkBuffer m_megaTransparentVertexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_megaTransparentVertexBufferMemory = VK_NULL_HANDLE;
+    VkBuffer m_megaTransparentIndexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_megaTransparentIndexBufferMemory = VK_NULL_HANDLE;
+    VkDeviceSize m_megaTransparentVertexOffset = 0;
+    VkDeviceSize m_megaTransparentIndexOffset = 0;
+
+    // Indirect command buffers (rebuilt each frame with visible chunks)
+    VkBuffer m_indirectDrawBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_indirectDrawBufferMemory = VK_NULL_HANDLE;
+    VkBuffer m_indirectDrawTransparentBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_indirectDrawTransparentBufferMemory = VK_NULL_HANDLE;
+
+    std::mutex m_megaBufferMutex;  // Protect concurrent chunk uploads
+
+    // Pipeline state caching (reduces redundant vkCmdBindPipeline calls)
+    VkPipeline m_currentlyBoundPipeline = VK_NULL_HANDLE;
 
 private:
     /**

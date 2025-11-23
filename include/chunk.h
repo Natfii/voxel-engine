@@ -624,20 +624,30 @@ private:
     std::vector<uint32_t> m_transparentIndices;  ///< CPU-side index data (transparent)
 
     // ========== Vulkan Buffers (Opaque) ==========
-    VkBuffer m_vertexBuffer;                ///< GPU vertex buffer (opaque)
-    VkDeviceMemory m_vertexBufferMemory;    ///< Vertex buffer memory (opaque)
-    VkBuffer m_indexBuffer;                 ///< GPU index buffer (opaque)
-    VkDeviceMemory m_indexBufferMemory;     ///< Index buffer memory (opaque)
+    VkBuffer m_vertexBuffer;                ///< GPU vertex buffer (opaque) [LEGACY - will be replaced by mega-buffer]
+    VkDeviceMemory m_vertexBufferMemory;    ///< Vertex buffer memory (opaque) [LEGACY]
+    VkBuffer m_indexBuffer;                 ///< GPU index buffer (opaque) [LEGACY]
+    VkDeviceMemory m_indexBufferMemory;     ///< Index buffer memory (opaque) [LEGACY]
     uint32_t m_vertexCount;                 ///< Number of vertices (opaque)
     uint32_t m_indexCount;                  ///< Number of indices (opaque)
 
+    // Mega-buffer offsets for indirect drawing (GPU optimization)
+    VkDeviceSize m_megaBufferVertexOffset = 0;   ///< Offset in mega vertex buffer
+    VkDeviceSize m_megaBufferIndexOffset = 0;    ///< Offset in mega index buffer
+    uint32_t m_megaBufferBaseVertex = 0;         ///< Base vertex for indexed drawing
+
     // ========== Vulkan Buffers (Transparent) ==========
-    VkBuffer m_transparentVertexBuffer;           ///< GPU vertex buffer (transparent)
-    VkDeviceMemory m_transparentVertexBufferMemory; ///< Vertex buffer memory (transparent)
-    VkBuffer m_transparentIndexBuffer;            ///< GPU index buffer (transparent)
-    VkDeviceMemory m_transparentIndexBufferMemory; ///< Index buffer memory (transparent)
+    VkBuffer m_transparentVertexBuffer;           ///< GPU vertex buffer (transparent) [LEGACY]
+    VkDeviceMemory m_transparentVertexBufferMemory; ///< Vertex buffer memory (transparent) [LEGACY]
+    VkBuffer m_transparentIndexBuffer;            ///< GPU index buffer (transparent) [LEGACY]
+    VkDeviceMemory m_transparentIndexBufferMemory; ///< Index buffer memory (transparent) [LEGACY]
     uint32_t m_transparentVertexCount;            ///< Number of vertices (transparent)
     uint32_t m_transparentIndexCount;             ///< Number of indices (transparent)
+
+    // Mega-buffer offsets for transparent geometry (indirect drawing)
+    VkDeviceSize m_megaBufferTransparentVertexOffset = 0;
+    VkDeviceSize m_megaBufferTransparentIndexOffset = 0;
+    uint32_t m_megaBufferTransparentBaseVertex = 0;
 
     // ========== Staging Buffers (for batched uploads) ==========
     VkBuffer m_vertexStagingBuffer;               ///< Staging buffer for opaque vertices

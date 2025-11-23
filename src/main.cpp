@@ -1179,13 +1179,16 @@ int main() {
             // Get current descriptor set (need to store it to take address)
             VkDescriptorSet currentDescriptorSet = renderer.getCurrentDescriptorSet();
 
+            // Reset pipeline cache at frame start (GPU optimization)
+            renderer.resetPipelineCache();
+
             // Render skybox first (renders behind everything)
             renderer.renderSkybox();
 
             // Render world with normal or wireframe pipeline based on debug mode
             VkPipeline worldPipeline = DebugState::instance().wireframeMode.getValue() ?
                 renderer.getWireframePipeline() : renderer.getGraphicsPipeline();
-            vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipeline);
+            renderer.bindPipelineCached(renderer.getCurrentCommandBuffer(), worldPipeline);
             vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, renderDistance, &renderer);
@@ -1193,7 +1196,7 @@ int main() {
 
             // Render block outline with line pipeline
             if (target.hasTarget) {
-                vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getLinePipeline());
+                renderer.bindPipelineCached(renderer.getCurrentCommandBuffer(), renderer.getLinePipeline());
                 vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                        renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
                 targetingSystem.renderBlockOutline(renderer.getCurrentCommandBuffer());
