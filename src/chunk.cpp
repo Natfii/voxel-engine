@@ -1308,16 +1308,23 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
         VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
         VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_indices.size();
 
-        // Allocate space in mega-buffer
-        if (!renderer->allocateMegaBufferSpace(vertexBufferSize, indexBufferSize, false,
-                                                m_megaBufferVertexOffset, m_megaBufferIndexOffset)) {
-            std::cerr << "ERROR: Failed to allocate mega-buffer space for chunk at ("
-                     << m_x << ", " << m_z << ")" << std::endl;
-            return;
-        }
+        // OPTIMIZATION: Only allocate new space if we don't already have space
+        // This prevents memory leaks when chunks regenerate meshes (lighting updates, etc.)
+        bool needsNewAllocation = (m_megaBufferVertexOffset == 0 && m_megaBufferIndexOffset == 0);
 
-        // Calculate base vertex for indexed drawing
-        m_megaBufferBaseVertex = static_cast<uint32_t>(m_megaBufferVertexOffset / sizeof(Vertex));
+        if (needsNewAllocation) {
+            // Allocate space in mega-buffer
+            if (!renderer->allocateMegaBufferSpace(vertexBufferSize, indexBufferSize, false,
+                                                    m_megaBufferVertexOffset, m_megaBufferIndexOffset)) {
+                std::cerr << "ERROR: Failed to allocate mega-buffer space for chunk at ("
+                         << m_x << ", " << m_z << ")" << std::endl;
+                return;
+            }
+
+            // Calculate base vertex for indexed drawing
+            m_megaBufferBaseVertex = static_cast<uint32_t>(m_megaBufferVertexOffset / sizeof(Vertex));
+        }
+        // else: Reuse existing allocation (chunk is updating its mesh)
 
         // Create staging buffers
         renderer->createBuffer(vertexBufferSize,
@@ -1352,17 +1359,25 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
         VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_transparentVertices.size();
         VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_transparentIndices.size();
 
-        // Allocate space in transparent mega-buffer
-        if (!renderer->allocateMegaBufferSpace(vertexBufferSize, indexBufferSize, true,
-                                                m_megaBufferTransparentVertexOffset,
-                                                m_megaBufferTransparentIndexOffset)) {
-            std::cerr << "ERROR: Failed to allocate transparent mega-buffer space for chunk at ("
-                     << m_x << ", " << m_z << ")" << std::endl;
-            return;
-        }
+        // OPTIMIZATION: Only allocate new space if we don't already have space
+        // This prevents memory leak when chunks regenerate meshes for lighting updates
+        bool needsNewAllocation = (m_megaBufferTransparentVertexOffset == 0 &&
+                                   m_megaBufferTransparentIndexOffset == 0);
 
-        // Calculate base vertex for transparent indexed drawing
-        m_megaBufferTransparentBaseVertex = static_cast<uint32_t>(m_megaBufferTransparentVertexOffset / sizeof(Vertex));
+        if (needsNewAllocation) {
+            // Allocate space in transparent mega-buffer
+            if (!renderer->allocateMegaBufferSpace(vertexBufferSize, indexBufferSize, true,
+                                                    m_megaBufferTransparentVertexOffset,
+                                                    m_megaBufferTransparentIndexOffset)) {
+                std::cerr << "ERROR: Failed to allocate transparent mega-buffer space for chunk at ("
+                         << m_x << ", " << m_z << ")" << std::endl;
+                return;
+            }
+
+            // Calculate base vertex for transparent indexed drawing
+            m_megaBufferTransparentBaseVertex = static_cast<uint32_t>(m_megaBufferTransparentVertexOffset / sizeof(Vertex));
+        }
+        // else: Reuse existing allocation (chunk is updating its mesh)
 
         // Create staging buffers
         renderer->createBuffer(vertexBufferSize,
