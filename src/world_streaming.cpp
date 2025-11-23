@@ -121,6 +121,12 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
     // Calculate chunk load radius
     int loadRadiusChunks = static_cast<int>(std::ceil(loadDistance / (CHUNK_SIZE * BLOCK_SIZE)));
 
+    // CRITICAL FIX: Add neighbor margin to ensure chunks at boundary can decorate
+    // Chunks need all 4 horizontal neighbors to decorate, but neighbors might be outside loadDistance
+    // Add 2 chunk widths (64 blocks) margin to ensure neighbor chunks always load
+    const float NEIGHBOR_MARGIN = 2.0f * CHUNK_SIZE * BLOCK_SIZE;  // 64 blocks
+    float effectiveLoadDistance = loadDistance + NEIGHBOR_MARGIN;
+
     // PERFORMANCE FIX: Get loaded chunks once with ONE lock instead of 1,331 locks!
     // Build a hash set for O(1) existence checks
     std::unordered_set<ChunkCoord> loadedChunks;
@@ -138,8 +144,8 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
                 int chunkY = playerChunkY + dy;
                 int chunkZ = playerChunkZ + dz;
 
-                // Check if chunk is within load distance
-                if (shouldLoadChunk(chunkX, chunkY, chunkZ, playerPos, loadDistance)) {
+                // Check if chunk is within load distance (with neighbor margin!)
+                if (shouldLoadChunk(chunkX, chunkY, chunkZ, playerPos, effectiveLoadDistance)) {
                     // Check if chunk already exists (O(1) hash lookup, no lock!)
                     ChunkCoord coord{chunkX, chunkY, chunkZ};
                     if (loadedChunks.find(coord) == loadedChunks.end()) {
@@ -175,7 +181,8 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
 
     // Unload chunks beyond unload distance
     // Ensure minimum hysteresis to prevent thrashing (at least one chunk width)
-    float effectiveUnloadDistance = std::max(unloadDistance, loadDistance + (CHUNK_SIZE * BLOCK_SIZE));
+    // Use effectiveLoadDistance (which includes neighbor margin) to prevent unloading neighbor chunks
+    float effectiveUnloadDistance = std::max(unloadDistance, effectiveLoadDistance + (CHUNK_SIZE * BLOCK_SIZE));
     unloadDistantChunks(playerPos, effectiveUnloadDistance);
 
     // Retry failed chunks with exponential backoff
