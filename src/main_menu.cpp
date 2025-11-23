@@ -75,7 +75,7 @@ void MainMenu::renderMainButtons() {
 
     // Title
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-    ImGui::SetCursorPos(ImVec2(centerX - 160.0f, centerY - 180.0f));
+    ImGui::SetCursorPos(ImVec2(centerX - 185.0f, centerY - 180.0f));
     ImGui::SetWindowFontScale(2.0f);
     ImGui::Text("NAVI Voxel Engine: Map Maker");
     ImGui::SetWindowFontScale(1.0f);
