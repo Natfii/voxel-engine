@@ -145,6 +145,11 @@ private:
     std::mt19937 m_rng;
     std::mutex m_rngMutex;
 
+    // OPTIMIZATION: Flow weight cache to avoid redundant BFS calculations
+    // Cache key: source position, Cache value: map of (destination -> weight)
+    // Cleared each frame to avoid stale data when terrain changes
+    std::unordered_map<glm::ivec3, std::unordered_map<glm::ivec3, int>> m_flowWeightCache;
+
     // Internal simulation methods
     void updateWaterCell(const glm::ivec3& pos, WaterCell& cell, World* world, float deltaTime);
     void applyGravity(const glm::ivec3& pos, WaterCell& cell, World* world);
