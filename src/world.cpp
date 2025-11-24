@@ -517,20 +517,6 @@ bool World::hasHorizontalNeighbors(Chunk* chunk) {
     Chunk* neighborEast = getChunkAt(chunkX + 1, chunkY, chunkZ);   // +X
     Chunk* neighborWest = getChunkAt(chunkX - 1, chunkY, chunkZ);   // -X
 
-    // DEBUG: Log neighbor status for first stuck chunk
-    static bool loggedOnce = false;
-    if (!loggedOnce && !(neighborNorth != nullptr && neighborNorth->isTerrainReady() &&
-                         neighborSouth != nullptr && neighborSouth->isTerrainReady() &&
-                         neighborEast != nullptr && neighborEast->isTerrainReady() &&
-                         neighborWest != nullptr && neighborWest->isTerrainReady())) {
-        Logger::info() << "Chunk (" << chunkX << "," << chunkY << "," << chunkZ << ") neighbor status:";
-        Logger::info() << "  North: " << (neighborNorth ? (neighborNorth->isTerrainReady() ? "READY" : "NOT_READY") : "MISSING");
-        Logger::info() << "  South: " << (neighborSouth ? (neighborSouth->isTerrainReady() ? "READY" : "NOT_READY") : "MISSING");
-        Logger::info() << "  East: " << (neighborEast ? (neighborEast->isTerrainReady() ? "READY" : "NOT_READY") : "MISSING");
-        Logger::info() << "  West: " << (neighborWest ? (neighborWest->isTerrainReady() ? "READY" : "NOT_READY") : "MISSING");
-        loggedOnce = true;
-    }
-
     // MULTI-STAGE GENERATION FIX (2025-11-24): Check neighbors exist AND finished terrain generation
     // Previously: Only checked if neighbors exist (nullptr check)
     // Problem: Chunks existed but weren't terrain-ready → 150 chunks deadlocked waiting forever
@@ -584,8 +570,6 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
         for (Chunk* chunk : completedChunks) {
             if (!chunk->needsDecoration()) {  // Only if decoration succeeded
                 try {
-                    Logger::info() << "Meshing decorated chunk (" << chunk->getChunkX()
-                                  << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ() << ")";
                     chunk->generateMesh(this);
                 } catch (const std::exception& e) {
                     Logger::error() << "Failed to mesh decorated chunk: " << e.what();
@@ -640,16 +624,9 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
         return;  // All slots full, try again next frame
     }
 
-    // THREAD SAFETY (2025-11-23): Lock for checking emptiness
+    // Check if there's any work to do
     {
         std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
-        size_t pendingCount = m_pendingDecorations.size();
-
-        // DEBUG: Log every call to verify it's running continuously
-        if (pendingCount > 0) {
-            Logger::info() << "processPendingDecorations called with " << pendingCount << " pending chunks";
-        }
-
         if (m_pendingDecorations.empty()) return;
     }
 
@@ -660,7 +637,6 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
         // THREAD SAFETY: Lock while iterating pending decorations
         std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
         auto it = m_pendingDecorations.begin();
-        int skippedNoNeighbors = 0;
 
         // Only collect as many as we have slots for
         while (it != m_pendingDecorations.end() && chunksToDecorate.size() < slotsAvailable) {
@@ -668,16 +644,8 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
 
             if (chunk && chunk->needsDecoration() && hasHorizontalNeighbors(chunk)) {
                 chunksToDecorate.push_back(chunk);
-            } else if (chunk && chunk->needsDecoration() && !hasHorizontalNeighbors(chunk)) {
-                // DEBUG: Count chunks waiting for neighbors
-                skippedNoNeighbors++;
             }
             ++it;
-        }
-
-        // DEBUG: Show why decorations aren't processing
-        if (skippedNoNeighbors > 0) {
-            Logger::info() << skippedNoNeighbors << " chunks waiting for neighbors to load";
         }
     }
 
@@ -704,8 +672,6 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
             task.startTime = std::chrono::steady_clock::now();
             m_decorationsInProgress.push_back(std::move(task));
         }
-
-        Logger::info() << "Launched " << chunksToDecorate.size() << " decoration tasks (non-blocking)";
     }
 
     // That's it! Return immediately - decorations run in background
