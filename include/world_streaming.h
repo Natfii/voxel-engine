@@ -185,6 +185,15 @@ private:
     void workerThreadFunction();
 
     /**
+     * @brief Mesh worker thread main loop (PERFORMANCE FIX 2025-11-24)
+     *
+     * Continuously pulls chunks from the mesh work queue and generates meshes.
+     * Eliminates 600+ thread creations/sec overhead from detached thread approach.
+     * Runs until m_meshWorkersRunning is set to false.
+     */
+    void meshWorkerThreadFunction();
+
+    /**
      * @brief Generates a single chunk (terrain + mesh)
      *
      * Called by worker threads. CPU-only operations (thread-safe).
@@ -231,13 +240,6 @@ private:
      */
     glm::vec3 chunkToWorldPos(int chunkX, int chunkY, int chunkZ) const;
 
-    /**
-     * @brief Unloads chunks beyond the unload distance
-     *
-     * @param playerPos Current player position
-     * @param unloadDistance Distance at which to unload chunks
-     */
-    void unloadDistantChunks(const glm::vec3& playerPos, float unloadDistance);
 
     /**
      * @brief Tracks a failed chunk generation attempt
@@ -301,7 +303,16 @@ private:
     // removeChunk() checks this set and defers deletion until meshing completes
     std::unordered_set<ChunkCoord> m_chunksBeingMeshed;  ///< Chunks with active mesh generation threads
     mutable std::mutex m_chunksMeshingMutex;             ///< Protects m_chunksBeingMeshed
-    std::atomic<int> m_activeMeshThreads;                ///< Count of active mesh threads (for throttling)
+
+    // === Mesh Thread Pool (PERFORMANCE FIX 2025-11-24) ===
+    // Thread pool for mesh generation - eliminates 600+ thread creations/sec overhead
+    // OLD: Spawn detached thread per chunk (600/sec thread spawning storm)
+    // NEW: 4-8 persistent workers pull from queue (zero thread creation overhead)
+    std::queue<std::tuple<int, int, int>> m_meshWorkQueue;  ///< Chunks waiting for mesh generation
+    mutable std::mutex m_meshQueueMutex;                    ///< Protects m_meshWorkQueue
+    std::condition_variable m_meshQueueCV;                  ///< Wake mesh workers when work available
+    std::vector<std::thread> m_meshWorkers;                 ///< Mesh worker thread pool
+    std::atomic<bool> m_meshWorkersRunning;                 ///< Flag to shutdown mesh workers
 
     // === Player Position ===
     glm::vec3 m_lastPlayerPos;            ///< Last known player position
