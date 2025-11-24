@@ -547,11 +547,16 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
     // ============================================================================
 
     // PHASE 1: Process decorations that completed in background (from previous frames)
+    // PERFORMANCE FIX (2025-11-24): Limit processed chunks per frame to avoid frame stalls!
+    // Even though decoration is async, lighting+mesh+upload is synchronous on main thread.
+    // Processing 10+ chunks at once causes 1.2s frame stalls (mesh generation is expensive!)
+    const int MAX_COMPLETED_PER_FRAME = 4;  // Process at most 4 completed chunks per frame
+
     std::vector<Chunk*> completedChunks;
     {
         std::lock_guard<std::mutex> lock(m_decorationsInProgressMutex);
         auto it = m_decorationsInProgress.begin();
-        while (it != m_decorationsInProgress.end()) {
+        while (it != m_decorationsInProgress.end() && completedChunks.size() < MAX_COMPLETED_PER_FRAME) {
             // Check if decoration finished (non-blocking check!)
             if (it->future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
                 completedChunks.push_back(it->chunk);
