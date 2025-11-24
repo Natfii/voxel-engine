@@ -75,6 +75,7 @@ Chunk::Chunk(int x, int y, int z)
       m_lightingDirty(false),
       m_needsDecoration(false),
       m_hasLightingData(false),
+      m_terrainReady(false),  // MULTI-STAGE GENERATION: Start false, set true after terrain generation
       m_isEmpty(true),      // PERFORMANCE: Start empty (all air)
       m_isEmptyValid(true)  // Cache is valid initially
 {
@@ -159,8 +160,13 @@ void Chunk::reset(int x, int y, int z) {
     m_transparentVertexCount = 0;
     m_transparentIndexCount = 0;
 
-    // Reset visibility
+    // Reset visibility and flags
     m_visible = false;
+    m_needsDecoration = false;
+    m_hasLightingData = false;
+    m_terrainReady = false;  // MULTI-STAGE GENERATION: Reset to false for fresh generation
+    m_isEmpty = true;        // PERFORMANCE: Reset isEmpty cache
+    m_isEmptyValid = true;   // Cache is valid initially
 }
 
 /**

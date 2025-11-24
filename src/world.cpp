@@ -517,11 +517,15 @@ bool World::hasHorizontalNeighbors(Chunk* chunk) {
     Chunk* neighborEast = getChunkAt(chunkX + 1, chunkY, chunkZ);   // +X
     Chunk* neighborWest = getChunkAt(chunkX - 1, chunkY, chunkZ);   // -X
 
-    // All 4 neighbors must exist for safe decoration
-    return (neighborNorth != nullptr) &&
-           (neighborSouth != nullptr) &&
-           (neighborEast != nullptr) &&
-           (neighborWest != nullptr);
+    // MULTI-STAGE GENERATION FIX (2025-11-24): Check neighbors exist AND finished terrain generation
+    // Previously: Only checked if neighbors exist (nullptr check)
+    // Problem: Chunks existed but weren't terrain-ready → 150 chunks deadlocked waiting forever
+    // Solution: Minecraft-style staged generation - Stage 1 (terrain) must complete before Stage 2 (decoration)
+    // This ensures decorations can safely access neighbor blocks without being cut off
+    return (neighborNorth != nullptr && neighborNorth->isTerrainReady()) &&
+           (neighborSouth != nullptr && neighborSouth->isTerrainReady()) &&
+           (neighborEast != nullptr && neighborEast->isTerrainReady()) &&
+           (neighborWest != nullptr && neighborWest->isTerrainReady());
 }
 
 void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {

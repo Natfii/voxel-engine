@@ -493,6 +493,25 @@ public:
      */
     void setHasLightingData(bool hasData) { m_hasLightingData = hasData; }
 
+    /**
+     * @brief Checks if chunk terrain generation is complete (Stage 1 of multi-stage generation)
+     *
+     * MULTI-STAGE GENERATION (Minecraft-style):
+     * - Stage 1: Terrain generation (blocks, heightmap) - marks terrainReady=true
+     * - Stage 2: Decoration (trees, structures) - requires all 4 neighbors to have terrainReady=true
+     *
+     * This prevents deadlock where chunks wait for neighbors that never finish terrain generation.
+     *
+     * @return True if terrain generation is complete (safe for neighbors to decorate)
+     */
+    bool isTerrainReady() const { return m_terrainReady; }
+
+    /**
+     * @brief Marks chunk terrain generation as complete (Stage 1)
+     * @param ready True after terrain generation, false for fresh chunks
+     */
+    void setTerrainReady(bool ready) { m_terrainReady = ready; }
+
     // ========== Heightmap (Fast Sky Light) ==========
 
     /**
@@ -670,6 +689,7 @@ private:
     bool m_lightingDirty;                   ///< True if lighting changed (needs mesh regen)
     bool m_needsDecoration;                 ///< True if chunk is freshly generated and needs decoration
     bool m_hasLightingData;                 ///< True if chunk loaded with lighting data (Version 3), prevents re-initialization
+    bool m_terrainReady;                    ///< STAGE 1 COMPLETE: Terrain generation finished (Minecraft-style multi-stage generation)
     mutable bool m_isEmpty;                 ///< PERFORMANCE: Cached isEmpty state (avoids 32K block scans), updated on setBlock()
     mutable bool m_isEmptyValid;            ///< True if m_isEmpty cache is valid
 

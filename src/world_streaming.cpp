@@ -591,6 +591,9 @@ std::unique_ptr<Chunk> WorldStreaming::generateChunk(int chunkX, int chunkY, int
     if (chunk) {
         Logger::debug() << "Loaded chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from RAM cache (instant)";
 
+        // MULTI-STAGE GENERATION FIX (2025-11-24): Cached chunks already have terrain
+        chunk->setTerrainReady(true);
+
         // DON'T generate mesh in worker thread - addStreamedChunk will do it after decoration/lighting
         // Meshing requires neighbors which might not be loaded yet in worker thread
         return chunk;
@@ -605,6 +608,9 @@ std::unique_ptr<Chunk> WorldStreaming::generateChunk(int chunkX, int chunkY, int
         if (!worldPath.empty() && chunk->load(worldPath)) {
             loadedFromDisk = true;
             Logger::debug() << "Loaded chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") from disk";
+
+            // MULTI-STAGE GENERATION FIX (2025-11-24): Loaded chunks already have terrain
+            chunk->setTerrainReady(true);
         }
     }
 
@@ -613,6 +619,12 @@ std::unique_ptr<Chunk> WorldStreaming::generateChunk(int chunkX, int chunkY, int
         chunk->generate(m_biomeMap);
         Logger::debug() << "Generated fresh chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
     }
+
+    // MULTI-STAGE GENERATION FIX (2025-11-24): Mark terrain as ready (Stage 1 complete)
+    // Stage 1: Terrain generation (blocks, heightmap) - DONE
+    // Stage 2: Decoration (trees, structures) - will happen later when neighbors are also terrain-ready
+    // This prevents deadlock: chunks can now proceed to decoration once all 4 neighbors finish Stage 1
+    chunk->setTerrainReady(true);
 
     // DON'T generate mesh in worker thread - addStreamedChunk will do it after decoration/lighting
     // Meshing requires:
