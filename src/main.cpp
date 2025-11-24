@@ -975,11 +975,12 @@ int main() {
             // DECORATION FIX: Process pending decorations (chunks waiting for neighbors)
             static float decorationRetryTimer = 0.0f;
             decorationRetryTimer += clampedDeltaTime;
-            if (decorationRetryTimer >= 0.016f) {  // Retry every 16ms (~60 times per second)
-                // OPTIMIZATION (2025-11-23): Increased to 5 chunks per check for faster catchup
-                // With all sync fixes + double mesh bug fixed, can handle more decorations
-                // 5 chunks × 60 checks/sec = 300 chunks/sec max decoration rate
-                world.processPendingDecorations(&renderer, 5);  // Process 5 per check (300/sec max)
+            if (decorationRetryTimer >= 0.033f) {  // Retry every 33ms (~30 times per second)
+                // PERFORMANCE FIX (2025-11-24): Increased batch size + reduced frequency
+                // Serial processing means larger batches are better (amortize overhead)
+                // 20 chunks × 30 checks/sec = 600 chunks/sec max decoration rate
+                // Reduced frequency (30Hz vs 60Hz) reduces mutex contention
+                world.processPendingDecorations(&renderer, 20);  // Process 20 per check (600/sec max)
                 decorationRetryTimer = 0.0f;
             }
 
