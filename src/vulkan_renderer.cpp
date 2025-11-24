@@ -2206,11 +2206,20 @@ void VulkanRenderer::processAsyncUploads() {
     const int MAX_UPLOAD_COMPLETIONS_PER_FRAME = 30;
     int completionsThisFrame = 0;
 
-    // Check all pending uploads for completion
+    // PERFORMANCE FIX (2025-11-24): Limit fence checks to avoid wasting time on unready uploads
+    // If queue has 100 pending uploads but only first 5 are ready, don't check all 100 fences
+    // Check up to 2× completion limit (60 fences), then stop to avoid syscall overhead
+    const int MAX_FENCE_CHECKS = MAX_UPLOAD_COMPLETIONS_PER_FRAME * 2;
+    int fenceChecksThisFrame = 0;
+
+    // Check pending uploads for completion
     auto it = m_pendingUploads.begin();
-    while (it != m_pendingUploads.end() && completionsThisFrame < MAX_UPLOAD_COMPLETIONS_PER_FRAME) {
+    while (it != m_pendingUploads.end() &&
+           completionsThisFrame < MAX_UPLOAD_COMPLETIONS_PER_FRAME &&
+           fenceChecksThisFrame < MAX_FENCE_CHECKS) {
         // Check if this upload is complete (non-blocking check)
         VkResult result = vkGetFenceStatus(m_device, it->fence);
+        fenceChecksThisFrame++;
 
         if (result == VK_SUCCESS) {
             // Upload complete - clean up resources
