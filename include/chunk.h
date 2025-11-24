@@ -670,6 +670,8 @@ private:
     bool m_lightingDirty;                   ///< True if lighting changed (needs mesh regen)
     bool m_needsDecoration;                 ///< True if chunk is freshly generated and needs decoration
     bool m_hasLightingData;                 ///< True if chunk loaded with lighting data (Version 3), prevents re-initialization
+    mutable bool m_isEmpty;                 ///< PERFORMANCE: Cached isEmpty state (avoids 32K block scans), updated on setBlock()
+    mutable bool m_isEmptyValid;            ///< True if m_isEmpty cache is valid
 
     // ========== Heightmap (PERFORMANCE: Fast sky light calculation) ==========
     std::array<int16_t, WIDTH * DEPTH> m_heightMap; ///< Highest solid block Y per XZ column (2 KB, 32x32 grid)

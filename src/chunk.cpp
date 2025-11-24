@@ -74,7 +74,10 @@ Chunk::Chunk(int x, int y, int z)
       m_visible(false),
       m_lightingDirty(false),
       m_needsDecoration(false),
-      m_hasLightingData(false) {
+      m_hasLightingData(false),
+      m_isEmpty(true),      // PERFORMANCE: Start empty (all air)
+      m_isEmptyValid(true)  // Cache is valid initially
+{
 
     // Initialize all blocks to air, metadata to 0, and lighting to darkness
     // OPTIMIZATION: Use memset instead of nested loops (10-20x faster)
@@ -163,21 +166,35 @@ void Chunk::reset(int x, int y, int z) {
 /**
  * @brief Checks if chunk is completely empty (all air blocks)
  *
- * EMPTY CHUNK CULLING:
- * Used to skip saving/processing chunks with no terrain. Saves disk space
- * and memory for sky chunks.
+ * PERFORMANCE OPTIMIZATION: Uses cached isEmpty state to avoid 32,768 block scans.
+ * Cache is invalidated on setBlock() and recomputed lazily on first isEmpty() call.
+ *
+ * Before: O(32K) - scans all blocks every call
+ * After: O(1) - returns cached value (recomputed only when invalid)
+ * Impact: 1.6M block checks/frame → ~0 (at 50 chunks/frame unload rate)
  */
 bool Chunk::isEmpty() const {
+    // FAST PATH: Return cached value if valid
+    if (m_isEmptyValid) {
+        return m_isEmpty;
+    }
+
+    // SLOW PATH: Recompute and cache (only when cache invalidated)
+    bool empty = true;
     for (int i = 0; i < WIDTH; i++) {
         for (int j = 0; j < HEIGHT; j++) {
             for (int k = 0; k < DEPTH; k++) {
                 if (m_blocks[i][j][k] != 0) {
-                    return false;
+                    empty = false;
+                    goto done;  // Early exit on first non-air block
                 }
             }
         }
     }
-    return true;
+done:
+    m_isEmpty = empty;
+    m_isEmptyValid = true;
+    return empty;
 }
 
 /**
@@ -1628,6 +1645,9 @@ void Chunk::setBlock(int x, int y, int z, int blockID) {
     // THREAD SAFETY (2025-11-23): Lock for concurrent writes during parallel decoration
     std::lock_guard<std::mutex> lock(m_blockDataMutex);
     m_blocks[x][y][z] = blockID;
+
+    // PERFORMANCE: Invalidate isEmpty cache (will be recomputed lazily)
+    m_isEmptyValid = false;
 
     // PERFORMANCE: Update heightmap for fast sky light calculation
     // Only update if this block change might affect the highest block in the column
