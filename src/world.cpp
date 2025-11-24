@@ -555,31 +555,23 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
         }
     } // Release lock before parallel decoration
 
-    // Phase 2: Parallel decoration (CPU-only, independent operations)
+    // Phase 2: Serial decoration (PERFORMANCE FIX 2025-11-24)
+    // OLD: Spawned thread per chunk (5 threads × 60Hz = 300 threads/sec)
+    // NEW: Serial processing (decoration is fast, <1ms per chunk)
     if (!chunksToDecorate.empty()) {
-        std::vector<std::thread> threads;
-        std::mutex errorMutex;
         std::vector<std::string> errors;
 
         for (Chunk* chunk : chunksToDecorate) {
-            threads.emplace_back([this, chunk, &errorMutex, &errors]() {
-                try {
-                    decorateChunk(chunk);
-                    chunk->setNeedsDecoration(false);
-                } catch (const std::exception& e) {
-                    std::lock_guard<std::mutex> lock(errorMutex);
-                    std::ostringstream oss;
-                    oss << "Chunk (" << chunk->getChunkX() << ", "
-                        << chunk->getChunkY() << ", " << chunk->getChunkZ()
-                        << "): " << e.what();
-                    errors.push_back(oss.str());
-                }
-            });
-        }
-
-        // Wait for all decorations to complete
-        for (auto& thread : threads) {
-            thread.join();
+            try {
+                decorateChunk(chunk);
+                chunk->setNeedsDecoration(false);
+            } catch (const std::exception& e) {
+                std::ostringstream oss;
+                oss << "Chunk (" << chunk->getChunkX() << ", "
+                    << chunk->getChunkY() << ", " << chunk->getChunkZ()
+                    << "): " << e.what();
+                errors.push_back(oss.str());
+            }
         }
 
         // Log any errors
@@ -601,33 +593,26 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
             }
         }
 
-        // Phase 4: PARALLEL mesh generation (thread-safe via World::getBlockAt shared locks)
-        // OPTIMIZATION (2025-11-23): Mesh generation is CPU-intensive and reads are thread-safe
-        threads.clear();
+        // Phase 4: Serial mesh generation (PERFORMANCE FIX 2025-11-24)
+        // OLD: Spawned thread per chunk (5 threads × 60Hz = 300 threads/sec)
+        // NEW: Serial processing (we batch GPU upload anyway, so no benefit from threads)
+        // Note: WorldStreaming uses async mesh pool for new chunks, but decoration batches are small
         errors.clear();
 
         for (Chunk* chunk : chunksToDecorate) {
             if (!chunk->needsDecoration()) {  // Only if decoration succeeded
-                threads.emplace_back([this, chunk, &errorMutex, &errors]() {
-                    try {
-                        Logger::info() << "Meshing decorated chunk (" << chunk->getChunkX()
-                                      << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ() << ")";
-                        chunk->generateMesh(this);
-                    } catch (const std::exception& e) {
-                        std::lock_guard<std::mutex> lock(errorMutex);
-                        std::ostringstream oss;
-                        oss << "Chunk (" << chunk->getChunkX() << ", "
-                            << chunk->getChunkY() << ", " << chunk->getChunkZ()
-                            << "): " << e.what();
-                        errors.push_back(oss.str());
-                    }
-                });
+                try {
+                    Logger::info() << "Meshing decorated chunk (" << chunk->getChunkX()
+                                  << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ() << ")";
+                    chunk->generateMesh(this);
+                } catch (const std::exception& e) {
+                    std::ostringstream oss;
+                    oss << "Chunk (" << chunk->getChunkX() << ", "
+                        << chunk->getChunkY() << ", " << chunk->getChunkZ()
+                        << "): " << e.what();
+                    errors.push_back(oss.str());
+                }
             }
-        }
-
-        // Wait for all mesh generation to complete
-        for (auto& thread : threads) {
-            thread.join();
         }
 
         // Log any errors
