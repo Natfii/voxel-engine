@@ -517,6 +517,20 @@ bool World::hasHorizontalNeighbors(Chunk* chunk) {
     Chunk* neighborEast = getChunkAt(chunkX + 1, chunkY, chunkZ);   // +X
     Chunk* neighborWest = getChunkAt(chunkX - 1, chunkY, chunkZ);   // -X
 
+    // DEBUG: Log neighbor status for first stuck chunk
+    static bool loggedOnce = false;
+    if (!loggedOnce && !(neighborNorth != nullptr && neighborNorth->isTerrainReady() &&
+                         neighborSouth != nullptr && neighborSouth->isTerrainReady() &&
+                         neighborEast != nullptr && neighborEast->isTerrainReady() &&
+                         neighborWest != nullptr && neighborWest->isTerrainReady())) {
+        Logger::info() << "Chunk (" << chunkX << "," << chunkY << "," << chunkZ << ") neighbor status:";
+        Logger::info() << "  North: " << (neighborNorth ? (neighborNorth->isTerrainReady() ? "READY" : "NOT_READY") : "MISSING");
+        Logger::info() << "  South: " << (neighborSouth ? (neighborSouth->isTerrainReady() ? "READY" : "NOT_READY") : "MISSING");
+        Logger::info() << "  East: " << (neighborEast ? (neighborEast->isTerrainReady() ? "READY" : "NOT_READY") : "MISSING");
+        Logger::info() << "  West: " << (neighborWest ? (neighborWest->isTerrainReady() ? "READY" : "NOT_READY") : "MISSING");
+        loggedOnce = true;
+    }
+
     // MULTI-STAGE GENERATION FIX (2025-11-24): Check neighbors exist AND finished terrain generation
     // Previously: Only checked if neighbors exist (nullptr check)
     // Problem: Chunks existed but weren't terrain-ready → 150 chunks deadlocked waiting forever
