@@ -2472,6 +2472,11 @@ bool World::loadWorld(const std::string& worldPath) {
                         auto chunk = acquireChunk(chunkX, chunkY, chunkZ);
 
                         if (chunk->load(worldPath)) {
+                            // MULTI-STAGE GENERATION FIX (2025-11-24): Mark loaded chunks as terrain ready
+                            // Old save files don't have terrainReady flag, so we mark them ready on load
+                            // This prevents deadlock where old chunks wait forever for old neighbors
+                            chunk->setTerrainReady(true);
+
                             Chunk* chunkPtr = chunk.get();
                             m_chunkMap[coord] = std::move(chunk);
                             m_chunks.push_back(chunkPtr);
@@ -2483,6 +2488,21 @@ bool World::loadWorld(const std::string& worldPath) {
         }
 
         Logger::info() << "World load complete - " << loadedChunks << " chunks loaded from disk";
+
+        // MIGRATION FIX (2025-11-24): Mark all loaded chunks as terrain ready
+        // This handles worlds saved before the terrainReady flag existed
+        // Without this, old worlds would have all chunks stuck in decoration deadlock
+        int migratedChunks = 0;
+        for (Chunk* chunk : m_chunks) {
+            if (chunk && !chunk->isTerrainReady()) {
+                chunk->setTerrainReady(true);
+                migratedChunks++;
+            }
+        }
+        if (migratedChunks > 0) {
+            Logger::info() << "Migration: Marked " << migratedChunks << " existing chunks as terrain-ready";
+        }
+
         return true;
 
     } catch (const std::exception& e) {
