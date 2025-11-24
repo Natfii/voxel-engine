@@ -27,13 +27,14 @@
 #include "tree_generator.h"
 #include <glm/glm.hpp>
 #include <thread>
+#include <future>
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <unordered_set>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-#include <chrono>
 
 // ========== WORLD GENERATION CONFIGURATION ==========
 
@@ -571,23 +572,53 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
         }
     } // Release lock before parallel decoration
 
-    // Phase 2: Serial decoration (PERFORMANCE FIX 2025-11-24)
-    // OLD: Spawned thread per chunk (5 threads × 60Hz = 300 threads/sec)
-    // NEW: Serial processing (decoration is fast, <1ms per chunk)
+    // Phase 2: Parallel decoration with controlled concurrency (PERFORMANCE FIX 2025-11-24)
+    // Based on voxel engine best practices: parallel decoration, limited thread count
+    // Use std::async with max 4 concurrent tasks (industry standard)
+    // Each task decorates ONE chunk independently (no shared state = no mutex overhead)
     if (!chunksToDecorate.empty()) {
         std::vector<std::string> errors;
+        std::mutex errorMutex;
+        std::vector<std::future<void>> decorationFutures;
+        const int MAX_CONCURRENT_DECORATIONS = 4;
 
         for (Chunk* chunk : chunksToDecorate) {
-            try {
-                decorateChunk(chunk);
-                chunk->setNeedsDecoration(false);
-            } catch (const std::exception& e) {
-                std::ostringstream oss;
-                oss << "Chunk (" << chunk->getChunkX() << ", "
-                    << chunk->getChunkY() << ", " << chunk->getChunkZ()
-                    << "): " << e.what();
-                errors.push_back(oss.str());
+            // Wait if we have too many concurrent decorations
+            while (decorationFutures.size() >= MAX_CONCURRENT_DECORATIONS) {
+                // Check for completed futures and remove them
+                decorationFutures.erase(
+                    std::remove_if(decorationFutures.begin(), decorationFutures.end(),
+                        [](std::future<void>& f) {
+                            return f.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+                        }),
+                    decorationFutures.end()
+                );
+
+                // If still at max, wait a bit
+                if (decorationFutures.size() >= MAX_CONCURRENT_DECORATIONS) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
             }
+
+            // Launch async decoration task
+            decorationFutures.push_back(std::async(std::launch::async, [this, chunk, &errors, &errorMutex]() {
+                try {
+                    decorateChunk(chunk);
+                    chunk->setNeedsDecoration(false);
+                } catch (const std::exception& e) {
+                    std::lock_guard<std::mutex> lock(errorMutex);
+                    std::ostringstream oss;
+                    oss << "Chunk (" << chunk->getChunkX() << ", "
+                        << chunk->getChunkY() << ", " << chunk->getChunkZ()
+                        << "): " << e.what();
+                    errors.push_back(oss.str());
+                }
+            }));
+        }
+
+        // Wait for all remaining decoration tasks to complete
+        for (auto& future : decorationFutures) {
+            future.wait();
         }
 
         // Log any errors
@@ -609,26 +640,51 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
             }
         }
 
-        // Phase 4: Serial mesh generation (PERFORMANCE FIX 2025-11-24)
-        // OLD: Spawned thread per chunk (5 threads × 60Hz = 300 threads/sec)
-        // NEW: Serial processing (we batch GPU upload anyway, so no benefit from threads)
-        // Note: WorldStreaming uses async mesh pool for new chunks, but decoration batches are small
+        // Phase 4: Parallel mesh generation (PERFORMANCE FIX 2025-11-24)
+        // Based on voxel engine best practices: mesh generation is thread-safe via read-only World access
+        // Use std::async with max 4 concurrent tasks for balanced CPU usage
         errors.clear();
+        std::vector<std::future<void>> meshFutures;
+        const int MAX_CONCURRENT_MESHING = 4;
 
         for (Chunk* chunk : chunksToDecorate) {
             if (!chunk->needsDecoration()) {  // Only if decoration succeeded
-                try {
-                    Logger::info() << "Meshing decorated chunk (" << chunk->getChunkX()
-                                  << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ() << ")";
-                    chunk->generateMesh(this);
-                } catch (const std::exception& e) {
-                    std::ostringstream oss;
-                    oss << "Chunk (" << chunk->getChunkX() << ", "
-                        << chunk->getChunkY() << ", " << chunk->getChunkZ()
-                        << "): " << e.what();
-                    errors.push_back(oss.str());
+                // Wait if we have too many concurrent mesh generations
+                while (meshFutures.size() >= MAX_CONCURRENT_MESHING) {
+                    meshFutures.erase(
+                        std::remove_if(meshFutures.begin(), meshFutures.end(),
+                            [](std::future<void>& f) {
+                                return f.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+                            }),
+                        meshFutures.end()
+                    );
+
+                    if (meshFutures.size() >= MAX_CONCURRENT_MESHING) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
                 }
+
+                // Launch async mesh generation task
+                meshFutures.push_back(std::async(std::launch::async, [this, chunk, &errors, &errorMutex]() {
+                    try {
+                        Logger::info() << "Meshing decorated chunk (" << chunk->getChunkX()
+                                      << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ() << ")";
+                        chunk->generateMesh(this);
+                    } catch (const std::exception& e) {
+                        std::lock_guard<std::mutex> lock(errorMutex);
+                        std::ostringstream oss;
+                        oss << "Chunk (" << chunk->getChunkX() << ", "
+                            << chunk->getChunkY() << ", " << chunk->getChunkZ()
+                            << "): " << e.what();
+                        errors.push_back(oss.str());
+                    }
+                }));
             }
+        }
+
+        // Wait for all meshing to complete
+        for (auto& future : meshFutures) {
+            future.wait();
         }
 
         // Log any errors

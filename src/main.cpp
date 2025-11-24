@@ -973,16 +973,11 @@ int main() {
             }
 
             // DECORATION FIX: Process pending decorations (chunks waiting for neighbors)
-            static float decorationRetryTimer = 0.0f;
-            decorationRetryTimer += clampedDeltaTime;
-            if (decorationRetryTimer >= 0.033f) {  // Retry every 33ms (~30 times per second)
-                // PERFORMANCE FIX (2025-11-24): Increased batch size + reduced frequency
-                // Serial processing means larger batches are better (amortize overhead)
-                // 20 chunks × 30 checks/sec = 600 chunks/sec max decoration rate
-                // Reduced frequency (30Hz vs 60Hz) reduces mutex contention
-                world.processPendingDecorations(&renderer, 20);  // Process 20 per check (600/sec max)
-                decorationRetryTimer = 0.0f;
-            }
+            // PERFORMANCE FIX (2025-11-24): Parallel decoration with 4-thread limit
+            // Based on voxel engine best practices: smaller batches + higher frequency
+            // With parallel processing (4 concurrent), can handle smaller batches efficiently
+            // 10 chunks × 60Hz = 600 chunks/sec throughput (but 4 parallel = faster wall time)
+            world.processPendingDecorations(&renderer, 10);  // Process 10 per frame @ 60Hz
 
             // Particles disabled for performance
             // world.getParticleSystem()->update(deltaTime);
