@@ -2199,10 +2199,11 @@ void VulkanRenderer::processAsyncUploads() {
 
     // CRITICAL FIX (2025-11-23): Limit staging buffer deletions per frame to prevent stalls
     // Each chunk has 4 staging buffers (vertex, index, transparent vertex, transparent index)
-    // With 10 chunks/frame now, need higher completion rate to keep up
-    // OPTIMIZATION: Increased from 5 to 10 to match chunk processing rate
-    // Prevents upload queue from backing up during heavy streaming
-    const int MAX_UPLOAD_COMPLETIONS_PER_FRAME = 10;
+    // PERFORMANCE FIX (2025-11-24): Increased to 30 to handle higher upload rate
+    // With decoration batches (20 chunks) + WorldStreaming (10 chunks) = 30 chunks/frame possible
+    // Must clean up AT LEAST as many as we upload to prevent queue backlog
+    // Higher limit allows GPU to catch up faster during heavy streaming
+    const int MAX_UPLOAD_COMPLETIONS_PER_FRAME = 30;
     int completionsThisFrame = 0;
 
     // Check all pending uploads for completion
