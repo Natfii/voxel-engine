@@ -517,15 +517,25 @@ bool World::hasHorizontalNeighbors(Chunk* chunk) {
     Chunk* neighborEast = getChunkAt(chunkX + 1, chunkY, chunkZ);   // +X
     Chunk* neighborWest = getChunkAt(chunkX - 1, chunkY, chunkZ);   // -X
 
-    // MULTI-STAGE GENERATION FIX (2025-11-24): Check neighbors exist AND finished terrain generation
-    // Previously: Only checked if neighbors exist (nullptr check)
-    // Problem: Chunks existed but weren't terrain-ready → 150 chunks deadlocked waiting forever
-    // Solution: Minecraft-style staged generation - Stage 1 (terrain) must complete before Stage 2 (decoration)
-    // This ensures decorations can safely access neighbor blocks without being cut off
-    return (neighborNorth != nullptr && neighborNorth->isTerrainReady()) &&
-           (neighborSouth != nullptr && neighborSouth->isTerrainReady()) &&
-           (neighborEast != nullptr && neighborEast->isTerrainReady()) &&
-           (neighborWest != nullptr && neighborWest->isTerrainReady());
+    // MULTI-STAGE GENERATION + EDGE CHUNK FIX (2025-11-24):
+    // Allow decoration if:
+    //   1. Neighbor doesn't exist (nullptr) → Edge chunk, neighbor outside load radius → OK to decorate
+    //   2. Neighbor exists → Must be terrain-ready before we decorate
+    //
+    // This solves two problems:
+    //   - Internal chunks: Wait for neighbors to be terrain-ready → No cut-off decorations
+    //   - Edge chunks: Can decorate even with missing neighbors → No infinite wait (169 chunks stuck!)
+    //
+    // Trade-off: Edge chunks might have cut-off decorations at world boundary, but:
+    //   - Only visible at extreme edge of loaded world
+    //   - Temporary (as player moves, more chunks load and decorate)
+    //   - Much better than 169 chunks stuck causing massive performance degradation
+    bool northOk = (neighborNorth == nullptr) || neighborNorth->isTerrainReady();
+    bool southOk = (neighborSouth == nullptr) || neighborSouth->isTerrainReady();
+    bool eastOk = (neighborEast == nullptr) || neighborEast->isTerrainReady();
+    bool westOk = (neighborWest == nullptr) || neighborWest->isTerrainReady();
+
+    return northOk && southOk && eastOk && westOk;
 }
 
 void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
