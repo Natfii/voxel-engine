@@ -149,6 +149,7 @@ private:
     // Cache key: source position, Cache value: map of (destination -> weight)
     // Cleared each frame to avoid stale data when terrain changes
     std::unordered_map<glm::ivec3, std::unordered_map<glm::ivec3, int>> m_flowWeightCache;
+    mutable std::mutex m_flowCacheMutex;  // Thread safety for cache access
 
     // Internal simulation methods
     void updateWaterCell(const glm::ivec3& pos, WaterCell& cell, World* world, float deltaTime);
