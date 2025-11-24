@@ -73,7 +73,12 @@ Chunk::Chunk(int x, int y, int z)
       m_transparentIndexStagingBufferMemory(VK_NULL_HANDLE),
       m_visible(false),
       m_lightingDirty(false),
-      m_needsDecoration(false) {
+      m_needsDecoration(false),
+      m_hasLightingData(false),
+      m_terrainReady(false),  // MULTI-STAGE GENERATION: Start false, set true after terrain generation
+      m_isEmpty(true),      // PERFORMANCE: Start empty (all air)
+      m_isEmptyValid(true)  // Cache is valid initially
+{
 
     // Initialize all blocks to air, metadata to 0, and lighting to darkness
     // OPTIMIZATION: Use memset instead of nested loops (10-20x faster)
@@ -155,28 +160,47 @@ void Chunk::reset(int x, int y, int z) {
     m_transparentVertexCount = 0;
     m_transparentIndexCount = 0;
 
-    // Reset visibility
+    // Reset visibility and flags
     m_visible = false;
+    m_needsDecoration = false;
+    m_hasLightingData = false;
+    m_terrainReady = false;  // MULTI-STAGE GENERATION: Reset to false for fresh generation
+    m_isEmpty = true;        // PERFORMANCE: Reset isEmpty cache
+    m_isEmptyValid = true;   // Cache is valid initially
 }
 
 /**
  * @brief Checks if chunk is completely empty (all air blocks)
  *
- * EMPTY CHUNK CULLING:
- * Used to skip saving/processing chunks with no terrain. Saves disk space
- * and memory for sky chunks.
+ * PERFORMANCE OPTIMIZATION: Uses cached isEmpty state to avoid 32,768 block scans.
+ * Cache is invalidated on setBlock() and recomputed lazily on first isEmpty() call.
+ *
+ * Before: O(32K) - scans all blocks every call
+ * After: O(1) - returns cached value (recomputed only when invalid)
+ * Impact: 1.6M block checks/frame → ~0 (at 50 chunks/frame unload rate)
  */
 bool Chunk::isEmpty() const {
+    // FAST PATH: Return cached value if valid
+    if (m_isEmptyValid) {
+        return m_isEmpty;
+    }
+
+    // SLOW PATH: Recompute and cache (only when cache invalidated)
+    bool empty = true;
     for (int i = 0; i < WIDTH; i++) {
         for (int j = 0; j < HEIGHT; j++) {
             for (int k = 0; k < DEPTH; k++) {
                 if (m_blocks[i][j][k] != 0) {
-                    return false;
+                    empty = false;
+                    goto done;  // Early exit on first non-air block
                 }
             }
         }
     }
-    return true;
+done:
+    m_isEmpty = empty;
+    m_isEmptyValid = true;
+    return empty;
 }
 
 /**
@@ -542,6 +566,23 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
     int atlasGridSize = registry.getAtlasGridSize();
     float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
 
+    // ============================================================================
+    // PERFORMANCE FIX (2025-11-24): Cache neighbor chunks to eliminate hash lookups
+    // ============================================================================
+    // OLD: Every out-of-bounds query called world->getBlockAt() → hash lookup + mutex
+    //      ~30,000 face checks per chunk × up to 4 hash lookups = 120,000 lookups/chunk
+    //      At 10 chunks/frame × 60 FPS = 72 MILLION hash lookups per second!
+    // NEW: Cache 6 neighbor chunk pointers upfront (6 lookups instead of 120,000)
+    //      Direct chunk->getBlock() access (array lookup, no hash, no mutex)
+    // IMPACT: 99.995% reduction in neighbor queries → Massive mesh generation speedup
+    // ============================================================================
+    Chunk* neighborPosX = world ? world->getChunkAt(m_x + 1, m_y, m_z) : nullptr;  // +X (East)
+    Chunk* neighborNegX = world ? world->getChunkAt(m_x - 1, m_y, m_z) : nullptr;  // -X (West)
+    Chunk* neighborPosY = world ? world->getChunkAt(m_x, m_y + 1, m_z) : nullptr;  // +Y (Up)
+    Chunk* neighborNegY = world ? world->getChunkAt(m_x, m_y - 1, m_z) : nullptr;  // -Y (Down)
+    Chunk* neighborPosZ = world ? world->getChunkAt(m_x, m_y, m_z + 1) : nullptr;  // +Z (North)
+    Chunk* neighborNegZ = world ? world->getChunkAt(m_x, m_y, m_z - 1) : nullptr;  // -Z (South)
+
     // Helper: Convert local chunk coordinates to world position (eliminates code duplication)
     auto localToWorldPos = [this](int x, int y, int z) -> glm::vec3 {
         int worldBlockX = m_x * WIDTH + x;
@@ -550,20 +591,54 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
         return glm::vec3(static_cast<float>(worldBlockX), static_cast<float>(worldBlockY), static_cast<float>(worldBlockZ));
     };
 
-    // Helper lambda to check if a block is solid (non-air)
-    // THIS VERSION CHECKS NEIGHBORING CHUNKS via World
-    auto isSolid = [this, world, &registry, &localToWorldPos, callerHoldsLock](int x, int y, int z) -> bool {
-        int blockID;
+    // Helper: Fast neighbor block query using cached chunks (99.995% faster than world->getBlockAt!)
+    auto getNeighborBlock = [this, neighborPosX, neighborNegX, neighborPosY, neighborNegY, neighborPosZ, neighborNegZ]
+                            (int x, int y, int z) -> int {
+        // Inside this chunk - direct array access
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
-            // Inside this chunk
-            blockID = m_blocks[x][y][z];
-        } else {
-            // Out of bounds - check neighboring chunk via World
-            glm::vec3 worldPos = localToWorldPos(x, y, z);
-            // Use unsafe version if caller already holds lock (prevents deadlock)
-            blockID = callerHoldsLock ? world->getBlockAtUnsafe(worldPos.x, worldPos.y, worldPos.z)
-                                       : world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
+            return m_blocks[x][y][z];
         }
+
+        // Out of bounds - check cached neighbor chunks
+        Chunk* neighbor = nullptr;
+        int localX = x;
+        int localY = y;
+        int localZ = z;
+
+        // Determine which neighbor chunk and convert to local coordinates
+        if (x < 0) {
+            neighbor = neighborNegX;
+            localX = x + WIDTH;  // -1 becomes 31
+        } else if (x >= WIDTH) {
+            neighbor = neighborPosX;
+            localX = x - WIDTH;  // 32 becomes 0
+        } else if (y < 0) {
+            neighbor = neighborNegY;
+            localY = y + HEIGHT;
+        } else if (y >= HEIGHT) {
+            neighbor = neighborPosY;
+            localY = y - HEIGHT;
+        } else if (z < 0) {
+            neighbor = neighborNegZ;
+            localZ = z + DEPTH;
+        } else if (z >= DEPTH) {
+            neighbor = neighborPosZ;
+            localZ = z - DEPTH;
+        }
+
+        // If neighbor exists, get block from it (direct array access - fast!)
+        if (neighbor && localX >= 0 && localX < WIDTH && localY >= 0 && localY < HEIGHT && localZ >= 0 && localZ < DEPTH) {
+            return neighbor->m_blocks[localX][localY][localZ];
+        }
+
+        // Neighbor doesn't exist (edge of loaded world) - return air
+        return 0;
+    };
+
+    // Helper lambda to check if a block is solid (non-air)
+    // PERFORMANCE FIX: Uses cached neighbor chunks instead of world->getBlockAt()
+    auto isSolid = [&getNeighborBlock, &registry](int x, int y, int z) -> bool {
+        int blockID = getNeighborBlock(x, y, z);
         if (blockID == 0) return false;
         // Bounds check before registry access to prevent crash
         if (blockID < 0 || blockID >= registry.count()) return false;
@@ -571,17 +646,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
     };
 
     // Helper lambda to check if a block is liquid
-    auto isLiquid = [this, world, &registry, &localToWorldPos, callerHoldsLock](int x, int y, int z) -> bool {
-        int blockID;
-        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
-            blockID = m_blocks[x][y][z];
-        } else {
-            // Out of bounds - check world
-            glm::vec3 worldPos = localToWorldPos(x, y, z);
-            // Use unsafe version if caller already holds lock (prevents deadlock)
-            blockID = callerHoldsLock ? world->getBlockAtUnsafe(worldPos.x, worldPos.y, worldPos.z)
-                                       : world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
-        }
+    // PERFORMANCE FIX: Uses cached neighbor chunks instead of world->getBlockAt()
+    auto isLiquid = [&getNeighborBlock, &registry](int x, int y, int z) -> bool {
+        int blockID = getNeighborBlock(x, y, z);
         if (blockID == 0) return false;
         // Bounds check before registry access to prevent crash
         if (blockID < 0 || blockID >= registry.count()) return false;
@@ -589,38 +656,26 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
     };
 
     // Helper lambda to check if a block is transparent (leaves, glass, etc.)
-    auto isTransparent = [this, world, &registry, &localToWorldPos, callerHoldsLock](int x, int y, int z) -> bool {
-        int blockID;
-        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
-            blockID = m_blocks[x][y][z];
-        } else {
-            // Out of bounds - check world
-            glm::vec3 worldPos = localToWorldPos(x, y, z);
-            blockID = callerHoldsLock ? world->getBlockAtUnsafe(worldPos.x, worldPos.y, worldPos.z)
-                                       : world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
-        }
+    // PERFORMANCE FIX: Uses cached neighbor chunks instead of world->getBlockAt()
+    auto isTransparent = [&getNeighborBlock, &registry](int x, int y, int z) -> bool {
+        int blockID = getNeighborBlock(x, y, z);
         if (blockID == 0) return false;  // Air is not transparent, it's nothing
         if (blockID < 0 || blockID >= registry.count()) return false;
         return registry.get(blockID).transparency > 0.0f;
     };
 
     // Helper lambda to get the block ID at a position (for neighbor comparison)
-    auto getBlockID = [this, world, &localToWorldPos, callerHoldsLock](int x, int y, int z) -> int {
-        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
-            return m_blocks[x][y][z];
-        } else {
-            // Out of bounds - check world
-            glm::vec3 worldPos = localToWorldPos(x, y, z);
-            return callerHoldsLock ? world->getBlockAtUnsafe(worldPos.x, worldPos.y, worldPos.z)
-                                    : world->getBlockAt(worldPos.x, worldPos.y, worldPos.z);
-        }
+    // PERFORMANCE FIX: Uses cached neighbor chunks instead of world->getBlockAt()
+    auto getBlockID = [&getNeighborBlock](int x, int y, int z) -> int {
+        return getNeighborBlock(x, y, z);
     };
 
     // SMOOTH LIGHTING: Helper to get light at a vertex by sampling 4 adjacent blocks
     // This creates smooth gradients between different light levels (Minecraft-style)
     // Uses WORLD-SPACE vertex position to ensure consistent lighting across block boundaries
     // Uses INTERPOLATED lighting values for smooth time-based transitions
-    auto getSmoothLight = [this, world, callerHoldsLock](
+    // PERFORMANCE FIX: Uses cached neighbor chunks instead of world->getChunkAtWorldPos()
+    auto getSmoothLight = [this, neighborPosX, neighborNegX, neighborPosY, neighborNegY, neighborPosZ, neighborNegZ, callerHoldsLock](
         float vx, float vy, float vz, int dx1, int dy1, int dz1, int dx2, int dy2, int dz2, bool isSky) -> float {
 
         // Convert vertex world position to block coordinates
@@ -631,29 +686,47 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
         // Sample 4 blocks around this vertex in world space
         float light1, light2, light3, light4;
 
+        // PERFORMANCE FIX: Use cached neighbor chunks instead of hash lookups
         auto getLightAtWorldPos = [&](int worldX, int worldY, int worldZ) -> float {
-            if (callerHoldsLock) {
-                // Can't safely query other chunks while holding lock
-                // Convert to chunk-local coordinates
-                int localX = worldX - (m_x * WIDTH);
-                int localY = worldY - (m_y * HEIGHT);
-                int localZ = worldZ - (m_z * DEPTH);
-                if (localX >= 0 && localX < WIDTH && localY >= 0 && localY < HEIGHT && localZ >= 0 && localZ < DEPTH) {
-                    return isSky ? getInterpolatedSkyLight(localX, localY, localZ) : getInterpolatedBlockLight(localX, localY, localZ);
-                }
-                // Fallback for out-of-chunk: assume full sunlight (15.0) for sky, no block light (0.0)
-                // This prevents harsh dark edges at chunk boundaries
-                return isSky ? 15.0f : 0.0f;
+            // Convert to chunk-local coordinates for this chunk
+            int localX = worldX - (m_x * WIDTH);
+            int localY = worldY - (m_y * HEIGHT);
+            int localZ = worldZ - (m_z * DEPTH);
+
+            // Inside this chunk - direct access
+            if (localX >= 0 && localX < WIDTH && localY >= 0 && localY < HEIGHT && localZ >= 0 && localZ < DEPTH) {
+                return isSky ? getInterpolatedSkyLight(localX, localY, localZ) : getInterpolatedBlockLight(localX, localY, localZ);
             }
 
-            Chunk* chunk = world->getChunkAtWorldPos(worldX, worldY, worldZ);
-            // If chunk doesn't exist, assume full sunlight for sky, no block light
-            if (!chunk) return isSky ? 15.0f : 0.0f;
+            // Out of bounds - use cached neighbor chunks
+            Chunk* chunk = nullptr;
+            if (localX < 0) {
+                chunk = neighborNegX;
+                localX += WIDTH;
+            } else if (localX >= WIDTH) {
+                chunk = neighborPosX;
+                localX -= WIDTH;
+            } else if (localY < 0) {
+                chunk = neighborNegY;
+                localY += HEIGHT;
+            } else if (localY >= HEIGHT) {
+                chunk = neighborPosY;
+                localY -= HEIGHT;
+            } else if (localZ < 0) {
+                chunk = neighborNegZ;
+                localZ += DEPTH;
+            } else if (localZ >= DEPTH) {
+                chunk = neighborPosZ;
+                localZ -= DEPTH;
+            }
 
-            int localX = worldX - (chunk->getChunkX() * WIDTH);
-            int localY = worldY - (chunk->getChunkY() * HEIGHT);
-            int localZ = worldZ - (chunk->getChunkZ() * DEPTH);
-            return isSky ? chunk->getInterpolatedSkyLight(localX, localY, localZ) : chunk->getInterpolatedBlockLight(localX, localY, localZ);
+            // If neighbor chunk exists, get lighting from it
+            if (chunk && localX >= 0 && localX < WIDTH && localY >= 0 && localY < HEIGHT && localZ >= 0 && localZ < DEPTH) {
+                return isSky ? chunk->getInterpolatedSkyLight(localX, localY, localZ) : chunk->getInterpolatedBlockLight(localX, localY, localZ);
+            }
+
+            // Fallback: assume full sunlight for sky, no block light
+            return isSky ? 15.0f : 0.0f;
         };
 
         // Sample 4 blocks around the vertex position
@@ -1249,6 +1322,13 @@ void Chunk::destroyBuffers(VulkanRenderer* renderer) {
     // The renderer will destroy them after MAX_FRAMES_IN_FLIGHT frames (fence-based approach)
     // This eliminates the need for vkDeviceWaitIdle() which was causing massive lag!
 
+#if USE_INDIRECT_DRAWING
+    // INDIRECT DRAWING: Chunks don't own individual GPU buffers!
+    // They only write to mega-buffers, so there's nothing to destroy here.
+    // This makes chunk unloading nearly instant (no GPU synchronization needed).
+    return;
+#else
+    // LEGACY PATH: Queue individual chunk buffers for deletion
     // Queue opaque buffers for deletion
     if (m_vertexBuffer != VK_NULL_HANDLE || m_vertexBufferMemory != VK_NULL_HANDLE) {
         renderer->queueBufferDeletion(m_vertexBuffer, m_vertexBufferMemory);
@@ -1274,6 +1354,7 @@ void Chunk::destroyBuffers(VulkanRenderer* renderer) {
         m_transparentIndexBuffer = VK_NULL_HANDLE;
         m_transparentIndexBufferMemory = VK_NULL_HANDLE;
     }
+#endif
 }
 
 void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
@@ -1281,6 +1362,126 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
         return;  // No vertices to upload
     }
 
+#if USE_INDIRECT_DRAWING
+    // ========== INDIRECT DRAWING PATH (MEGA-BUFFER) ==========
+    VkDevice device = renderer->getDevice();
+
+    // Initialize staging buffers to NULL
+    m_vertexStagingBuffer = VK_NULL_HANDLE;
+    m_vertexStagingBufferMemory = VK_NULL_HANDLE;
+    m_indexStagingBuffer = VK_NULL_HANDLE;
+    m_indexStagingBufferMemory = VK_NULL_HANDLE;
+    m_transparentVertexStagingBuffer = VK_NULL_HANDLE;
+    m_transparentVertexStagingBufferMemory = VK_NULL_HANDLE;
+    m_transparentIndexStagingBuffer = VK_NULL_HANDLE;
+    m_transparentIndexStagingBufferMemory = VK_NULL_HANDLE;
+
+    // ========== ALLOCATE AND UPLOAD OPAQUE GEOMETRY ==========
+    if (m_vertexCount > 0) {
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_indices.size();
+
+        // OPTIMIZATION: Only allocate new space if we don't already have space
+        // This prevents memory leaks when chunks regenerate meshes (lighting updates, etc.)
+        bool needsNewAllocation = (m_megaBufferVertexOffset == 0 && m_megaBufferIndexOffset == 0);
+
+        if (needsNewAllocation) {
+            // Allocate space in mega-buffer
+            if (!renderer->allocateMegaBufferSpace(vertexBufferSize, indexBufferSize, false,
+                                                    m_megaBufferVertexOffset, m_megaBufferIndexOffset)) {
+                std::cerr << "ERROR: Failed to allocate mega-buffer space for chunk at ("
+                         << m_x << ", " << m_z << ")" << std::endl;
+                return;
+            }
+
+            // Calculate base vertex for indexed drawing
+            m_megaBufferBaseVertex = static_cast<uint32_t>(m_megaBufferVertexOffset / sizeof(Vertex));
+        }
+        // else: Reuse existing allocation (chunk is updating its mesh)
+
+        // Create staging buffers
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_vertexStagingBuffer, m_vertexStagingBufferMemory);
+
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_indexStagingBuffer, m_indexStagingBufferMemory);
+
+        // Copy data to staging buffers
+        void* data;
+        vkMapMemory(device, m_vertexStagingBufferMemory, 0, vertexBufferSize, 0, &data);
+        memcpy(data, m_vertices.data(), (size_t)vertexBufferSize);
+        vkUnmapMemory(device, m_vertexStagingBufferMemory);
+
+        vkMapMemory(device, m_indexStagingBufferMemory, 0, indexBufferSize, 0, &data);
+        memcpy(data, m_indices.data(), (size_t)indexBufferSize);
+        vkUnmapMemory(device, m_indexStagingBufferMemory);
+
+        // Record batched copy to mega-buffer
+        renderer->batchCopyToMegaBuffer(m_vertexStagingBuffer, m_indexStagingBuffer,
+                                       vertexBufferSize, indexBufferSize,
+                                       m_megaBufferVertexOffset, m_megaBufferIndexOffset,
+                                       false);
+    }
+
+    // ========== ALLOCATE AND UPLOAD TRANSPARENT GEOMETRY ==========
+    if (m_transparentVertexCount > 0) {
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_transparentVertices.size();
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_transparentIndices.size();
+
+        // OPTIMIZATION: Only allocate new space if we don't already have space
+        // This prevents memory leak when chunks regenerate meshes for lighting updates
+        bool needsNewAllocation = (m_megaBufferTransparentVertexOffset == 0 &&
+                                   m_megaBufferTransparentIndexOffset == 0);
+
+        if (needsNewAllocation) {
+            // Allocate space in transparent mega-buffer
+            if (!renderer->allocateMegaBufferSpace(vertexBufferSize, indexBufferSize, true,
+                                                    m_megaBufferTransparentVertexOffset,
+                                                    m_megaBufferTransparentIndexOffset)) {
+                std::cerr << "ERROR: Failed to allocate transparent mega-buffer space for chunk at ("
+                         << m_x << ", " << m_z << ")" << std::endl;
+                return;
+            }
+
+            // Calculate base vertex for transparent indexed drawing
+            m_megaBufferTransparentBaseVertex = static_cast<uint32_t>(m_megaBufferTransparentVertexOffset / sizeof(Vertex));
+        }
+        // else: Reuse existing allocation (chunk is updating its mesh)
+
+        // Create staging buffers
+        renderer->createBuffer(vertexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_transparentVertexStagingBuffer, m_transparentVertexStagingBufferMemory);
+
+        renderer->createBuffer(indexBufferSize,
+                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              m_transparentIndexStagingBuffer, m_transparentIndexStagingBufferMemory);
+
+        // Copy data to staging buffers
+        void* data;
+        vkMapMemory(device, m_transparentVertexStagingBufferMemory, 0, vertexBufferSize, 0, &data);
+        memcpy(data, m_transparentVertices.data(), (size_t)vertexBufferSize);
+        vkUnmapMemory(device, m_transparentVertexStagingBufferMemory);
+
+        vkMapMemory(device, m_transparentIndexStagingBufferMemory, 0, indexBufferSize, 0, &data);
+        memcpy(data, m_transparentIndices.data(), (size_t)indexBufferSize);
+        vkUnmapMemory(device, m_transparentIndexStagingBufferMemory);
+
+        // Record batched copy to transparent mega-buffer
+        renderer->batchCopyToMegaBuffer(m_transparentVertexStagingBuffer, m_transparentIndexStagingBuffer,
+                                       vertexBufferSize, indexBufferSize,
+                                       m_megaBufferTransparentVertexOffset, m_megaBufferTransparentIndexOffset,
+                                       true);
+    }
+
+#else
+    // ========== LEGACY PATH (PER-CHUNK BUFFERS) ==========
     // PERFORMANCE FIX: Use deferred deletion instead of vkDeviceWaitIdle()
     // Old buffers are queued for destruction after MAX_FRAMES_IN_FLIGHT frames
     destroyBuffers(renderer);
@@ -1384,6 +1585,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
         // Record copy command (doesn't submit yet)
         renderer->batchCopyBuffer(m_transparentIndexStagingBuffer, m_transparentIndexBuffer, indexBufferSize);
     }
+#endif
 
     // NOTE: Don't clean up staging buffers yet - caller will call cleanupStagingBuffers() after batch submit
     // NOTE: Don't free CPU-side mesh data yet - we keep it in case of errors
@@ -1486,6 +1688,8 @@ int Chunk::getBlock(int x, int y, int z) const {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
         return -1;  // Out of bounds
     }
+    // THREAD SAFETY (2025-11-23): Lock for concurrent reads during parallel mesh generation
+    std::lock_guard<std::mutex> lock(m_blockDataMutex);
     return m_blocks[x][y][z];
 }
 
@@ -1493,7 +1697,12 @@ void Chunk::setBlock(int x, int y, int z, int blockID) {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
         return;  // Out of bounds
     }
+    // THREAD SAFETY (2025-11-23): Lock for concurrent writes during parallel decoration
+    std::lock_guard<std::mutex> lock(m_blockDataMutex);
     m_blocks[x][y][z] = blockID;
+
+    // PERFORMANCE: Invalidate isEmpty cache (will be recomputed lazily)
+    m_isEmptyValid = false;
 
     // PERFORMANCE: Update heightmap for fast sky light calculation
     // Only update if this block change might affect the highest block in the column
@@ -1504,6 +1713,8 @@ uint8_t Chunk::getBlockMetadata(int x, int y, int z) const {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
         return 0;  // Out of bounds
     }
+    // THREAD SAFETY (2025-11-23): Lock for concurrent reads
+    std::lock_guard<std::mutex> lock(m_blockDataMutex);
     return m_blockMetadata[x][y][z];
 }
 
@@ -1511,6 +1722,8 @@ void Chunk::setBlockMetadata(int x, int y, int z, uint8_t metadata) {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT || z < 0 || z >= DEPTH) {
         return;  // Out of bounds
     }
+    // THREAD SAFETY (2025-11-23): Lock for concurrent writes (water level changes)
+    std::lock_guard<std::mutex> lock(m_blockDataMutex);
     m_blockMetadata[x][y][z] = metadata;
 }
 
@@ -2143,6 +2356,9 @@ bool Chunk::load(const std::string& worldPath) {
 
             // FIXED (2025-11-23): Mark loaded chunks as NOT needing decoration
             m_needsDecoration = false;
+            // PERFORMANCE FIX (2025-11-23): Mark that chunk has lighting data to skip re-initialization
+            // This prevents double mesh generation for loaded chunks with lighting
+            m_hasLightingData = true;
             return true;
 
         } else {

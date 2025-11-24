@@ -27,13 +27,14 @@
 #include "tree_generator.h"
 #include <glm/glm.hpp>
 #include <thread>
+#include <future>
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <unordered_set>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-#include <chrono>
 
 // ========== WORLD GENERATION CONFIGURATION ==========
 
@@ -516,69 +517,180 @@ bool World::hasHorizontalNeighbors(Chunk* chunk) {
     Chunk* neighborEast = getChunkAt(chunkX + 1, chunkY, chunkZ);   // +X
     Chunk* neighborWest = getChunkAt(chunkX - 1, chunkY, chunkZ);   // -X
 
-    // All 4 neighbors must exist for safe decoration
-    return (neighborNorth != nullptr) &&
-           (neighborSouth != nullptr) &&
-           (neighborEast != nullptr) &&
-           (neighborWest != nullptr);
+    // MULTI-STAGE GENERATION + EDGE CHUNK FIX (2025-11-24):
+    // Allow decoration if:
+    //   1. Neighbor doesn't exist (nullptr) → Edge chunk, neighbor outside load radius → OK to decorate
+    //   2. Neighbor exists → Must be terrain-ready before we decorate
+    //
+    // This solves two problems:
+    //   - Internal chunks: Wait for neighbors to be terrain-ready → No cut-off decorations
+    //   - Edge chunks: Can decorate even with missing neighbors → No infinite wait (169 chunks stuck!)
+    //
+    // Trade-off: Edge chunks might have cut-off decorations at world boundary, but:
+    //   - Only visible at extreme edge of loaded world
+    //   - Temporary (as player moves, more chunks load and decorate)
+    //   - Much better than 169 chunks stuck causing massive performance degradation
+    bool northOk = (neighborNorth == nullptr) || neighborNorth->isTerrainReady();
+    bool southOk = (neighborSouth == nullptr) || neighborSouth->isTerrainReady();
+    bool eastOk = (neighborEast == nullptr) || neighborEast->isTerrainReady();
+    bool westOk = (neighborWest == nullptr) || neighborWest->isTerrainReady();
+
+    return northOk && southOk && eastOk && westOk;
 }
 
 void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
-    if (m_pendingDecorations.empty()) return;
+    // ============================================================================
+    // ASYNC DECORATION PIPELINE (2025-11-24): NEVER block main thread!
+    // ============================================================================
+    // OLD: Launch decoration → WAIT → lighting → mesh → WAIT → upload (2.4s frames!)
+    // NEW: Check completed decorations → lighting+mesh+upload, Launch new decorations → return immediately
+    // ============================================================================
 
-    int processed = 0;
-    auto it = m_pendingDecorations.begin();
+    // PHASE 1: Process decorations that completed in background (from previous frames)
+    // PERFORMANCE FIX (2025-11-24): Limit processed chunks per frame to avoid frame stalls!
+    // Even though decoration is async, lighting+mesh+upload is synchronous on main thread.
+    // Processing 10+ chunks at once causes 1.2s frame stalls (mesh generation is expensive!)
+    const int MAX_COMPLETED_PER_FRAME = 4;  // Process at most 4 completed chunks per frame
 
-    while (it != m_pendingDecorations.end() && processed < maxChunks) {
-        Chunk* chunk = *it;
-
-        // Check if chunk is still valid, needs decoration, and now has all neighbors
-        if (chunk && chunk->needsDecoration() && hasHorizontalNeighbors(chunk)) {
-            try {
-                Logger::info() << "Decorating pending chunk (" << chunk->getChunkX()
-                              << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ()
-                              << ") - neighbors now available";
-
-                // Decorate the chunk now that neighbors are ready
-                decorateChunk(chunk);
-                chunk->setNeedsDecoration(false);  // Mark as decorated
-
-                // Reinitialize lighting after adding decorations
-                initializeChunkLighting(chunk);
-                chunk->markLightingDirty();
-
-                // Regenerate mesh with new decorations
-                chunk->generateMesh(this);
-
-                // Upload to GPU (async to prevent frame stalls)
-                if (renderer) {
-                    renderer->beginAsyncChunkUpload();
-                    chunk->createVertexBufferBatched(renderer);
-                    renderer->submitAsyncChunkUpload(chunk);
-                }
-
-                processed++;
-                it = m_pendingDecorations.erase(it);
-            } catch (const std::exception& e) {
-                Logger::error() << "Failed to decorate pending chunk: " << e.what();
-                it = m_pendingDecorations.erase(it);  // Remove anyway to prevent infinite retry
+    std::vector<Chunk*> completedChunks;
+    {
+        std::lock_guard<std::mutex> lock(m_decorationsInProgressMutex);
+        auto it = m_decorationsInProgress.begin();
+        while (it != m_decorationsInProgress.end() && completedChunks.size() < MAX_COMPLETED_PER_FRAME) {
+            // Check if decoration finished (non-blocking check!)
+            if (it->future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                completedChunks.push_back(it->chunk);
+                it = m_decorationsInProgress.erase(it);
+            } else {
+                ++it;
             }
-        } else if (chunk && !chunk->needsDecoration()) {
-            // Chunk loaded from disk - remove from pending decorations
-            Logger::debug() << "Removing chunk (" << chunk->getChunkX()
-                           << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ()
-                           << ") from pending decorations - loaded from disk";
-            it = m_pendingDecorations.erase(it);
-        } else {
-            // Still waiting for neighbors, keep in queue
+        }
+    }
+
+    // Process completed decorations: lighting + mesh + GPU upload
+    // TODO: This could also be made async in future, but decoration is the main bottleneck
+    if (!completedChunks.empty() && renderer) {
+        // Initialize lighting for decorated chunks
+        for (Chunk* chunk : completedChunks) {
+            if (!chunk->needsDecoration()) {  // Only if decoration succeeded
+                try {
+                    initializeChunkLighting(chunk);
+                } catch (const std::exception& e) {
+                    Logger::error() << "Failed to initialize lighting for decorated chunk: " << e.what();
+                }
+            }
+        }
+
+        // Generate meshes for decorated chunks
+        for (Chunk* chunk : completedChunks) {
+            if (!chunk->needsDecoration()) {  // Only if decoration succeeded
+                try {
+                    chunk->generateMesh(this);
+                } catch (const std::exception& e) {
+                    Logger::error() << "Failed to mesh decorated chunk: " << e.what();
+                }
+            }
+        }
+
+        // Batched GPU upload
+        try {
+            renderer->beginBatchedChunkUploads();
+            for (Chunk* chunk : completedChunks) {
+                if (!chunk->needsDecoration()) {
+                    renderer->addChunkToBatch(chunk);
+                }
+            }
+            renderer->submitBatchedChunkUploads();
+            Logger::info() << "Batched GPU upload for " << completedChunks.size() << " decorated chunks";
+        } catch (const std::exception& e) {
+            Logger::error() << "Failed to batch upload decorated chunks: " << e.what();
+        }
+
+        // Remove from pending decorations
+        {
+            std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+            for (Chunk* chunk : completedChunks) {
+                m_pendingDecorations.erase(chunk);
+            }
+        }
+
+        size_t pendingCount;
+        {
+            std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+            pendingCount = m_pendingDecorations.size();
+        }
+        Logger::info() << "Processed " << completedChunks.size()
+                      << " pending decorations in parallel ("
+                      << pendingCount << " still pending)";
+    }
+
+    // PHASE 2: Launch NEW decoration tasks (don't block!)
+    // Check how many decoration slots are available
+    int currentDecorations = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_decorationsInProgressMutex);
+        currentDecorations = m_decorationsInProgress.size();
+    }
+
+    const int MAX_CONCURRENT_DECORATIONS = 4;
+    int slotsAvailable = MAX_CONCURRENT_DECORATIONS - currentDecorations;
+
+    if (slotsAvailable <= 0) {
+        return;  // All slots full, try again next frame
+    }
+
+    // Check if there's any work to do
+    {
+        std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+        if (m_pendingDecorations.empty()) return;
+    }
+
+    // Collect chunks ready for decoration (limit to available slots)
+    std::vector<Chunk*> chunksToDecorate;
+
+    {
+        // THREAD SAFETY: Lock while iterating pending decorations
+        std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+        auto it = m_pendingDecorations.begin();
+
+        // Only collect as many as we have slots for
+        while (it != m_pendingDecorations.end() && chunksToDecorate.size() < slotsAvailable) {
+            Chunk* chunk = *it;
+
+            if (chunk && chunk->needsDecoration() && hasHorizontalNeighbors(chunk)) {
+                chunksToDecorate.push_back(chunk);
+            }
             ++it;
         }
     }
 
-    if (processed > 0) {
-        Logger::info() << "Processed " << processed << " pending decorations ("
-                      << m_pendingDecorations.size() << " still pending)";
+    // Launch decoration tasks (DON'T WAIT!)
+    if (!chunksToDecorate.empty()) {
+        std::lock_guard<std::mutex> lock(m_decorationsInProgressMutex);
+
+        for (Chunk* chunk : chunksToDecorate) {
+            // Launch async decoration task (returns immediately!)
+            auto future = std::async(std::launch::async, [this, chunk]() {
+                try {
+                    decorateChunk(chunk);
+                    chunk->setNeedsDecoration(false);
+                } catch (const std::exception& e) {
+                    Logger::error() << "Failed to decorate chunk (" << chunk->getChunkX() << ", "
+                                   << chunk->getChunkY() << ", " << chunk->getChunkZ() << "): " << e.what();
+                }
+            });
+
+            // Store future in in-progress list (DON'T WAIT!)
+            DecorationTask task;
+            task.chunk = chunk;
+            task.future = std::move(future);
+            task.startTime = std::chrono::steady_clock::now();
+            m_decorationsInProgress.push_back(std::move(task));
+        }
     }
+
+    // That's it! Return immediately - decorations run in background
+    // Next frame will pick up completed work in PHASE 1
 }
 
 void World::decorateChunk(Chunk* chunk) {
@@ -838,6 +950,11 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
     std::shared_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
     // ========== PASS 1: RENDER OPAQUE GEOMETRY ==========
+#if USE_INDIRECT_DRAWING
+    // GPU OPTIMIZATION: Build indirect draw commands for all visible chunks
+    std::vector<VkDrawIndexedIndirectCommand> opaqueDrawCommands;
+    opaqueDrawCommands.reserve(m_chunks.size());  // Preallocate for performance
+
     for (auto& chunk : m_chunks) {
         // Skip chunks with no opaque vertices
         if (chunk->getVertexCount() == 0) {
@@ -874,7 +991,94 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
         }
 
         // Stage 2: Frustum culling (catches chunks behind camera)
-        // Get chunk AABB bounds
+        glm::vec3 chunkMin = chunk->getMin();
+        glm::vec3 chunkMax = chunk->getMax();
+
+        if (!frustumAABBIntersect(frustum, chunkMin, chunkMax, frustumMargin)) {
+            frustumCulled++;
+            continue;
+        }
+
+        // Chunk passed culling - add to indirect draw command buffer
+        VkDrawIndexedIndirectCommand cmd{};
+        cmd.indexCount = chunk->getIndexCount();
+        cmd.instanceCount = 1;
+        cmd.firstIndex = static_cast<uint32_t>(chunk->getMegaBufferIndexOffset() / sizeof(uint32_t));
+        cmd.vertexOffset = static_cast<int32_t>(chunk->getMegaBufferBaseVertex());
+        cmd.firstInstance = 0;
+        opaqueDrawCommands.push_back(cmd);
+
+        renderedCount++;
+
+        // If chunk has transparent geometry, add to transparent list
+        if (chunk->getTransparentVertexCount() > 0) {
+            transparentChunks.push_back(std::make_pair(chunk, distanceSquared));
+        }
+    }
+
+    // Execute single indirect draw call for all opaque chunks
+    if (!opaqueDrawCommands.empty() && renderer != nullptr) {
+        // Upload draw commands to indirect buffer
+        void* data;
+        VkDeviceMemory indirectBufferMemory = renderer->getIndirectDrawBufferMemory();
+        VkBuffer indirectBuffer = renderer->getIndirectDrawBuffer();
+
+        vkMapMemory(renderer->getDevice(), indirectBufferMemory, 0,
+                   opaqueDrawCommands.size() * sizeof(VkDrawIndexedIndirectCommand), 0, &data);
+        memcpy(data, opaqueDrawCommands.data(),
+               opaqueDrawCommands.size() * sizeof(VkDrawIndexedIndirectCommand));
+        vkUnmapMemory(renderer->getDevice(), indirectBufferMemory);
+
+        // Bind mega-buffers
+        VkBuffer vertexBuffers[] = {renderer->getMegaVertexBuffer()};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(commandBuffer, renderer->getMegaIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+
+        // SINGLE DRAW CALL for all opaque chunks!
+        vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, 0,
+                                static_cast<uint32_t>(opaqueDrawCommands.size()),
+                                sizeof(VkDrawIndexedIndirectCommand));
+    }
+
+#else
+    // LEGACY PATH: Per-chunk draw calls
+    for (auto& chunk : m_chunks) {
+        // Skip chunks with no opaque vertices
+        if (chunk->getVertexCount() == 0) {
+            // Still need to check for transparent geometry
+            if (chunk->getTransparentVertexCount() > 0) {
+                // Stage 1: Distance culling
+                glm::vec3 delta = chunk->getCenter() - cameraPos;
+                float distanceSquared = glm::dot(delta, delta);
+
+                if (distanceSquared <= renderDistanceSquared) {
+                    // Stage 2: Frustum culling
+                    glm::vec3 chunkMin = chunk->getMin();
+                    glm::vec3 chunkMax = chunk->getMax();
+
+                    if (frustumAABBIntersect(frustum, chunkMin, chunkMax, frustumMargin)) {
+                        transparentChunks.push_back(std::make_pair(chunk, distanceSquared));
+                    } else{
+                        frustumCulled++;
+                    }
+                } else {
+                    distanceCulled++;
+                }
+            }
+            continue;
+        }
+
+        // Stage 1: Distance culling (fast, eliminates far chunks)
+        glm::vec3 delta = chunk->getCenter() - cameraPos;
+        float distanceSquared = glm::dot(delta, delta);
+
+        if (distanceSquared > renderDistanceSquared) {
+            distanceCulled++;
+            continue;
+        }
+
+        // Stage 2: Frustum culling (catches chunks behind camera)
         glm::vec3 chunkMin = chunk->getMin();
         glm::vec3 chunkMax = chunk->getMax();
 
@@ -892,11 +1096,12 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
             transparentChunks.push_back(std::make_pair(chunk, distanceSquared));
         }
     }
+#endif
 
     // ========== PASS 2: RENDER TRANSPARENT GEOMETRY (SORTED) ==========
     if (!transparentChunks.empty() && renderer != nullptr) {
         // Bind transparent pipeline (depth test enabled, depth write disabled)
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->getTransparentPipeline());
+        renderer->bindPipelineCached(commandBuffer, renderer->getTransparentPipeline());
 
         // IMPORTANT: Rebind descriptor sets (contains texture atlas)
         VkDescriptorSet descriptorSet = renderer->getCurrentDescriptorSet();
@@ -914,10 +1119,51 @@ void World::renderWorld(VkCommandBuffer commandBuffer, const glm::vec3& cameraPo
             m_lastSortPosition = cameraPos;
         }
 
-        // Render transparent chunks in sorted order
+#if USE_INDIRECT_DRAWING
+        // Build indirect draw commands for transparent geometry
+        std::vector<VkDrawIndexedIndirectCommand> transparentDrawCommands;
+        transparentDrawCommands.reserve(transparentChunks.size());
+
+        for (const auto& pair : transparentChunks) {
+            Chunk* chunk = pair.first;
+            VkDrawIndexedIndirectCommand cmd{};
+            cmd.indexCount = chunk->getTransparentIndexCount();
+            cmd.instanceCount = 1;
+            cmd.firstIndex = static_cast<uint32_t>(chunk->getMegaBufferTransparentIndexOffset() / sizeof(uint32_t));
+            cmd.vertexOffset = static_cast<int32_t>(chunk->getMegaBufferTransparentBaseVertex());
+            cmd.firstInstance = 0;
+            transparentDrawCommands.push_back(cmd);
+        }
+
+        if (!transparentDrawCommands.empty()) {
+            // Upload transparent draw commands
+            void* data;
+            VkDeviceMemory transparentIndirectBufferMemory = renderer->getIndirectDrawTransparentBufferMemory();
+            VkBuffer transparentIndirectBuffer = renderer->getIndirectDrawTransparentBuffer();
+
+            vkMapMemory(renderer->getDevice(), transparentIndirectBufferMemory, 0,
+                       transparentDrawCommands.size() * sizeof(VkDrawIndexedIndirectCommand), 0, &data);
+            memcpy(data, transparentDrawCommands.data(),
+                   transparentDrawCommands.size() * sizeof(VkDrawIndexedIndirectCommand));
+            vkUnmapMemory(renderer->getDevice(), transparentIndirectBufferMemory);
+
+            // Bind transparent mega-buffers
+            VkBuffer vertexBuffers[] = {renderer->getMegaTransparentVertexBuffer()};
+            VkDeviceSize offsets[] = {0};
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(commandBuffer, renderer->getMegaTransparentIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+
+            // SINGLE DRAW CALL for all transparent chunks!
+            vkCmdDrawIndexedIndirect(commandBuffer, transparentIndirectBuffer, 0,
+                                    static_cast<uint32_t>(transparentDrawCommands.size()),
+                                    sizeof(VkDrawIndexedIndirectCommand));
+        }
+#else
+        // Legacy: Render transparent chunks individually
         for (const auto& pair : transparentChunks) {
             pair.first->render(commandBuffer, true);  // true = transparent
         }
+#endif
     }
 
     // Store stats in DebugState for display
@@ -1010,7 +1256,7 @@ Chunk* World::getChunkAtWorldPos(float worldX, float worldY, float worldZ) {
     return getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
 }
 
-bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer) {
+bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer, bool deferGPUUpload, bool deferMeshGeneration) {
     if (!chunk) {
         return false;  // Null chunk
     }
@@ -1063,10 +1309,15 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
                     chunkPtr->setNeedsDecoration(false);  // Mark as decorated
                 } else {
                     // Neighbors not ready yet - defer decoration until later
-                    m_pendingDecorations.insert(chunkPtr);
+                    size_t pendingCount;
+                    {
+                        std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+                        m_pendingDecorations.insert(chunkPtr);
+                        pendingCount = m_pendingDecorations.size();
+                    }
                     Logger::debug() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                                    << ") waiting for neighbors before decoration (pending: "
-                                   << m_pendingDecorations.size() << ")";
+                                   << pendingCount << ")";
                 }
             } else {
                 Logger::debug() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
@@ -1074,14 +1325,25 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
             }
 
             // Step 2: Initialize lighting ONCE after all blocks are in place
-            initializeChunkLighting(chunkPtr);
-            chunkPtr->markLightingDirty();
+            // PERFORMANCE FIX (2025-11-23): Skip for Version 3 chunks that already have lighting
+            // This prevents unnecessary re-meshing of loaded chunks with lighting data
+            if (!chunkPtr->hasLightingData()) {
+                initializeChunkLighting(chunkPtr);
+            }
+
+            // CRITICAL FIX (2025-11-23): Don't mark fresh chunks dirty!
+            // markLightingDirty() causes lighting system to regenerate mesh next frame
+            // Fresh chunks don't need re-meshing - we generate the mesh below
+            // This eliminates double mesh generation: once here, once in lighting system
+            // chunkPtr->markLightingDirty();  // ← REMOVED - prevents duplicate mesh gen
 
             // Step 3: Generate final mesh with correct lighting (FIRST TIME - worker didn't mesh)
-            chunkPtr->generateMesh(this);
+            if (!deferMeshGeneration) {
+                chunkPtr->generateMesh(this);
+            }
 
             // Step 4: Upload final mesh to GPU (CRITICAL: after decoration/lighting!)
-            if (renderer) {
+            if (renderer && !deferGPUUpload && !deferMeshGeneration) {
                 Logger::info() << "Uploading surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                                << ") with " << chunkPtr->getVertexCount() << " vertices (lit+decorated)";
                 renderer->beginAsyncChunkUpload();
@@ -1096,12 +1358,19 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         // Underground chunks: Light and mesh (no decoration)
         Logger::debug() << "Processing underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): light → mesh → upload";
 
-        initializeChunkLighting(chunkPtr);
-        chunkPtr->markLightingDirty();
-        chunkPtr->generateMesh(this);
+        // PERFORMANCE FIX (2025-11-23): Skip for Version 3 chunks that already have lighting
+        if (!chunkPtr->hasLightingData()) {
+            initializeChunkLighting(chunkPtr);
+        }
+        // CRITICAL FIX (2025-11-23): Don't mark fresh underground chunks dirty either!
+        // chunkPtr->markLightingDirty();  // ← REMOVED - prevents duplicate mesh gen
+
+        if (!deferMeshGeneration) {
+            chunkPtr->generateMesh(this);
+        }
 
         // Upload to GPU (async to prevent frame stalls)
-        if (renderer) {
+        if (renderer && !deferGPUUpload && !deferMeshGeneration) {
             Logger::info() << "Uploading underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
                            << ") with " << chunkPtr->getVertexCount() << " vertices (lit)";
             renderer->beginAsyncChunkUpload();
@@ -1118,10 +1387,14 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
         chunkPtr->initializeInterpolatedLighting();
 
         auto meshGenStart = std::chrono::high_resolution_clock::now();
-        chunkPtr->generateMesh(this);
+
+        if (!deferMeshGeneration) {
+            chunkPtr->generateMesh(this);
+        }
+
         auto meshGenEnd = std::chrono::high_resolution_clock::now();
 
-        if (renderer) {
+        if (renderer && !deferGPUUpload && !deferMeshGeneration) {
             auto uploadStart = std::chrono::high_resolution_clock::now();
             renderer->beginAsyncChunkUpload();
             chunkPtr->createVertexBufferBatched(renderer);
@@ -1148,7 +1421,7 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
     return true;
 }
 
-bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* renderer) {
+bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* renderer, bool skipWaterCleanup) {
     // Thread-safe removal
     std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
@@ -1164,7 +1437,10 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
     Chunk* chunkPtr = it->second.get();
 
     // DECORATION FIX: Remove from pending decorations if present
-    m_pendingDecorations.erase(chunkPtr);
+    {
+        std::lock_guard<std::mutex> decorLock(m_pendingDecorationsMutex);
+        m_pendingDecorations.erase(chunkPtr);
+    }
     auto vecIt = std::find(m_chunks.begin(), m_chunks.end(), chunkPtr);
     if (vecIt != m_chunks.end()) {
         std::swap(*vecIt, m_chunks.back());
@@ -1179,7 +1455,8 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
 
     // PERFORMANCE FIX (2025-11-23): Notify water simulation to clean up water cells
     // Without this, water cells accumulate infinitely causing frame time increase
-    if (m_waterSimulation) {
+    // Skip if batch cleanup already performed (50× faster)
+    if (m_waterSimulation && !skipWaterCleanup) {
         m_waterSimulation->notifyChunkUnload(chunkX, chunkY, chunkZ);
     }
 
@@ -1195,7 +1472,10 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
                        << "), returning to pool instead";
         releaseChunk(std::move(it->second));
         m_chunkMap.erase(it);
-        m_dirtyChunks.erase(coord);  // Remove from dirty set if present
+        {
+            std::lock_guard<std::mutex> dirtyLock(m_dirtyChunksMutex);
+            m_dirtyChunks.erase(coord);  // Remove from dirty set if present
+        }
         return true;
     }
 
@@ -1213,10 +1493,13 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
         // This prevents constant disk writes during fast movement
         // Modified chunks will be saved during next autosave or manual save
         // If they're modified again before autosave, that's fine - we'll save the latest version
-        if (m_dirtyChunks.count(evictCoord) > 0) {
-            Logger::debug() << "Evicted dirty chunk (" << evictCoord.x << ", " << evictCoord.y << ", " << evictCoord.z
-                           << ") - will save during next autosave";
-            // Keep chunk in dirty set for next autosave
+        {
+            std::lock_guard<std::mutex> dirtyLock(m_dirtyChunksMutex);
+            if (m_dirtyChunks.count(evictCoord) > 0) {
+                Logger::debug() << "Evicted dirty chunk (" << evictCoord.x << ", " << evictCoord.y << ", " << evictCoord.z
+                               << ") - will save during next autosave";
+                // Keep chunk in dirty set for next autosave
+            }
         }
 
         // Return evicted chunk to pool for reuse (CHUNK POOLING)
@@ -1968,7 +2251,10 @@ int World::saveModifiedChunks() {
     }
 
     // Clear dirty flags after successful save
-    m_dirtyChunks.clear();
+    {
+        std::lock_guard<std::mutex> dirtyLock(m_dirtyChunksMutex);
+        m_dirtyChunks.clear();
+    }
 
     if (savedCount > 0) {
         Logger::info() << "Autosave: saved " << savedCount << " modified chunks";
@@ -1978,16 +2264,18 @@ int World::saveModifiedChunks() {
 }
 
 void World::markChunkDirty(int chunkX, int chunkY, int chunkZ) {
-    // THREAD SAFETY FIX: Protect m_dirtyChunks with mutex
-    // Without this, concurrent calls from block placement + autosave cause crashes
-    std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
+    // THREAD SAFETY FIX (2025-11-23): Use dedicated mutex for m_dirtyChunks
+    // This prevents parallel decoration from serializing on the chunk map mutex
+    // PERFORMANCE: Fine-grained locking allows parallel threads to mark chunks dirty concurrently
+    std::lock_guard<std::mutex> lock(m_dirtyChunksMutex);
     ChunkCoord coord{chunkX, chunkY, chunkZ};
     m_dirtyChunks.insert(coord);
 }
 
 void World::markChunkDirtyUnsafe(int chunkX, int chunkY, int chunkZ) {
-    // UNSAFE: Caller must already hold m_chunkMapMutex
-    // Used internally by functions that already hold the lock to prevent deadlock
+    // NOTE (2025-11-23): Now safe to call even with m_chunkMapMutex held
+    // m_dirtyChunks has its own dedicated mutex, no deadlock risk
+    std::lock_guard<std::mutex> lock(m_dirtyChunksMutex);
     ChunkCoord coord{chunkX, chunkY, chunkZ};
     m_dirtyChunks.insert(coord);
 }
@@ -2143,6 +2431,11 @@ bool World::loadWorld(const std::string& worldPath) {
                         auto chunk = acquireChunk(chunkX, chunkY, chunkZ);
 
                         if (chunk->load(worldPath)) {
+                            // MULTI-STAGE GENERATION FIX (2025-11-24): Mark loaded chunks as terrain ready
+                            // Old save files don't have terrainReady flag, so we mark them ready on load
+                            // This prevents deadlock where old chunks wait forever for old neighbors
+                            chunk->setTerrainReady(true);
+
                             Chunk* chunkPtr = chunk.get();
                             m_chunkMap[coord] = std::move(chunk);
                             m_chunks.push_back(chunkPtr);
@@ -2154,6 +2447,21 @@ bool World::loadWorld(const std::string& worldPath) {
         }
 
         Logger::info() << "World load complete - " << loadedChunks << " chunks loaded from disk";
+
+        // MIGRATION FIX (2025-11-24): Mark all loaded chunks as terrain ready
+        // This handles worlds saved before the terrainReady flag existed
+        // Without this, old worlds would have all chunks stuck in decoration deadlock
+        int migratedChunks = 0;
+        for (Chunk* chunk : m_chunks) {
+            if (chunk && !chunk->isTerrainReady()) {
+                chunk->setTerrainReady(true);
+                migratedChunks++;
+            }
+        }
+        if (migratedChunks > 0) {
+            Logger::info() << "Migration: Marked " << migratedChunks << " existing chunks as terrain-ready";
+        }
+
         return true;
 
     } catch (const std::exception& e) {

@@ -973,15 +973,11 @@ int main() {
             }
 
             // DECORATION FIX: Process pending decorations (chunks waiting for neighbors)
-            static float decorationRetryTimer = 0.0f;
-            decorationRetryTimer += clampedDeltaTime;
-            if (decorationRetryTimer >= 0.02f) {  // Retry every 20ms (50 times per second)
-                // OPTIMIZED (2025-11-23): Increased from 1 to 3 chunks per check for faster decoration catchup
-                // With async GPU uploads now working, we can handle more decorations per frame
-                // 3 chunks × 50 checks/sec = 150 chunks/sec max decoration rate
-                world.processPendingDecorations(&renderer, 3);  // Process 3 per check (150/sec max)
-                decorationRetryTimer = 0.0f;
-            }
+            // PERFORMANCE FIX (2025-11-24): Parallel decoration with 4-thread limit
+            // Based on voxel engine best practices: smaller batches + higher frequency
+            // With parallel processing (4 concurrent), can handle smaller batches efficiently
+            // 10 chunks × 60Hz = 600 chunks/sec throughput (but 4 parallel = faster wall time)
+            world.processPendingDecorations(&renderer, 10);  // Process 10 per frame @ 60Hz
 
             // Particles disabled for performance
             // world.getParticleSystem()->update(deltaTime);
@@ -1034,7 +1030,21 @@ int main() {
             }
             auto afterStreaming = std::chrono::high_resolution_clock::now();
 
-            worldStreaming.processCompletedChunks(1);  // Upload max 1 chunk per frame for smooth 60 FPS
+            // OPTIMIZATION: Process multiple chunks per frame with indirect drawing
+            // ASYNC MESH GENERATION (2025-11-23): Main thread NEVER blocks!
+            // Architecture:
+            //   - Chunks added to world, mesh threads spawn DETACHED
+            //   - Main thread returns immediately (no thread.join!)
+            //   - GPU uploads happen for chunks ready from previous frames
+            // History:
+            //   v1-v3: BLOCKING (thread.join) → 100-200ms stalls
+            //   v4: ASYNC (detached threads) → ZERO main thread blocking!
+            // Can now process more chunks per frame since we never wait
+#if USE_INDIRECT_DRAWING
+            worldStreaming.processCompletedChunks(5);  // Async pipeline - no stalls!
+#else
+            worldStreaming.processCompletedChunks(1);   // Conservative for legacy path
+#endif
             auto afterChunkProcess = std::chrono::high_resolution_clock::now();
 
             // Calculate matrices
@@ -1179,13 +1189,16 @@ int main() {
             // Get current descriptor set (need to store it to take address)
             VkDescriptorSet currentDescriptorSet = renderer.getCurrentDescriptorSet();
 
+            // Reset pipeline cache at frame start (GPU optimization)
+            renderer.resetPipelineCache();
+
             // Render skybox first (renders behind everything)
             renderer.renderSkybox();
 
             // Render world with normal or wireframe pipeline based on debug mode
             VkPipeline worldPipeline = DebugState::instance().wireframeMode.getValue() ?
                 renderer.getWireframePipeline() : renderer.getGraphicsPipeline();
-            vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipeline);
+            renderer.bindPipelineCached(renderer.getCurrentCommandBuffer(), worldPipeline);
             vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, renderDistance, &renderer);
@@ -1193,7 +1206,7 @@ int main() {
 
             // Render block outline with line pipeline
             if (target.hasTarget) {
-                vkCmdBindPipeline(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.getLinePipeline());
+                renderer.bindPipelineCached(renderer.getCurrentCommandBuffer(), renderer.getLinePipeline());
                 vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                        renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
                 targetingSystem.renderBlockOutline(renderer.getCurrentCommandBuffer());

@@ -102,6 +102,7 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : m_window(window) {
     createDescriptorSets();
     createCommandBuffers();
     createSyncObjects();
+    initializeMegaBuffers();  // GPU optimization: indirect drawing mega-buffers
 }
 
 // Destructor
@@ -1257,7 +1258,14 @@ void VulkanRenderer::createSyncObjects() {
 
 // Begin frame
 bool VulkanRenderer::beginFrame() {
-    // First try to acquire an image to see if swap chain is valid
+    // CRITICAL FIX (2025-11-23): Wait for frame resources BEFORE acquiring swap chain image
+    // This allows GPU to work on previous frame while CPU waits, reducing idle time
+    // Old order: acquire image → wait fence (CPU idle while GPU finishes)
+    // New order: wait fence → acquire image (GPU works while CPU waits, then both ready)
+    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+
+    // Now acquire an image from the swap chain
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
                                             m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_imageIndex);
 
@@ -1267,10 +1275,6 @@ bool VulkanRenderer::beginFrame() {
     } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("failed to acquire swap chain image!");
     }
-
-    // Now that we have an image, wait for the previous frame to finish
-    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
-    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
 
     vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
 
@@ -2130,14 +2134,92 @@ void VulkanRenderer::submitAsyncChunkUpload(Chunk* chunk) {
     }
 }
 
+void VulkanRenderer::beginBatchedChunkUploads() {
+    // Start a new batch command buffer (same as beginAsyncChunkUpload)
+    beginBufferCopyBatch();
+    m_batchIsAsync = true;
+
+    // Clear staging buffer collection for this batch
+    m_batchStagingBuffers.clear();
+}
+
+void VulkanRenderer::addChunkToBatch(Chunk* chunk) {
+    // Record this chunk's upload commands into the batch command buffer
+    // The chunk calls createVertexBufferBatched() which uses batchCopyToMegaBuffer()
+    chunk->createVertexBufferBatched(this);
+
+    // Collect staging buffers from this chunk (ownership will transfer on submit)
+    if (chunk->m_vertexStagingBuffer != VK_NULL_HANDLE) {
+        m_batchStagingBuffers.push_back({chunk->m_vertexStagingBuffer, chunk->m_vertexStagingBufferMemory});
+    }
+    if (chunk->m_indexStagingBuffer != VK_NULL_HANDLE) {
+        m_batchStagingBuffers.push_back({chunk->m_indexStagingBuffer, chunk->m_indexStagingBufferMemory});
+    }
+    if (chunk->m_transparentVertexStagingBuffer != VK_NULL_HANDLE) {
+        m_batchStagingBuffers.push_back({chunk->m_transparentVertexStagingBuffer, chunk->m_transparentVertexStagingBufferMemory});
+    }
+    if (chunk->m_transparentIndexStagingBuffer != VK_NULL_HANDLE) {
+        m_batchStagingBuffers.push_back({chunk->m_transparentIndexStagingBuffer, chunk->m_transparentIndexStagingBufferMemory});
+    }
+
+    // Clear chunk's staging buffer references (ownership transferred to batch)
+    chunk->m_vertexStagingBuffer = VK_NULL_HANDLE;
+    chunk->m_vertexStagingBufferMemory = VK_NULL_HANDLE;
+    chunk->m_indexStagingBuffer = VK_NULL_HANDLE;
+    chunk->m_indexStagingBufferMemory = VK_NULL_HANDLE;
+    chunk->m_transparentVertexStagingBuffer = VK_NULL_HANDLE;
+    chunk->m_transparentVertexStagingBufferMemory = VK_NULL_HANDLE;
+    chunk->m_transparentIndexStagingBuffer = VK_NULL_HANDLE;
+    chunk->m_transparentIndexStagingBufferMemory = VK_NULL_HANDLE;
+}
+
+void VulkanRenderer::submitBatchedChunkUploads() {
+    // Submit all uploads in a single vkQueueSubmit call
+    submitBufferCopyBatch(true);
+
+    // Add all collected staging buffers to the pending upload
+    std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
+    if (!m_pendingUploads.empty()) {
+        auto& upload = m_pendingUploads.back();
+
+        // Transfer all staging buffers from batch to pending upload
+        upload.stagingBuffers.insert(
+            upload.stagingBuffers.end(),
+            m_batchStagingBuffers.begin(),
+            m_batchStagingBuffers.end()
+        );
+
+        // Clear the batch staging buffers (ownership transferred)
+        m_batchStagingBuffers.clear();
+    }
+}
+
 void VulkanRenderer::processAsyncUploads() {
     std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
 
-    // Check all pending uploads for completion
+    // CRITICAL FIX (2025-11-23): Limit staging buffer deletions per frame to prevent stalls
+    // Each chunk has 4 staging buffers (vertex, index, transparent vertex, transparent index)
+    // PERFORMANCE FIX (2025-11-24): Increased to 30 to handle higher upload rate
+    // With decoration batches (20 chunks) + WorldStreaming (10 chunks) = 30 chunks/frame possible
+    // Must clean up AT LEAST as many as we upload to prevent queue backlog
+    // Higher limit allows GPU to catch up faster during heavy streaming
+    const int MAX_UPLOAD_COMPLETIONS_PER_FRAME = 30;
+    int completionsThisFrame = 0;
+
+    // PERFORMANCE FIX (2025-11-24): Limit fence checks to avoid wasting time on unready uploads
+    // If queue has 100 pending uploads but only first 5 are ready, don't check all 100 fences
+    // Check up to 2× completion limit (60 fences), then stop to avoid syscall overhead
+    const int MAX_FENCE_CHECKS = MAX_UPLOAD_COMPLETIONS_PER_FRAME * 2;
+    int fenceChecksThisFrame = 0;
+
+    // Check pending uploads for completion
     auto it = m_pendingUploads.begin();
-    while (it != m_pendingUploads.end()) {
+    while (it != m_pendingUploads.end() &&
+           completionsThisFrame < MAX_UPLOAD_COMPLETIONS_PER_FRAME &&
+           fenceChecksThisFrame < MAX_FENCE_CHECKS) {
         // Check if this upload is complete (non-blocking check)
         VkResult result = vkGetFenceStatus(m_device, it->fence);
+        fenceChecksThisFrame++;
 
         if (result == VK_SUCCESS) {
             // Upload complete - clean up resources
@@ -2152,6 +2234,7 @@ void VulkanRenderer::processAsyncUploads() {
 
             // Remove from pending list
             it = m_pendingUploads.erase(it);
+            completionsThisFrame++;
         } else if (result == VK_NOT_READY) {
             // Still in progress - check next one
             ++it;
@@ -2772,6 +2855,33 @@ void VulkanRenderer::cleanup() {
         vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
     }
 
+    std::cout << "    Cleaning up mega-buffers..." << std::endl;
+    // Cleanup indirect drawing mega-buffers
+    if (m_megaVertexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_device, m_megaVertexBuffer, nullptr);
+        vkFreeMemory(m_device, m_megaVertexBufferMemory, nullptr);
+    }
+    if (m_megaIndexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_device, m_megaIndexBuffer, nullptr);
+        vkFreeMemory(m_device, m_megaIndexBufferMemory, nullptr);
+    }
+    if (m_megaTransparentVertexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_device, m_megaTransparentVertexBuffer, nullptr);
+        vkFreeMemory(m_device, m_megaTransparentVertexBufferMemory, nullptr);
+    }
+    if (m_megaTransparentIndexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_device, m_megaTransparentIndexBuffer, nullptr);
+        vkFreeMemory(m_device, m_megaTransparentIndexBufferMemory, nullptr);
+    }
+    if (m_indirectDrawBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_device, m_indirectDrawBuffer, nullptr);
+        vkFreeMemory(m_device, m_indirectDrawBufferMemory, nullptr);
+    }
+    if (m_indirectDrawTransparentBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_device, m_indirectDrawTransparentBuffer, nullptr);
+        vkFreeMemory(m_device, m_indirectDrawTransparentBufferMemory, nullptr);
+    }
+
     std::cout << "    Waiting for pending async uploads..." << std::endl;
     // Wait for all pending uploads and clean them up
     for (auto& upload : m_pendingUploads) {
@@ -2803,4 +2913,228 @@ void VulkanRenderer::cleanup() {
     vkDestroyInstance(m_instance, nullptr);
 
     std::cout << "    Vulkan cleanup complete" << std::endl;
+}
+
+// ========================================================================
+// INDIRECT DRAWING SYSTEM (GPU OPTIMIZATION)
+// ========================================================================
+
+void VulkanRenderer::initializeMegaBuffers() {
+    std::cout << "Initializing mega-buffers for indirect drawing..." << std::endl;
+
+    // Create opaque vertex mega-buffer
+    createBuffer(
+        MEGA_BUFFER_VERTEX_SIZE,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        m_megaVertexBuffer,
+        m_megaVertexBufferMemory
+    );
+
+    // Create opaque index mega-buffer
+    createBuffer(
+        MEGA_BUFFER_INDEX_SIZE,
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        m_megaIndexBuffer,
+        m_megaIndexBufferMemory
+    );
+
+    // Create transparent vertex mega-buffer
+    createBuffer(
+        MEGA_BUFFER_VERTEX_SIZE,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        m_megaTransparentVertexBuffer,
+        m_megaTransparentVertexBufferMemory
+    );
+
+    // Create transparent index mega-buffer
+    createBuffer(
+        MEGA_BUFFER_INDEX_SIZE,
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        m_megaTransparentIndexBuffer,
+        m_megaTransparentIndexBufferMemory
+    );
+
+    // Create indirect command buffers (max 4096 chunks per draw)
+    VkDeviceSize indirectBufferSize = sizeof(VkDrawIndexedIndirectCommand) * 4096;
+    
+    createBuffer(
+        indirectBufferSize,
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        m_indirectDrawBuffer,
+        m_indirectDrawBufferMemory
+    );
+
+    createBuffer(
+        indirectBufferSize,
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        m_indirectDrawTransparentBuffer,
+        m_indirectDrawTransparentBufferMemory
+    );
+
+    std::cout << "Mega-buffers initialized successfully!" << std::endl;
+    std::cout << "  Vertex buffer: " << (MEGA_BUFFER_VERTEX_SIZE / 1024 / 1024) << " MB" << std::endl;
+    std::cout << "  Index buffer: " << (MEGA_BUFFER_INDEX_SIZE / 1024 / 1024) << " MB" << std::endl;
+}
+
+bool VulkanRenderer::allocateMegaBufferSpace(VkDeviceSize vertexSize, VkDeviceSize indexSize,
+                                              bool transparent,
+                                              VkDeviceSize& outVertexOffset, VkDeviceSize& outIndexOffset) {
+    std::lock_guard<std::mutex> lock(m_megaBufferMutex);
+
+    if (transparent) {
+        // Check if there's enough space in transparent mega-buffers
+        if (m_megaTransparentVertexOffset + vertexSize > MEGA_BUFFER_VERTEX_SIZE ||
+            m_megaTransparentIndexOffset + indexSize > MEGA_BUFFER_INDEX_SIZE) {
+            std::cerr << "Warning: Transparent mega-buffer full!" << std::endl;
+            return false;
+        }
+
+        outVertexOffset = m_megaTransparentVertexOffset;
+        outIndexOffset = m_megaTransparentIndexOffset;
+
+        m_megaTransparentVertexOffset += vertexSize;
+        m_megaTransparentIndexOffset += indexSize;
+    } else {
+        // Check if there's enough space in opaque mega-buffers
+        if (m_megaVertexOffset + vertexSize > MEGA_BUFFER_VERTEX_SIZE ||
+            m_megaIndexOffset + indexSize > MEGA_BUFFER_INDEX_SIZE) {
+            std::cerr << "Warning: Opaque mega-buffer full!" << std::endl;
+            return false;
+        }
+
+        outVertexOffset = m_megaVertexOffset;
+        outIndexOffset = m_megaIndexOffset;
+
+        m_megaVertexOffset += vertexSize;
+        m_megaIndexOffset += indexSize;
+    }
+
+    return true;
+}
+
+void VulkanRenderer::uploadToMegaBuffer(const void* vertexData, VkDeviceSize vertexSize,
+                                        const void* indexData, VkDeviceSize indexSize,
+                                        VkDeviceSize vertexOffset, VkDeviceSize indexOffset,
+                                        bool transparent) {
+    // Create staging buffers
+    VkBuffer vertexStagingBuffer, indexStagingBuffer;
+    VkDeviceMemory vertexStagingMemory, indexStagingMemory;
+
+    // Vertex staging buffer
+    createBuffer(
+        vertexSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        vertexStagingBuffer,
+        vertexStagingMemory
+    );
+
+    // Index staging buffer
+    createBuffer(
+        indexSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        indexStagingBuffer,
+        indexStagingMemory
+    );
+
+    // Copy data to staging buffers
+    void* data;
+    vkMapMemory(m_device, vertexStagingMemory, 0, vertexSize, 0, &data);
+    memcpy(data, vertexData, vertexSize);
+    vkUnmapMemory(m_device, vertexStagingMemory);
+
+    vkMapMemory(m_device, indexStagingMemory, 0, indexSize, 0, &data);
+    memcpy(data, indexData, indexSize);
+    vkUnmapMemory(m_device, indexStagingMemory);
+
+    // Copy staging buffers to mega-buffers at specified offsets
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+    VkBufferCopy vertexCopyRegion{};
+    vertexCopyRegion.srcOffset = 0;
+    vertexCopyRegion.dstOffset = vertexOffset;
+    vertexCopyRegion.size = vertexSize;
+
+    VkBufferCopy indexCopyRegion{};
+    indexCopyRegion.srcOffset = 0;
+    indexCopyRegion.dstOffset = indexOffset;
+    indexCopyRegion.size = indexSize;
+
+    vkCmdCopyBuffer(commandBuffer, vertexStagingBuffer,
+                   transparent ? m_megaTransparentVertexBuffer : m_megaVertexBuffer,
+                   1, &vertexCopyRegion);
+    
+    vkCmdCopyBuffer(commandBuffer, indexStagingBuffer,
+                   transparent ? m_megaTransparentIndexBuffer : m_megaIndexBuffer,
+                   1, &indexCopyRegion);
+
+    endSingleTimeCommands(commandBuffer);
+
+    // Cleanup staging buffers
+    vkDestroyBuffer(m_device, vertexStagingBuffer, nullptr);
+    vkFreeMemory(m_device, vertexStagingMemory, nullptr);
+    vkDestroyBuffer(m_device, indexStagingBuffer, nullptr);
+    vkFreeMemory(m_device, indexStagingMemory, nullptr);
+}
+
+void VulkanRenderer::bindPipelineCached(VkCommandBuffer commandBuffer, VkPipeline pipeline) {
+    if (m_currentlyBoundPipeline != pipeline) {
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        m_currentlyBoundPipeline = pipeline;
+    }
+}
+
+void VulkanRenderer::resetPipelineCache() {
+    m_currentlyBoundPipeline = VK_NULL_HANDLE;
+}
+
+void VulkanRenderer::batchCopyToMegaBuffer(VkBuffer srcVertexBuffer, VkBuffer srcIndexBuffer,
+                                           VkDeviceSize vertexSize, VkDeviceSize indexSize,
+                                           VkDeviceSize vertexOffset, VkDeviceSize indexOffset,
+                                           bool transparent) {
+    if (m_batchCommandBuffer == VK_NULL_HANDLE) {
+        std::cerr << "Error: No batch command buffer active. Call beginBufferCopyBatch() first." << std::endl;
+        return;
+    }
+
+    // Copy vertex data to mega-buffer at offset
+    VkBufferCopy vertexCopyRegion{};
+    vertexCopyRegion.srcOffset = 0;
+    vertexCopyRegion.dstOffset = vertexOffset;
+    vertexCopyRegion.size = vertexSize;
+
+    vkCmdCopyBuffer(m_batchCommandBuffer, srcVertexBuffer,
+                   transparent ? m_megaTransparentVertexBuffer : m_megaVertexBuffer,
+                   1, &vertexCopyRegion);
+
+    // Copy index data to mega-buffer at offset
+    VkBufferCopy indexCopyRegion{};
+    indexCopyRegion.srcOffset = 0;
+    indexCopyRegion.dstOffset = indexOffset;
+    indexCopyRegion.size = indexSize;
+
+    vkCmdCopyBuffer(m_batchCommandBuffer, srcIndexBuffer,
+                   transparent ? m_megaTransparentIndexBuffer : m_megaIndexBuffer,
+                   1, &indexCopyRegion);
+}
+
+void VulkanRenderer::resetMegaBuffers() {
+    std::lock_guard<std::mutex> lock(m_megaBufferMutex);
+    
+    Logger::info() << "Resetting mega-buffers (reclaiming space)...";
+    
+    // Reset allocation offsets to beginning
+    m_megaVertexOffset = 0;
+    m_megaIndexOffset = 0;
+    m_megaTransparentVertexOffset = 0;
+    m_megaTransparentIndexOffset = 0;
+    
+    Logger::info() << "Mega-buffers reset complete - all space reclaimed";
 }

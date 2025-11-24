@@ -13,6 +13,8 @@
 #include <shared_mutex>
 #include <functional>
 #include <cstdint>
+#include <future>
+#include <chrono>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 #include "chunk.h"
@@ -229,9 +231,11 @@ public:
      *
      * @param chunk Chunk to add (ownership transferred)
      * @param renderer Vulkan renderer for buffer creation (after decoration/lighting)
+     * @param deferGPUUpload If true, mesh generation happens but GPU upload is deferred
+     * @param deferMeshGeneration If true, even mesh generation is deferred
      * @return True if chunk was added, false if duplicate/out of bounds
      */
-    bool addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer);
+    bool addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer, bool deferGPUUpload = false, bool deferMeshGeneration = false);
 
     /**
      * @brief Removes a chunk from the world
@@ -243,9 +247,10 @@ public:
      * @param chunkY Chunk Y coordinate
      * @param chunkZ Chunk Z coordinate
      * @param renderer Vulkan renderer for buffer cleanup
+     * @param skipWaterCleanup Skip water cleanup (used when batch cleanup already done)
      * @return True if chunk was removed, false if not found
      */
-    bool removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* renderer);
+    bool removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* renderer, bool skipWaterCleanup = false);
 
     /**
      * @brief Gets the block ID at the specified world position
@@ -674,6 +679,7 @@ private:
     // CHUNK CACHING: RAM cache for unloaded chunks (prevents disk thrashing)
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_unloadedChunksCache;  ///< Cached unloaded chunks (still in RAM)
     std::unordered_set<ChunkCoord> m_dirtyChunks;  ///< Chunks modified since last save (need disk write)
+    mutable std::mutex m_dirtyChunksMutex;  ///< THREAD SAFETY (2025-11-23): Protects m_dirtyChunks for parallel decoration
     size_t m_maxCachedChunks = 5000;  ///< Maximum cached chunks before forced eviction (~490MB at 98KB/chunk)
 
     // CHUNK POOLING: Reuse chunk objects instead of new/delete (100x faster allocation)
@@ -702,6 +708,16 @@ private:
 
     // DECORATION FIX: Track chunks waiting for neighbors before decoration
     std::unordered_set<Chunk*> m_pendingDecorations;  ///< Chunks waiting for neighbors to be decorated
+    mutable std::mutex m_pendingDecorationsMutex;  ///< THREAD SAFETY (2025-11-23): Protects m_pendingDecorations
+
+    // ASYNC DECORATION PIPELINE (2025-11-24): Track decorations in progress (don't block main thread!)
+    struct DecorationTask {
+        Chunk* chunk;
+        std::future<void> future;
+        std::chrono::steady_clock::time_point startTime;
+    };
+    std::vector<DecorationTask> m_decorationsInProgress;  ///< Decorations running in background
+    mutable std::mutex m_decorationsInProgressMutex;  ///< Protects m_decorationsInProgress
 
     // WATER PERFORMANCE FIX: Track water blocks that need flow updates (dirty list)
     std::unordered_set<glm::ivec3> m_dirtyWaterBlocks;  ///< Water blocks that changed and need flow update

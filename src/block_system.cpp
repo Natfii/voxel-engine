@@ -259,8 +259,20 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         }
 
         // Ensure m_defs is large enough to hold this block at its ID
-        if (def.id >= (int)m_defs.size()) {
+        int oldSize = (int)m_defs.size();
+        if (def.id >= oldSize) {
             m_defs.resize(def.id + 1);
+
+            // PERFORMANCE WARNING: Sparse IDs create memory waste and iteration overhead
+            // If we're creating a large gap (>10 empty slots), warn the user
+            int gap = def.id - oldSize;
+            if (gap > 10) {
+                std::cerr << "  WARNING: Block '" << def.name << "' uses sparse ID " << def.id
+                          << " (creates " << gap << " empty slots from " << oldSize << " to " << def.id << ")"
+                          << std::endl;
+                std::cerr << "  Consider using sequential IDs (1, 2, 3, ...) or omitting 'id' for auto-assignment"
+                          << std::endl;
+            }
         }
 
         // Add to registry at the specified ID position
@@ -756,9 +768,18 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
 
 const BlockDefinition& BlockRegistry::get(int id) const {
     if (id < 0 || id >= (int)m_defs.size()) {
-        throw std::out_of_range("BlockRegistry: ID out of range");
+        throw std::out_of_range("BlockRegistry: Block ID " + std::to_string(id) + " out of range (registry size: " + std::to_string(m_defs.size()) + ")");
     }
-    return m_defs[id];
+
+    // CRITICAL FIX (2025-11-24): Validate block is not a junk slot from sparse IDs
+    // If blocks use sparse IDs (e.g., 1, 2, 3, 100), slots 4-99 are default-initialized with id=-1
+    // This check prevents returning invalid blocks and provides clear error message
+    const BlockDefinition& block = m_defs[id];
+    if (block.id == -1 || block.id != id) {
+        throw std::out_of_range("BlockRegistry: Block ID " + std::to_string(id) + " is not registered (sparse ID gap or invalid block)");
+    }
+
+    return block;
 }
 
 const BlockDefinition& BlockRegistry::get(const std::string& name) const {

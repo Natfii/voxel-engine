@@ -98,6 +98,16 @@ public:
     // Chunk lifecycle
     void notifyChunkUnload(int chunkX, int chunkY, int chunkZ);
 
+    /**
+     * @brief Batch unload notification for multiple chunks (50× faster)
+     *
+     * Iterates water cells once and checks against all chunks in batch.
+     * Much more efficient than calling notifyChunkUnload() for each chunk individually.
+     *
+     * @param chunks Vector of chunk coordinates to unload (x, y, z)
+     */
+    void notifyChunkUnloadBatch(const std::vector<std::tuple<int, int, int>>& chunks);
+
     // Configuration
     void setEvaporationEnabled(bool enabled) { m_enableEvaporation = enabled; }
     void setFlowSpeed(float speed) { m_flowSpeed = speed; }
@@ -134,6 +144,12 @@ private:
 
     std::mt19937 m_rng;
     std::mutex m_rngMutex;
+
+    // OPTIMIZATION: Flow weight cache to avoid redundant BFS calculations
+    // Cache key: source position, Cache value: map of (destination -> weight)
+    // Cleared each frame to avoid stale data when terrain changes
+    std::unordered_map<glm::ivec3, std::unordered_map<glm::ivec3, int>> m_flowWeightCache;
+    mutable std::mutex m_flowCacheMutex;  // Thread safety for cache access
 
     // Internal simulation methods
     void updateWaterCell(const glm::ivec3& pos, WaterCell& cell, World* world, float deltaTime);

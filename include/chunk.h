@@ -9,6 +9,7 @@
 #include <array>
 #include <memory>
 #include <string>
+#include <mutex>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include "voxelmath.h"
@@ -286,6 +287,56 @@ public:
      */
     uint32_t getTransparentVertexCount() const { return m_transparentVertexCount; }
 
+    /**
+     * @brief Gets the number of indices in this chunk's opaque mesh
+     * @return Index count (0 if empty/no visible faces)
+     */
+    uint32_t getIndexCount() const { return m_indexCount; }
+
+    /**
+     * @brief Gets the number of indices in this chunk's transparent mesh
+     * @return Transparent index count (0 if no transparent geometry)
+     */
+    uint32_t getTransparentIndexCount() const { return m_transparentIndexCount; }
+
+    // ========== Indirect Drawing Getters (GPU Optimization) ==========
+
+    /**
+     * @brief Gets the vertex offset in the mega-buffer (for indirect drawing)
+     * @return Byte offset in opaque vertex mega-buffer
+     */
+    VkDeviceSize getMegaBufferVertexOffset() const { return m_megaBufferVertexOffset; }
+
+    /**
+     * @brief Gets the index offset in the mega-buffer (for indirect drawing)
+     * @return Byte offset in opaque index mega-buffer
+     */
+    VkDeviceSize getMegaBufferIndexOffset() const { return m_megaBufferIndexOffset; }
+
+    /**
+     * @brief Gets the base vertex for indexed drawing (for indirect drawing)
+     * @return Base vertex offset
+     */
+    uint32_t getMegaBufferBaseVertex() const { return m_megaBufferBaseVertex; }
+
+    /**
+     * @brief Gets the transparent vertex offset in the mega-buffer (for indirect drawing)
+     * @return Byte offset in transparent vertex mega-buffer
+     */
+    VkDeviceSize getMegaBufferTransparentVertexOffset() const { return m_megaBufferTransparentVertexOffset; }
+
+    /**
+     * @brief Gets the transparent index offset in the mega-buffer (for indirect drawing)
+     * @return Byte offset in transparent index mega-buffer
+     */
+    VkDeviceSize getMegaBufferTransparentIndexOffset() const { return m_megaBufferTransparentIndexOffset; }
+
+    /**
+     * @brief Gets the transparent base vertex for indexed drawing (for indirect drawing)
+     * @return Transparent base vertex offset
+     */
+    uint32_t getMegaBufferTransparentBaseVertex() const { return m_megaBufferTransparentBaseVertex; }
+
     // ========== Block Access ==========
 
     /**
@@ -429,6 +480,37 @@ public:
      * @param needs True for freshly generated chunks, false for loaded chunks
      */
     void setNeedsDecoration(bool needs) { m_needsDecoration = needs; }
+
+    /**
+     * @brief Checks if chunk has pre-initialized lighting data (Version 3 chunks)
+     * @return True if chunk loaded with lighting, false if needs lighting initialization
+     */
+    bool hasLightingData() const { return m_hasLightingData; }
+
+    /**
+     * @brief Sets whether chunk has pre-initialized lighting data
+     * @param hasData True for Version 3 loaded chunks, false for fresh/Version 1-2 chunks
+     */
+    void setHasLightingData(bool hasData) { m_hasLightingData = hasData; }
+
+    /**
+     * @brief Checks if chunk terrain generation is complete (Stage 1 of multi-stage generation)
+     *
+     * MULTI-STAGE GENERATION (Minecraft-style):
+     * - Stage 1: Terrain generation (blocks, heightmap) - marks terrainReady=true
+     * - Stage 2: Decoration (trees, structures) - requires all 4 neighbors to have terrainReady=true
+     *
+     * This prevents deadlock where chunks wait for neighbors that never finish terrain generation.
+     *
+     * @return True if terrain generation is complete (safe for neighbors to decorate)
+     */
+    bool isTerrainReady() const { return m_terrainReady; }
+
+    /**
+     * @brief Marks chunk terrain generation as complete (Stage 1)
+     * @param ready True after terrain generation, false for fresh chunks
+     */
+    void setTerrainReady(bool ready) { m_terrainReady = ready; }
 
     // ========== Heightmap (Fast Sky Light) ==========
 
@@ -602,9 +684,14 @@ private:
     int m_x, m_y, m_z;                      ///< Chunk coordinates in chunk space
     int m_blocks[WIDTH][HEIGHT][DEPTH];    ///< Block ID storage (32 KB)
     uint8_t m_blockMetadata[WIDTH][HEIGHT][DEPTH]; ///< Block metadata (water levels, etc.) (32 KB)
+    mutable std::mutex m_blockDataMutex;    ///< THREAD SAFETY: Protects m_blocks and m_blockMetadata for parallel decoration
     std::array<BlockLight, WIDTH * HEIGHT * DEPTH> m_lightData; ///< Light data (sky + block light, 32 KB)
     bool m_lightingDirty;                   ///< True if lighting changed (needs mesh regen)
     bool m_needsDecoration;                 ///< True if chunk is freshly generated and needs decoration
+    bool m_hasLightingData;                 ///< True if chunk loaded with lighting data (Version 3), prevents re-initialization
+    bool m_terrainReady;                    ///< STAGE 1 COMPLETE: Terrain generation finished (Minecraft-style multi-stage generation)
+    mutable bool m_isEmpty;                 ///< PERFORMANCE: Cached isEmpty state (avoids 32K block scans), updated on setBlock()
+    mutable bool m_isEmptyValid;            ///< True if m_isEmpty cache is valid
 
     // ========== Heightmap (PERFORMANCE: Fast sky light calculation) ==========
     std::array<int16_t, WIDTH * DEPTH> m_heightMap; ///< Highest solid block Y per XZ column (2 KB, 32x32 grid)
@@ -624,20 +711,30 @@ private:
     std::vector<uint32_t> m_transparentIndices;  ///< CPU-side index data (transparent)
 
     // ========== Vulkan Buffers (Opaque) ==========
-    VkBuffer m_vertexBuffer;                ///< GPU vertex buffer (opaque)
-    VkDeviceMemory m_vertexBufferMemory;    ///< Vertex buffer memory (opaque)
-    VkBuffer m_indexBuffer;                 ///< GPU index buffer (opaque)
-    VkDeviceMemory m_indexBufferMemory;     ///< Index buffer memory (opaque)
+    VkBuffer m_vertexBuffer;                ///< GPU vertex buffer (opaque) [LEGACY - will be replaced by mega-buffer]
+    VkDeviceMemory m_vertexBufferMemory;    ///< Vertex buffer memory (opaque) [LEGACY]
+    VkBuffer m_indexBuffer;                 ///< GPU index buffer (opaque) [LEGACY]
+    VkDeviceMemory m_indexBufferMemory;     ///< Index buffer memory (opaque) [LEGACY]
     uint32_t m_vertexCount;                 ///< Number of vertices (opaque)
     uint32_t m_indexCount;                  ///< Number of indices (opaque)
 
+    // Mega-buffer offsets for indirect drawing (GPU optimization)
+    VkDeviceSize m_megaBufferVertexOffset = 0;   ///< Offset in mega vertex buffer
+    VkDeviceSize m_megaBufferIndexOffset = 0;    ///< Offset in mega index buffer
+    uint32_t m_megaBufferBaseVertex = 0;         ///< Base vertex for indexed drawing
+
     // ========== Vulkan Buffers (Transparent) ==========
-    VkBuffer m_transparentVertexBuffer;           ///< GPU vertex buffer (transparent)
-    VkDeviceMemory m_transparentVertexBufferMemory; ///< Vertex buffer memory (transparent)
-    VkBuffer m_transparentIndexBuffer;            ///< GPU index buffer (transparent)
-    VkDeviceMemory m_transparentIndexBufferMemory; ///< Index buffer memory (transparent)
+    VkBuffer m_transparentVertexBuffer;           ///< GPU vertex buffer (transparent) [LEGACY]
+    VkDeviceMemory m_transparentVertexBufferMemory; ///< Vertex buffer memory (transparent) [LEGACY]
+    VkBuffer m_transparentIndexBuffer;            ///< GPU index buffer (transparent) [LEGACY]
+    VkDeviceMemory m_transparentIndexBufferMemory; ///< Index buffer memory (transparent) [LEGACY]
     uint32_t m_transparentVertexCount;            ///< Number of vertices (transparent)
     uint32_t m_transparentIndexCount;             ///< Number of indices (transparent)
+
+    // Mega-buffer offsets for transparent geometry (indirect drawing)
+    VkDeviceSize m_megaBufferTransparentVertexOffset = 0;
+    VkDeviceSize m_megaBufferTransparentIndexOffset = 0;
+    uint32_t m_megaBufferTransparentBaseVertex = 0;
 
     // ========== Staging Buffers (for batched uploads) ==========
     VkBuffer m_vertexStagingBuffer;               ///< Staging buffer for opaque vertices

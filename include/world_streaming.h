@@ -185,6 +185,15 @@ private:
     void workerThreadFunction();
 
     /**
+     * @brief Mesh worker thread main loop (PERFORMANCE FIX 2025-11-24)
+     *
+     * Continuously pulls chunks from the mesh work queue and generates meshes.
+     * Eliminates 600+ thread creations/sec overhead from detached thread approach.
+     * Runs until m_meshWorkersRunning is set to false.
+     */
+    void meshWorkerThreadFunction();
+
+    /**
      * @brief Generates a single chunk (terrain + mesh)
      *
      * Called by worker threads. CPU-only operations (thread-safe).
@@ -231,13 +240,6 @@ private:
      */
     glm::vec3 chunkToWorldPos(int chunkX, int chunkY, int chunkZ) const;
 
-    /**
-     * @brief Unloads chunks beyond the unload distance
-     *
-     * @param playerPos Current player position
-     * @param unloadDistance Distance at which to unload chunks
-     */
-    void unloadDistantChunks(const glm::vec3& playerPos, float unloadDistance);
 
     /**
      * @brief Tracks a failed chunk generation attempt
@@ -290,9 +292,36 @@ private:
     std::vector<std::unique_ptr<Chunk>> m_completedChunks;  ///< Chunks ready for buffer upload
     mutable std::mutex m_completedMutex;                    ///< Protects m_completedChunks
 
+    // === Async Mesh Generation (PERFORMANCE FIX 2025-11-23) ===
+    // Chunks that have finished mesh generation and are ready for GPU upload
+    // Background threads push here after meshing, main thread pops for upload
+    std::queue<std::tuple<int, int, int>> m_chunksReadyForUpload;  ///< Chunks ready for GPU upload
+    mutable std::mutex m_readyForUploadMutex;                      ///< Protects m_chunksReadyForUpload
+
+    // CRITICAL BUG FIX: Prevent chunk deletion during async mesh generation
+    // Tracks chunks currently being meshed by detached threads
+    // removeChunk() checks this set and defers deletion until meshing completes
+    std::unordered_set<ChunkCoord> m_chunksBeingMeshed;  ///< Chunks with active mesh generation threads
+    mutable std::mutex m_chunksMeshingMutex;             ///< Protects m_chunksBeingMeshed
+
+    // === Mesh Thread Pool (PERFORMANCE FIX 2025-11-24) ===
+    // Thread pool for mesh generation - eliminates 600+ thread creations/sec overhead
+    // OLD: Spawn detached thread per chunk (600/sec thread spawning storm)
+    // NEW: 4-8 persistent workers pull from queue (zero thread creation overhead)
+    std::queue<std::tuple<int, int, int>> m_meshWorkQueue;  ///< Chunks waiting for mesh generation
+    mutable std::mutex m_meshQueueMutex;                    ///< Protects m_meshWorkQueue
+    std::condition_variable m_meshQueueCV;                  ///< Wake mesh workers when work available
+    std::vector<std::thread> m_meshWorkers;                 ///< Mesh worker thread pool
+    std::atomic<bool> m_meshWorkersRunning;                 ///< Flag to shutdown mesh workers
+
     // === Player Position ===
-    glm::vec3 m_lastPlayerPos;            ///< Last known player position
-    mutable std::mutex m_playerPosMutex;  ///< Protects m_lastPlayerPos
+    glm::vec3 m_lastPlayerPos;              ///< Last known player position
+    mutable std::mutex m_playerPosMutex;    ///< Protects m_lastPlayerPos
+
+    // PERFORMANCE FIX (2025-11-24): Track last chunk to avoid 13,500 iterations/sec
+    // Only run expensive cube iteration (15×15×15 = 3,375 checks) when player crosses chunk boundary
+    std::tuple<int, int, int> m_lastPlayerChunk;  ///< Last chunk coordinates (x, y, z)
+    mutable std::mutex m_playerChunkMutex;        ///< Protects m_lastPlayerChunk
 
     // === Statistics ===
     std::atomic<size_t> m_totalChunksLoaded;    ///< Total chunks loaded since start
