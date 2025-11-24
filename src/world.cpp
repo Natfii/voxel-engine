@@ -543,6 +543,103 @@ bool World::hasHorizontalNeighbors(Chunk* chunk) {
 }
 
 void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
+    // ============================================================================
+    // ASYNC DECORATION PIPELINE (2025-11-24): NEVER block main thread!
+    // ============================================================================
+    // OLD: Launch decoration → WAIT → lighting → mesh → WAIT → upload (2.4s frames!)
+    // NEW: Check completed decorations → lighting+mesh+upload, Launch new decorations → return immediately
+    // ============================================================================
+
+    // PHASE 1: Process decorations that completed in background (from previous frames)
+    std::vector<Chunk*> completedChunks;
+    {
+        std::lock_guard<std::mutex> lock(m_decorationsInProgressMutex);
+        auto it = m_decorationsInProgress.begin();
+        while (it != m_decorationsInProgress.end()) {
+            // Check if decoration finished (non-blocking check!)
+            if (it->future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                completedChunks.push_back(it->chunk);
+                it = m_decorationsInProgress.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // Process completed decorations: lighting + mesh + GPU upload
+    // TODO: This could also be made async in future, but decoration is the main bottleneck
+    if (!completedChunks.empty() && renderer) {
+        // Initialize lighting for decorated chunks
+        for (Chunk* chunk : completedChunks) {
+            if (!chunk->needsDecoration()) {  // Only if decoration succeeded
+                try {
+                    initializeChunkLighting(chunk);
+                } catch (const std::exception& e) {
+                    Logger::error() << "Failed to initialize lighting for decorated chunk: " << e.what();
+                }
+            }
+        }
+
+        // Generate meshes for decorated chunks
+        for (Chunk* chunk : completedChunks) {
+            if (!chunk->needsDecoration()) {  // Only if decoration succeeded
+                try {
+                    Logger::info() << "Meshing decorated chunk (" << chunk->getChunkX()
+                                  << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ() << ")";
+                    chunk->generateMesh(this);
+                } catch (const std::exception& e) {
+                    Logger::error() << "Failed to mesh decorated chunk: " << e.what();
+                }
+            }
+        }
+
+        // Batched GPU upload
+        try {
+            renderer->beginBatchedChunkUploads();
+            for (Chunk* chunk : completedChunks) {
+                if (!chunk->needsDecoration()) {
+                    renderer->addChunkToBatch(chunk);
+                }
+            }
+            renderer->submitBatchedChunkUploads();
+            Logger::info() << "Batched GPU upload for " << completedChunks.size() << " decorated chunks";
+        } catch (const std::exception& e) {
+            Logger::error() << "Failed to batch upload decorated chunks: " << e.what();
+        }
+
+        // Remove from pending decorations
+        {
+            std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+            for (Chunk* chunk : completedChunks) {
+                m_pendingDecorations.erase(chunk);
+            }
+        }
+
+        size_t pendingCount;
+        {
+            std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+            pendingCount = m_pendingDecorations.size();
+        }
+        Logger::info() << "Processed " << completedChunks.size()
+                      << " pending decorations in parallel ("
+                      << pendingCount << " still pending)";
+    }
+
+    // PHASE 2: Launch NEW decoration tasks (don't block!)
+    // Check how many decoration slots are available
+    int currentDecorations = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_decorationsInProgressMutex);
+        currentDecorations = m_decorationsInProgress.size();
+    }
+
+    const int MAX_CONCURRENT_DECORATIONS = 4;
+    int slotsAvailable = MAX_CONCURRENT_DECORATIONS - currentDecorations;
+
+    if (slotsAvailable <= 0) {
+        return;  // All slots full, try again next frame
+    }
+
     // THREAD SAFETY (2025-11-23): Lock for checking emptiness
     {
         std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
@@ -556,30 +653,24 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
         if (m_pendingDecorations.empty()) return;
     }
 
-    // OPTIMIZATION (2025-11-23): Parallel decoration for 3× faster processing
-    // Phase 1: Collect chunks ready for decoration
+    // Collect chunks ready for decoration (limit to available slots)
     std::vector<Chunk*> chunksToDecorate;
-    std::vector<Chunk*> chunksToRemove;
 
     {
         // THREAD SAFETY: Lock while iterating pending decorations
         std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
         auto it = m_pendingDecorations.begin();
         int skippedNoNeighbors = 0;
-        while (it != m_pendingDecorations.end() && chunksToDecorate.size() < static_cast<size_t>(maxChunks)) {
+
+        // Only collect as many as we have slots for
+        while (it != m_pendingDecorations.end() && chunksToDecorate.size() < slotsAvailable) {
             Chunk* chunk = *it;
 
             if (chunk && chunk->needsDecoration() && hasHorizontalNeighbors(chunk)) {
                 chunksToDecorate.push_back(chunk);
-                chunksToRemove.push_back(chunk);
             } else if (chunk && chunk->needsDecoration() && !hasHorizontalNeighbors(chunk)) {
                 // DEBUG: Count chunks waiting for neighbors
                 skippedNoNeighbors++;
-            } else if (chunk && !chunk->needsDecoration()) {
-                Logger::debug() << "Removing chunk (" << chunk->getChunkX()
-                               << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ()
-                               << ") from pending decorations - loaded from disk";
-                chunksToRemove.push_back(chunk);
             }
             ++it;
         }
@@ -588,164 +679,37 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
         if (skippedNoNeighbors > 0) {
             Logger::info() << skippedNoNeighbors << " chunks waiting for neighbors to load";
         }
-    } // Release lock before parallel decoration
+    }
 
-    // Phase 2: Parallel decoration with controlled concurrency (PERFORMANCE FIX 2025-11-24)
-    // Based on voxel engine best practices: parallel decoration, limited thread count
-    // Use std::async with max 4 concurrent tasks (industry standard)
-    // Each task decorates ONE chunk independently (no shared state = no mutex overhead)
+    // Launch decoration tasks (DON'T WAIT!)
     if (!chunksToDecorate.empty()) {
-        std::vector<std::string> errors;
-        std::mutex errorMutex;
-        std::vector<std::future<void>> decorationFutures;
-        const int MAX_CONCURRENT_DECORATIONS = 4;
+        std::lock_guard<std::mutex> lock(m_decorationsInProgressMutex);
 
         for (Chunk* chunk : chunksToDecorate) {
-            // Wait if we have too many concurrent decorations
-            while (decorationFutures.size() >= MAX_CONCURRENT_DECORATIONS) {
-                // Check for completed futures and remove them
-                decorationFutures.erase(
-                    std::remove_if(decorationFutures.begin(), decorationFutures.end(),
-                        [](std::future<void>& f) {
-                            return f.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
-                        }),
-                    decorationFutures.end()
-                );
-
-                // If still at max, wait a bit
-                if (decorationFutures.size() >= MAX_CONCURRENT_DECORATIONS) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                }
-            }
-
-            // Launch async decoration task
-            decorationFutures.push_back(std::async(std::launch::async, [this, chunk, &errors, &errorMutex]() {
+            // Launch async decoration task (returns immediately!)
+            auto future = std::async(std::launch::async, [this, chunk]() {
                 try {
                     decorateChunk(chunk);
                     chunk->setNeedsDecoration(false);
                 } catch (const std::exception& e) {
-                    std::lock_guard<std::mutex> lock(errorMutex);
-                    std::ostringstream oss;
-                    oss << "Chunk (" << chunk->getChunkX() << ", "
-                        << chunk->getChunkY() << ", " << chunk->getChunkZ()
-                        << "): " << e.what();
-                    errors.push_back(oss.str());
+                    Logger::error() << "Failed to decorate chunk (" << chunk->getChunkX() << ", "
+                                   << chunk->getChunkY() << ", " << chunk->getChunkZ() << "): " << e.what();
                 }
-            }));
+            });
+
+            // Store future in in-progress list (DON'T WAIT!)
+            DecorationTask task;
+            task.chunk = chunk;
+            task.future = std::move(future);
+            task.startTime = std::chrono::steady_clock::now();
+            m_decorationsInProgress.push_back(std::move(task));
         }
 
-        // Wait for all remaining decoration tasks to complete
-        for (auto& future : decorationFutures) {
-            future.wait();
-        }
-
-        // Log any errors
-        for (const auto& error : errors) {
-            Logger::error() << "Failed to decorate pending chunk: " << error;
-        }
-
-        // Phase 3: Initialize lighting (must be serial due to neighbor access)
-        for (Chunk* chunk : chunksToDecorate) {
-            if (!chunk->needsDecoration()) {  // Only if decoration succeeded
-                try {
-                    // Reinitialize lighting after adding decorations
-                    initializeChunkLighting(chunk);
-                    // CRITICAL FIX: Don't mark dirty - prevents double mesh generation!
-                    // chunk->markLightingDirty();  // ← REMOVED
-                } catch (const std::exception& e) {
-                    Logger::error() << "Failed to initialize lighting for decorated chunk: " << e.what();
-                }
-            }
-        }
-
-        // Phase 4: Parallel mesh generation (PERFORMANCE FIX 2025-11-24)
-        // Based on voxel engine best practices: mesh generation is thread-safe via read-only World access
-        // Use std::async with max 4 concurrent tasks for balanced CPU usage
-        errors.clear();
-        std::vector<std::future<void>> meshFutures;
-        const int MAX_CONCURRENT_MESHING = 4;
-
-        for (Chunk* chunk : chunksToDecorate) {
-            if (!chunk->needsDecoration()) {  // Only if decoration succeeded
-                // Wait if we have too many concurrent mesh generations
-                while (meshFutures.size() >= MAX_CONCURRENT_MESHING) {
-                    meshFutures.erase(
-                        std::remove_if(meshFutures.begin(), meshFutures.end(),
-                            [](std::future<void>& f) {
-                                return f.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
-                            }),
-                        meshFutures.end()
-                    );
-
-                    if (meshFutures.size() >= MAX_CONCURRENT_MESHING) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                    }
-                }
-
-                // Launch async mesh generation task
-                meshFutures.push_back(std::async(std::launch::async, [this, chunk, &errors, &errorMutex]() {
-                    try {
-                        Logger::info() << "Meshing decorated chunk (" << chunk->getChunkX()
-                                      << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ() << ")";
-                        chunk->generateMesh(this);
-                    } catch (const std::exception& e) {
-                        std::lock_guard<std::mutex> lock(errorMutex);
-                        std::ostringstream oss;
-                        oss << "Chunk (" << chunk->getChunkX() << ", "
-                            << chunk->getChunkY() << ", " << chunk->getChunkZ()
-                            << "): " << e.what();
-                        errors.push_back(oss.str());
-                    }
-                }));
-            }
-        }
-
-        // Wait for all meshing to complete
-        for (auto& future : meshFutures) {
-            future.wait();
-        }
-
-        // Log any errors
-        for (const auto& error : errors) {
-            Logger::error() << "Failed to mesh decorated chunk: " << error;
-        }
-
-        // Phase 5: BATCHED GPU upload (Vulkan is NOT thread-safe, but we can batch)
-        // OPTIMIZATION (2025-11-23): Single vkQueueSubmit for all chunks instead of N submits
-        if (renderer) {
-            try {
-                renderer->beginBatchedChunkUploads();
-
-                for (Chunk* chunk : chunksToDecorate) {
-                    if (!chunk->needsDecoration()) {  // Only if decoration and meshing succeeded
-                        renderer->addChunkToBatch(chunk);
-                    }
-                }
-
-                renderer->submitBatchedChunkUploads();
-                Logger::info() << "Batched GPU upload for " << chunksToDecorate.size() << " decorated chunks";
-            } catch (const std::exception& e) {
-                Logger::error() << "Failed to batch upload decorated chunks: " << e.what();
-            }
-        }
-
-        size_t pendingCount;
-        {
-            std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
-            pendingCount = m_pendingDecorations.size();
-        }
-        Logger::info() << "Processed " << chunksToDecorate.size()
-                      << " pending decorations in parallel ("
-                      << pendingCount << " still pending)";
+        Logger::info() << "Launched " << chunksToDecorate.size() << " decoration tasks (non-blocking)";
     }
 
-    // Remove processed chunks from pending set
-    {
-        std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
-        for (Chunk* chunk : chunksToRemove) {
-            m_pendingDecorations.erase(chunk);
-        }
-    }
+    // That's it! Return immediately - decorations run in background
+    // Next frame will pick up completed work in PHASE 1
 }
 
 void World::decorateChunk(Chunk* chunk) {

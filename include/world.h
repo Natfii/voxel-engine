@@ -13,6 +13,8 @@
 #include <shared_mutex>
 #include <functional>
 #include <cstdint>
+#include <future>
+#include <chrono>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 #include "chunk.h"
@@ -707,6 +709,15 @@ private:
     // DECORATION FIX: Track chunks waiting for neighbors before decoration
     std::unordered_set<Chunk*> m_pendingDecorations;  ///< Chunks waiting for neighbors to be decorated
     mutable std::mutex m_pendingDecorationsMutex;  ///< THREAD SAFETY (2025-11-23): Protects m_pendingDecorations
+
+    // ASYNC DECORATION PIPELINE (2025-11-24): Track decorations in progress (don't block main thread!)
+    struct DecorationTask {
+        Chunk* chunk;
+        std::future<void> future;
+        std::chrono::steady_clock::time_point startTime;
+    };
+    std::vector<DecorationTask> m_decorationsInProgress;  ///< Decorations running in background
+    mutable std::mutex m_decorationsInProgressMutex;  ///< Protects m_decorationsInProgress
 
     // WATER PERFORMANCE FIX: Track water blocks that need flow updates (dirty list)
     std::unordered_set<glm::ivec3> m_dirtyWaterBlocks;  ///< Water blocks that changed and need flow update
