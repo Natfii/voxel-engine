@@ -315,8 +315,13 @@ private:
     std::atomic<bool> m_meshWorkersRunning;                 ///< Flag to shutdown mesh workers
 
     // === Player Position ===
-    glm::vec3 m_lastPlayerPos;            ///< Last known player position
-    mutable std::mutex m_playerPosMutex;  ///< Protects m_lastPlayerPos
+    glm::vec3 m_lastPlayerPos;              ///< Last known player position
+    mutable std::mutex m_playerPosMutex;    ///< Protects m_lastPlayerPos
+
+    // PERFORMANCE FIX (2025-11-24): Track last chunk to avoid 13,500 iterations/sec
+    // Only run expensive cube iteration (15×15×15 = 3,375 checks) when player crosses chunk boundary
+    std::tuple<int, int, int> m_lastPlayerChunk;  ///< Last chunk coordinates (x, y, z)
+    mutable std::mutex m_playerChunkMutex;        ///< Protects m_lastPlayerChunk
 
     // === Statistics ===
     std::atomic<size_t> m_totalChunksLoaded;    ///< Total chunks loaded since start

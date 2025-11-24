@@ -22,6 +22,7 @@ WorldStreaming::WorldStreaming(World* world, BiomeMap* biomeMap, VulkanRenderer*
     , m_activeWorkers(0)
     , m_meshWorkersRunning(false)
     , m_lastPlayerPos(0.0f, 0.0f, 0.0f)
+    , m_lastPlayerChunk(std::numeric_limits<int>::min(), std::numeric_limits<int>::min(), std::numeric_limits<int>::min())
     , m_totalChunksLoaded(0)
     , m_totalChunksUnloaded(0)
 {
@@ -155,6 +156,23 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
     int playerChunkX = static_cast<int>(std::floor(playerPos.x / (CHUNK_SIZE * BLOCK_SIZE)));
     int playerChunkY = static_cast<int>(std::floor(playerPos.y / (CHUNK_SIZE * BLOCK_SIZE)));
     int playerChunkZ = static_cast<int>(std::floor(playerPos.z / (CHUNK_SIZE * BLOCK_SIZE)));
+
+    // PERFORMANCE FIX (2025-11-24): Only run expensive streaming operations on chunk boundary crossing
+    // Reduces cube iteration from 13,500/sec (3,375 iterations × 4Hz) to ~100/sec (only on boundary cross)
+    bool crossedChunkBoundary = false;
+    {
+        std::lock_guard<std::mutex> lock(m_playerChunkMutex);
+        auto currentChunk = std::make_tuple(playerChunkX, playerChunkY, playerChunkZ);
+        if (m_lastPlayerChunk != currentChunk) {
+            m_lastPlayerChunk = currentChunk;
+            crossedChunkBoundary = true;
+        }
+    }
+
+    // Early exit if player hasn't crossed chunk boundary - nothing to stream!
+    if (!crossedChunkBoundary) {
+        return;
+    }
 
     // Calculate chunk load radius
     int loadRadiusChunks = static_cast<int>(std::ceil(loadDistance / (CHUNK_SIZE * BLOCK_SIZE)));
