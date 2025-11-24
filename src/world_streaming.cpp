@@ -183,6 +183,11 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
     const float NEIGHBOR_MARGIN = 2.0f * CHUNK_SIZE * BLOCK_SIZE;  // 64 blocks
     float effectiveLoadDistance = loadDistance + NEIGHBOR_MARGIN;
 
+    // BUG FIX (2025-11-24): Calculate effective radius in CHUNKS for iteration bounds
+    // Previously: Iterated loadRadiusChunks but checked effectiveLoadDistance → margin chunks never checked!
+    // This caused 169 chunks to never get neighbors → performance death spiral
+    int effectiveLoadRadiusChunks = static_cast<int>(std::ceil(effectiveLoadDistance / (CHUNK_SIZE * BLOCK_SIZE)));
+
     // PERFORMANCE FIX: Get loaded chunks AND identify unloads in SINGLE iteration (50% faster!)
     // Previously: Called forEachChunkCoord() twice (once here, once in unloadDistantChunks)
     // Now: Single pass builds hash set AND checks unload distance
@@ -206,9 +211,11 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
     // Queue chunks for loading in a sphere around the player
     std::vector<ChunkLoadRequest> newRequests;
 
-    for (int dx = -loadRadiusChunks; dx <= loadRadiusChunks; ++dx) {
-        for (int dy = -loadRadiusChunks; dy <= loadRadiusChunks; ++dy) {
-            for (int dz = -loadRadiusChunks; dz <= loadRadiusChunks; ++dz) {
+    // BUG FIX (2025-11-24): Iterate effectiveLoadRadiusChunks (includes margin!) not loadRadiusChunks
+    // This ensures we check ALL chunks within effectiveLoadDistance, not just the inner radius
+    for (int dx = -effectiveLoadRadiusChunks; dx <= effectiveLoadRadiusChunks; ++dx) {
+        for (int dy = -effectiveLoadRadiusChunks; dy <= effectiveLoadRadiusChunks; ++dy) {
+            for (int dz = -effectiveLoadRadiusChunks; dz <= effectiveLoadRadiusChunks; ++dz) {
                 int chunkX = playerChunkX + dx;
                 int chunkY = playerChunkY + dy;
                 int chunkZ = playerChunkZ + dz;
