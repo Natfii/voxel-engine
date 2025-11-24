@@ -527,6 +527,13 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
     // THREAD SAFETY (2025-11-23): Lock for checking emptiness
     {
         std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+        size_t pendingCount = m_pendingDecorations.size();
+
+        // DEBUG: Log every call to verify it's running continuously
+        if (pendingCount > 0) {
+            Logger::debug() << "processPendingDecorations called with " << pendingCount << " pending chunks";
+        }
+
         if (m_pendingDecorations.empty()) return;
     }
 
@@ -539,12 +546,16 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
         // THREAD SAFETY: Lock while iterating pending decorations
         std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
         auto it = m_pendingDecorations.begin();
+        int skippedNoNeighbors = 0;
         while (it != m_pendingDecorations.end() && chunksToDecorate.size() < static_cast<size_t>(maxChunks)) {
             Chunk* chunk = *it;
 
             if (chunk && chunk->needsDecoration() && hasHorizontalNeighbors(chunk)) {
                 chunksToDecorate.push_back(chunk);
                 chunksToRemove.push_back(chunk);
+            } else if (chunk && chunk->needsDecoration() && !hasHorizontalNeighbors(chunk)) {
+                // DEBUG: Count chunks waiting for neighbors
+                skippedNoNeighbors++;
             } else if (chunk && !chunk->needsDecoration()) {
                 Logger::debug() << "Removing chunk (" << chunk->getChunkX()
                                << ", " << chunk->getChunkY() << ", " << chunk->getChunkZ()
@@ -552,6 +563,11 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
                 chunksToRemove.push_back(chunk);
             }
             ++it;
+        }
+
+        // DEBUG: Show why decorations aren't processing
+        if (skippedNoNeighbors > 0) {
+            Logger::debug() << skippedNoNeighbors << " chunks waiting for neighbors to load";
         }
     } // Release lock before parallel decoration
 
