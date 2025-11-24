@@ -532,7 +532,7 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
 
         // DEBUG: Log every call to verify it's running continuously
         if (pendingCount > 0) {
-            Logger::debug() << "processPendingDecorations called with " << pendingCount << " pending chunks";
+            Logger::info() << "processPendingDecorations called with " << pendingCount << " pending chunks";
         }
 
         if (m_pendingDecorations.empty()) return;
@@ -568,7 +568,7 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
 
         // DEBUG: Show why decorations aren't processing
         if (skippedNoNeighbors > 0) {
-            Logger::debug() << skippedNoNeighbors << " chunks waiting for neighbors to load";
+            Logger::info() << skippedNoNeighbors << " chunks waiting for neighbors to load";
         }
     } // Release lock before parallel decoration
 
