@@ -131,8 +131,9 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
      */
 
     // Calculate outer radius for terrain-only pre-generation
-    // Double the spawn radius for terrain buffer - player can wait for smoother gameplay
-    const int TERRAIN_BUFFER_RADIUS = radius * 2;  // 2x spawn radius for terrain buffer
+    // REDUCED (2025-11-25): 1.5x instead of 2x to avoid mega-buffer overflow
+    // With smoother terrain, chunks have more visible faces and use more GPU memory
+    const int TERRAIN_BUFFER_RADIUS = radius + (radius / 2);  // 1.5x spawn radius for terrain buffer
 
     Logger::info() << "Generating spawn chunks: inner=" << radius << " (decorated), outer="
                    << TERRAIN_BUFFER_RADIUS << " (terrain-only)";
