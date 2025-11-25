@@ -83,11 +83,14 @@ inline const char* chunkStateToString(ChunkState state) {
  *
  * Uses world coordinates (signed 16-bit) to support mega-buffer indirect drawing.
  *
- * Memory layout (12 bytes total):
- *   posX, posY, posZ (int16_t × 3 = 6 bytes): World position (range ±32767)
- *   packedA (uint16_t = 2 bytes): Texture atlas cell
- *     Bits 0-7:   Atlas X cell (0-255)
- *     Bits 8-15:  Atlas Y cell (0-255)
+ * Memory layout (12 bytes total, using universally supported Vulkan formats):
+ *   posXY (uint32_t = 4 bytes): Packed position X and Y
+ *     Bits 0-15:  Position X (int16, range ±32767)
+ *     Bits 16-31: Position Y (int16, range ±32767)
+ *   posZAtlas (uint32_t = 4 bytes): Packed position Z and atlas coords
+ *     Bits 0-15:  Position Z (int16, range ±32767)
+ *     Bits 16-23: Atlas X cell (0-255)
+ *     Bits 24-31: Atlas Y cell (0-255)
  *   packedB (uint32_t = 4 bytes): All other vertex data
  *     Bits 0-2:   Normal direction (0-5: +X, -X, +Y, -Y, +Z, -Z)
  *     Bits 3-7:   Quad width for UV tiling (0-31)
@@ -102,9 +105,9 @@ inline const char* chunkStateToString(ChunkState state) {
  * Memory savings: 48 bytes -> 12 bytes = 4x reduction!
  */
 struct CompressedVertex {
-    int16_t posX, posY, posZ;  ///< World position (6 bytes)
-    uint16_t packedA;          ///< Atlas X (8 bits) + Atlas Y (8 bits)
-    uint32_t packedB;          ///< Normal + QuadSize + Corner + Lighting + Tint
+    uint32_t posXY;      ///< Position X (low 16) + Position Y (high 16)
+    uint32_t posZAtlas;  ///< Position Z (low 16) + Atlas X (bits 16-23) + Atlas Y (bits 24-31)
+    uint32_t packedB;    ///< Normal + QuadSize + Corner + Lighting + Tint
 
     // Normal direction constants
     static constexpr uint8_t NORMAL_POS_X = 0;
@@ -155,14 +158,19 @@ struct CompressedVertex {
     ) {
         CompressedVertex cv;
 
-        // Store world position as signed 16-bit integers
-        cv.posX = static_cast<int16_t>(std::clamp(worldX, -32767.0f, 32767.0f));
-        cv.posY = static_cast<int16_t>(std::clamp(worldY, -32767.0f, 32767.0f));
-        cv.posZ = static_cast<int16_t>(std::clamp(worldZ, -32767.0f, 32767.0f));
+        // Store world position as signed 16-bit integers packed into uint32s
+        int16_t px = static_cast<int16_t>(std::clamp(worldX, -32767.0f, 32767.0f));
+        int16_t py = static_cast<int16_t>(std::clamp(worldY, -32767.0f, 32767.0f));
+        int16_t pz = static_cast<int16_t>(std::clamp(worldZ, -32767.0f, 32767.0f));
 
-        // Pack atlas coordinates
-        cv.packedA = static_cast<uint16_t>(atlasX)
-                   | (static_cast<uint16_t>(atlasY) << 8);
+        // Pack posX and posY into posXY (reinterpret int16 as uint16 for bit packing)
+        cv.posXY = (static_cast<uint32_t>(static_cast<uint16_t>(px)))
+                 | (static_cast<uint32_t>(static_cast<uint16_t>(py)) << 16);
+
+        // Pack posZ and atlas coords into posZAtlas
+        cv.posZAtlas = (static_cast<uint32_t>(static_cast<uint16_t>(pz)))
+                     | (static_cast<uint32_t>(atlasX) << 16)
+                     | (static_cast<uint32_t>(atlasY) << 24);
 
         // Pack remaining data
         cv.packedB = (static_cast<uint32_t>(normalIndex & 0x7))           // bits 0-2
@@ -190,22 +198,22 @@ struct CompressedVertex {
 
     /**
      * @brief Gets Vulkan attribute descriptions for compressed vertex
-     * @return Array of 3 attribute descriptions (position, packedA, packedB)
+     * @return Array of 3 attribute descriptions (posXY, posZAtlas, packedB)
      */
     static inline std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
         std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
 
-        // Position (location = 0) - 3x int16 as signed shorts
+        // posXY (location = 0) - packed posX and posY as uint32
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R16G16B16_SINT;
-        attributeDescriptions[0].offset = offsetof(CompressedVertex, posX);
+        attributeDescriptions[0].format = VK_FORMAT_R32_UINT;
+        attributeDescriptions[0].offset = offsetof(CompressedVertex, posXY);
 
-        // packedA (location = 1) - atlas coords as uint16
+        // posZAtlas (location = 1) - packed posZ and atlas coords as uint32
         attributeDescriptions[1].binding = 0;
         attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format = VK_FORMAT_R16_UINT;
-        attributeDescriptions[1].offset = offsetof(CompressedVertex, packedA);
+        attributeDescriptions[1].format = VK_FORMAT_R32_UINT;
+        attributeDescriptions[1].offset = offsetof(CompressedVertex, posZAtlas);
 
         // packedB (location = 2) - everything else as uint32
         attributeDescriptions[2].binding = 0;

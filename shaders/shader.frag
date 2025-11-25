@@ -54,10 +54,15 @@ void main() {
         // UV encoding: cellIndex + (localUV * quadSize) / atlasSize
         // - Integer part = atlas cell index (0-3 for 4x4 atlas)
         // - Fractional part * atlasSize = local position (0 to quadSize)
-        // Using fract() on local position gives automatic tiling
+        // Using mod() for tiling to handle edge case where fract(1.0) = 0.0
         vec2 cell = floor(fragTexCoord);                   // Which atlas cell
         vec2 localUV = fract(fragTexCoord) * atlasSize;    // Position scaled by quad size
-        vec2 tiledUV = fract(localUV);                     // Tile within 0-1
+        // Use mod() instead of fract() to properly tile - handles exact integer values
+        // For single blocks: localUV goes from 0 to 1, we sample 0 to 0.999...
+        // For merged quads: localUV goes from 0 to N, texture tiles N times
+        vec2 tiledUV = mod(localUV, 1.0);                  // Tile within 0-1
+        // Clamp to avoid sampling neighboring cells at exact boundary
+        tiledUV = clamp(tiledUV, 0.001, 0.999);
         texCoord = (cell + tiledUV) * cellSize;            // Convert back to atlas space
     }
 

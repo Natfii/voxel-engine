@@ -19,10 +19,10 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 atlasInfo;       // .x = atlas width in cells, .y = height, .z = cell size (1/width), .w = unused
 } ubo;
 
-// Compressed vertex input (12 bytes total)
-layout(location = 0) in ivec3 inPosition;   // World position as signed 16-bit integers (6 bytes, padded to ivec3)
-layout(location = 1) in uint inPackedA;     // Atlas X (8) + Atlas Y (8)
-layout(location = 2) in uint inPackedB;     // Normal + QuadSize + Corner + Lighting + Tint
+// Compressed vertex input (12 bytes total = 3x uint32)
+layout(location = 0) in uint inPosXY;      // Position X (low 16) + Position Y (high 16)
+layout(location = 1) in uint inPosZAtlas;  // Position Z (low 16) + Atlas X (bits 16-23) + Atlas Y (bits 24-31)
+layout(location = 2) in uint inPackedB;    // Normal + QuadSize + Corner + Lighting + Tint
 
 // Outputs to fragment shader
 layout(location = 0) out vec4 fragColor;
@@ -41,16 +41,30 @@ const vec4 TINT_PALETTE[4] = vec4[4](
     vec4(0.6, 0.85, 0.45, 1.0)      // 3: Grass green
 );
 
+// Helper function to unpack signed 16-bit from uint32
+float unpackInt16(uint packed, uint shift) {
+    uint raw = (packed >> shift) & 0xFFFFu;
+    // Convert from unsigned to signed (two's complement)
+    int signed16 = int(raw);
+    if (signed16 >= 32768) {
+        signed16 -= 65536;
+    }
+    return float(signed16);
+}
+
 void main() {
     // ========== UNPACK POSITION ==========
-    // Position comes in as signed 16-bit integers (world coordinates)
-    vec3 worldPos = vec3(float(inPosition.x), float(inPosition.y), float(inPosition.z));
+    // posXY: bits 0-15 = posX (int16), bits 16-31 = posY (int16)
+    // posZAtlas: bits 0-15 = posZ (int16), bits 16-23 = atlasX, bits 24-31 = atlasY
+    float posX = unpackInt16(inPosXY, 0u);
+    float posY = unpackInt16(inPosXY, 16u);
+    float posZ = unpackInt16(inPosZAtlas, 0u);
 
-    // ========== UNPACK ATLAS COORDS (packedA) ==========
-    // Bits 0-7:   Atlas X cell
-    // Bits 8-15:  Atlas Y cell
-    float atlasX = float(inPackedA & 0xFFu);
-    float atlasY = float((inPackedA >> 8u) & 0xFFu);
+    vec3 worldPos = vec3(posX, posY, posZ);
+
+    // ========== UNPACK ATLAS COORDS ==========
+    float atlasX = float((inPosZAtlas >> 16u) & 0xFFu);
+    float atlasY = float((inPosZAtlas >> 24u) & 0xFFu);
 
     // ========== UNPACK OTHER DATA (packedB) ==========
     // Bits 0-2:   Normal index (0-5) - unused for now but available
@@ -75,12 +89,13 @@ void main() {
     // Corner index determines UV offset within the quad:
     // 0: (0, 0)                  1: (quadWidth, 0)
     // 2: (0, quadHeight)         3: (quadWidth, quadHeight)
-    float uvOffsetU = ((cornerIndex & 1u) != 0u) ? quadWidth : 0.0;
-    float uvOffsetV = ((cornerIndex & 2u) != 0u) ? quadHeight : 0.0;
+    // Use (quadSize - 0.001) for max corner to avoid mod(N, 1.0) = 0.0 edge case
+    float uvOffsetU = ((cornerIndex & 1u) != 0u) ? (quadWidth - 0.001) : 0.001;
+    float uvOffsetV = ((cornerIndex & 2u) != 0u) ? (quadHeight - 0.001) : 0.001;
 
     // Calculate final texture coordinates using tiled encoding
     // UV = cellIndex + localOffset / atlasSize
-    // This allows shader to use fract() for texture tiling
+    // This allows fragment shader to use mod() for texture tiling
     float atlasSize = max(ubo.atlasInfo.x, 1.0);  // Number of cells per row (default 1 to avoid div by 0)
     fragTexCoord = vec2(atlasX + uvOffsetU / atlasSize, atlasY + uvOffsetV / atlasSize);
 

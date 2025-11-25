@@ -1616,7 +1616,7 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
     // ========== CREATE OPAQUE BUFFERS ==========
     if (m_vertexCount > 0) {
         // Create vertex buffer with exception safety
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_vertices.size();
 
         VkBuffer stagingBuffer = VK_NULL_HANDLE;
         VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
@@ -1715,7 +1715,7 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
     // ========== CREATE TRANSPARENT BUFFERS ==========
     if (m_transparentVertexCount > 0) {
         // Create transparent vertex buffer
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_transparentVertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_transparentVertices.size();
 
         VkBuffer stagingBuffer = VK_NULL_HANDLE;
         VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
@@ -1872,7 +1872,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
 
     // ========== ALLOCATE AND UPLOAD OPAQUE GEOMETRY ==========
     if (m_vertexCount > 0) {
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_vertices.size();
         VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_indices.size();
 
         // OPTIMIZATION: Only allocate new space if we don't already have space
@@ -1889,7 +1889,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
             }
 
             // Calculate base vertex for indexed drawing
-            m_megaBufferBaseVertex = static_cast<uint32_t>(m_megaBufferVertexOffset / sizeof(Vertex));
+            m_megaBufferBaseVertex = static_cast<uint32_t>(m_megaBufferVertexOffset / sizeof(CompressedVertex));
         }
         // else: Reuse existing allocation (chunk is updating its mesh)
 
@@ -1923,7 +1923,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
 
     // ========== ALLOCATE AND UPLOAD TRANSPARENT GEOMETRY ==========
     if (m_transparentVertexCount > 0) {
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_transparentVertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_transparentVertices.size();
         VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_transparentIndices.size();
 
         // OPTIMIZATION: Only allocate new space if we don't already have space
@@ -1942,7 +1942,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
             }
 
             // Calculate base vertex for transparent indexed drawing
-            m_megaBufferTransparentBaseVertex = static_cast<uint32_t>(m_megaBufferTransparentVertexOffset / sizeof(Vertex));
+            m_megaBufferTransparentBaseVertex = static_cast<uint32_t>(m_megaBufferTransparentVertexOffset / sizeof(CompressedVertex));
         }
         // else: Reuse existing allocation (chunk is updating its mesh)
 
@@ -1995,7 +1995,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
     // ========== CREATE OPAQUE BUFFERS (BATCHED) ==========
     if (m_vertexCount > 0) {
         // Create vertex staging buffer and device buffer
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_vertices.size();
 
         renderer->createBuffer(vertexBufferSize,
                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -2039,7 +2039,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
     // ========== CREATE TRANSPARENT BUFFERS (BATCHED) ==========
     if (m_transparentVertexCount > 0) {
         // Create transparent vertex staging buffer and device buffer
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_transparentVertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_transparentVertices.size();
 
         renderer->createBuffer(vertexBufferSize,
                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
