@@ -501,7 +501,7 @@ void Chunk::generate(BiomeMap* biomeMap) {
                         } else if (worldY >= SNOW_LINE) {
                             // Transition zone - mix snow and normal surface using noise
                             // Creates patchy, natural-looking snow line
-                            float snowNoise = biomeMap->getTerrainNoise(worldXf, worldZf);
+                            float snowNoise = biomeMap->getTerrainNoise(worldX, worldZ);
                             float snowChance = static_cast<float>(worldY - SNOW_LINE) / static_cast<float>(SNOW_TRANSITION);
                             // Higher elevation = more snow, noise adds variation
                             if (snowNoise > (1.0f - snowChance * 2.0f)) {
