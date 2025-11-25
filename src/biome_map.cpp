@@ -259,38 +259,44 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
         uint64_t mountainKey = coordsToKey(mountainRegionX, mountainRegionZ);
 
         float sizeScaling = 1.0f;
+        bool needsCompute = false;
 
-        // Check mountain density cache first
+        // Check mountain density cache first (read lock only)
         {
             std::shared_lock<std::shared_mutex> lock(m_mountainCacheMutex);
             auto it = m_mountainDensityCache.find(mountainKey);
             if (it != m_mountainDensityCache.end()) {
                 sizeScaling = it->second;
             } else {
-                // Cache miss - sample surrounding area
-                const float sampleRadius = 500.0f;
-                int mountainCount = 0;
-                const int totalSamples = 8;
+                needsCompute = true;
+            }
+        }
+        // shared_lock released here before any computation
 
-                for (int i = 0; i < totalSamples; i++) {
-                    float angle = (i / float(totalSamples)) * 2.0f * 3.14159f;
-                    float sampleX = worldX + std::cos(angle) * sampleRadius;
-                    float sampleZ = worldZ + std::sin(angle) * sampleRadius;
+        // Cache miss - compute outside the lock to avoid deadlock
+        if (needsCompute) {
+            const float sampleRadius = 500.0f;
+            int mountainCount = 0;
+            const int totalSamples = 8;
 
-                    const Biome* sampleBiome = getBiomeAt(sampleX, sampleZ);
-                    if (sampleBiome && sampleBiome->height_multiplier > 1.5f) {
-                        mountainCount++;
-                    }
+            for (int i = 0; i < totalSamples; i++) {
+                float angle = (i / float(totalSamples)) * 2.0f * 3.14159f;
+                float sampleX = worldX + std::cos(angle) * sampleRadius;
+                float sampleZ = worldZ + std::sin(angle) * sampleRadius;
+
+                const Biome* sampleBiome = getBiomeAt(sampleX, sampleZ);
+                if (sampleBiome && sampleBiome->height_multiplier > 1.5f) {
+                    mountainCount++;
                 }
+            }
 
-                float mountainDensity = mountainCount / float(totalSamples);
-                sizeScaling = 0.8f + (mountainDensity * 0.4f);  // Range: 0.8x to 1.2x
+            float mountainDensity = mountainCount / float(totalSamples);
+            sizeScaling = 0.8f + (mountainDensity * 0.4f);  // Range: 0.8x to 1.2x
 
-                // Store in cache (release read lock, acquire write lock)
-                std::unique_lock<std::shared_mutex> writeLock(m_mountainCacheMutex);
-                if (m_mountainDensityCache.size() < MAX_CACHE_SIZE) {
-                    m_mountainDensityCache[mountainKey] = sizeScaling;
-                }
+            // Store in cache (write lock, no other locks held)
+            std::unique_lock<std::shared_mutex> writeLock(m_mountainCacheMutex);
+            if (m_mountainDensityCache.size() < MAX_CACHE_SIZE) {
+                m_mountainDensityCache[mountainKey] = sizeScaling;
             }
         }
 
