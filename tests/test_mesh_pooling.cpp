@@ -23,7 +23,7 @@ double benchmarkWithoutPooling(int iterations) {
 
     for (int i = 0; i < iterations; ++i) {
         // Simulate realistic chunk mesh generation (32x32x32 chunk)
-        std::vector<Vertex> vertices;
+        std::vector<CompressedVertex> vertices;
         std::vector<uint32_t> indices;
 
         // Realistic sizes: chunks can have up to 40K vertices, 60K indices
@@ -32,7 +32,15 @@ double benchmarkWithoutPooling(int iterations) {
 
         // Simulate adding vertices (typical complex chunk with ~30K vertices)
         for (int j = 0; j < 30000; ++j) {
-            vertices.push_back({0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f});
+            vertices.push_back(CompressedVertex::pack(
+                0.0f, 0.0f, 0.0f,  // position
+                0,                  // normal
+                1, 1,              // quad width/height
+                0, 0,              // atlas x/y
+                0,                 // corner
+                15, 0, 15,         // sky, block, ao
+                0                  // tint
+            ));
         }
 
         for (int j = 0; j < 45000; ++j) {
@@ -57,14 +65,22 @@ double benchmarkWithPooling(int iterations) {
 
     for (int i = 0; i < iterations; ++i) {
         // Acquire buffers from pool (already pre-sized to 40K/60K)
-        std::vector<Vertex> vertices = pool.acquireVertexBuffer();
+        std::vector<CompressedVertex> vertices = pool.acquireVertexBuffer();
         std::vector<uint32_t> indices = pool.acquireIndexBuffer();
 
         // DON'T call reserve() - buffers already have correct capacity from pool
 
         // Simulate adding vertices (realistic chunk size)
         for (int j = 0; j < 30000; ++j) {
-            vertices.push_back({0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f});
+            vertices.push_back(CompressedVertex::pack(
+                0.0f, 0.0f, 0.0f,  // position
+                0,                  // normal
+                1, 1,              // quad width/height
+                0, 0,              // atlas x/y
+                0,                 // corner
+                15, 0, 15,         // sky, block, ao
+                0                  // tint
+            ));
         }
 
         for (int j = 0; j < 45000; ++j) {
