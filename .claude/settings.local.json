@@ -47,7 +47,9 @@
       "Bash(timeout 15 ./voxel-engine.exe:*)",
       "Bash(echo:*)",
       "Bash(timeout:*)",
-      "WebFetch(domain:rtarun9.github.io)"
+      "WebFetch(domain:rtarun9.github.io)",
+      "WebFetch(domain:nickmcd.me)",
+      "WebFetch(domain:vkguide.dev)"
     ],
     "deny": [],
     "ask": []
