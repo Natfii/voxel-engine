@@ -22,6 +22,9 @@ WorldStreaming::WorldStreaming(World* world, BiomeMap* biomeMap, VulkanRenderer*
     , m_activeWorkers(0)
     , m_meshWorkersRunning(false)
     , m_lastPlayerPos(0.0f, 0.0f, 0.0f)
+    , m_previousPlayerPos(0.0f, 0.0f, 0.0f)
+    , m_lastVelocityUpdate(std::chrono::high_resolution_clock::now())
+    , m_playerVelocity(0.0f)
     , m_lastPlayerChunk(std::numeric_limits<int>::min(), std::numeric_limits<int>::min(), std::numeric_limits<int>::min())
     , m_totalChunksLoaded(0)
     , m_totalChunksUnloaded(0)
@@ -144,10 +147,34 @@ void WorldStreaming::stop() {
 void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
                                           float loadDistance,
                                           float unloadDistance) {
-    // Update stored player position
+    // Calculate player velocity and adjust load distance if moving fast
+    float velocity = 0.0f;
     {
         std::lock_guard<std::mutex> lock(m_playerPosMutex);
+        auto now = std::chrono::high_resolution_clock::now();
+        float deltaTime = std::chrono::duration<float>(now - m_lastVelocityUpdate).count();
+
+        if (deltaTime > 0.0f) {
+            // Calculate velocity (blocks per second)
+            glm::vec3 delta = playerPos - m_previousPlayerPos;
+            float distance = glm::length(delta);
+            velocity = distance / deltaTime;
+
+            m_playerVelocity = velocity;
+            m_previousPlayerPos = m_lastPlayerPos;
+            m_lastVelocityUpdate = now;
+        }
+
         m_lastPlayerPos = playerPos;
+    }
+
+    // PERFORMANCE: Defer distant chunk generation when moving fast
+    // When sprinting/flying (>20 blocks/sec), only load closer chunks to reduce lag
+    const float FAST_MOVEMENT_THRESHOLD = 20.0f;  // Sprinting speed
+    if (velocity > FAST_MOVEMENT_THRESHOLD) {
+        // Reduce load distance when moving fast (prioritize chunks in view)
+        float speedFactor = std::min(velocity / FAST_MOVEMENT_THRESHOLD, 2.0f);
+        loadDistance = loadDistance / speedFactor;  // Halve load distance at 2x sprint speed
     }
 
     // Convert player position to chunk coordinates
@@ -199,6 +226,11 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
         loadedChunks.insert(coord);
 
         // Also check if chunk should be unloaded (avoid second iteration!)
+        // SPAWN ANCHOR (2025-11-25): Never unload chunks within spawn anchor radius
+        if (isInSpawnAnchor(coord.x, coord.y, coord.z)) {
+            return;  // Skip - spawn chunks stay loaded permanently
+        }
+
         glm::vec3 chunkCenter = chunkToWorldPos(coord.x, coord.y, coord.z);
         glm::vec3 delta = chunkCenter - playerPos;
         float distanceSquared = glm::dot(delta, delta);
@@ -228,7 +260,18 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
                         // Calculate priority (distance)
                         float priority = calculateChunkPriority(chunkX, chunkY, chunkZ, playerPos);
 
-                        newRequests.push_back({chunkX, chunkY, chunkZ, priority});
+                        // LOD TIER (2025-11-25): Determine detail level based on distance
+                        // - FULL (0-48 blocks): Full decoration + mesh (trees visible)
+                        // - MESH_ONLY (48-80 blocks): Mesh only, skip decoration (fog hides trees)
+                        // - TERRAIN_ONLY (>80 blocks): No mesh, no decoration (beyond render)
+                        ChunkLOD lod = ChunkLOD::FULL;
+                        if (priority > loadDistance) {
+                            lod = ChunkLOD::TERRAIN_ONLY;  // Beyond render distance
+                        } else if (priority > loadDistance * 0.6f) {
+                            lod = ChunkLOD::MESH_ONLY;     // In fog zone, skip decoration
+                        }
+
+                        newRequests.push_back({chunkX, chunkY, chunkZ, priority, lod});
                     }
                 }
             }
@@ -302,10 +345,12 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
     retryFailedChunks();
 }
 
-void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
-    std::vector<std::unique_ptr<Chunk>> chunksToAdd;
+void WorldStreaming::processCompletedChunks(int maxChunksPerFrame, float maxMilliseconds) {
+    auto startTime = std::chrono::high_resolution_clock::now();
 
-    // Retrieve completed chunks from worker threads
+    std::vector<CompletedChunk> chunksToAdd;
+
+    // Retrieve completed chunks from worker threads (with LOD)
     {
         std::lock_guard<std::mutex> lock(m_completedMutex);
 
@@ -324,27 +369,30 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
     // ============================================================================
     // CRITICAL PERFORMANCE FIX (2025-11-23): Async mesh generation
     // CRITICAL PERFORMANCE FIX (2025-11-24): Thread pool eliminates 600+ thread creations/sec
+    // LOD TIER FIX (2025-11-25): Skip decoration/mesh for distant chunks
     //
     // Architecture:
     //   Main Thread (Frame N):     Add chunks → Push to mesh queue → Return (instant!)
     //   Mesh Worker Threads:       Pull from queue → Generate mesh → Push to ready queue
     //   Main Thread (Frame N+1):   Upload chunks from ready queue to GPU
     //
-    // Performance gains:
-    //   - Zero main thread blocking (async pipeline)
-    //   - Zero thread creation overhead (persistent workers)
-    //   - Natural backpressure (queue size limits)
+    // LOD Tiers:
+    //   FULL: Close chunks - decoration + mesh (visible)
+    //   MESH_ONLY: Medium chunks - mesh only, skip decoration (fog hides trees)
+    //   TERRAIN_ONLY: Far chunks - no mesh, no decoration (beyond render distance)
     // ============================================================================
 
-    for (auto& chunk : chunksToAdd) {
-        if (chunk) {
+    for (auto& completed : chunksToAdd) {
+        if (completed.chunk) {
             try {
-                int chunkX = chunk->getChunkX();
-                int chunkY = chunk->getChunkY();
-                int chunkZ = chunk->getChunkZ();
+                int chunkX = completed.chunk->getChunkX();
+                int chunkY = completed.chunk->getChunkY();
+                int chunkZ = completed.chunk->getChunkZ();
+                ChunkLOD lod = completed.lod;
 
                 // Add chunk to world with DEFERRED mesh generation AND GPU upload
-                bool added = m_world->addStreamedChunk(std::move(chunk), m_renderer, true, true);
+                // LOD determines whether decoration/mesh is skipped
+                bool added = m_world->addStreamedChunk(std::move(completed.chunk), m_renderer, true, true, lod);
 
                 // Remove from in-flight tracking
                 {
@@ -353,40 +401,43 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
                 }
 
                 if (added) {
-                    Logger::debug() << "Integrated chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ")";
+                    Logger::debug() << "Integrated chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                                   << ") LOD=" << static_cast<int>(lod);
                     m_totalChunksLoaded++;
 
-                    // PERFORMANCE FIX (2025-11-24): Use thread pool instead of spawning detached threads
-                    // OLD: Spawn 600+ detached threads/sec → massive thread creation overhead
-                    // NEW: Push to queue, persistent workers pull → ZERO thread creation overhead
+                    // LOD TIER (2025-11-25): Only queue mesh for visible chunks
+                    // TERRAIN_ONLY chunks are beyond render distance - no mesh needed!
+                    if (lod != ChunkLOD::TERRAIN_ONLY) {
+                        // CRITICAL BUG FIX: Track chunk to prevent deletion during meshing
+                        {
+                            std::lock_guard<std::mutex> lock(m_chunksMeshingMutex);
+                            m_chunksBeingMeshed.insert(ChunkCoord{chunkX, chunkY, chunkZ});
+                        }
 
-                    // CRITICAL BUG FIX: Track chunk to prevent deletion during meshing
-                    {
-                        std::lock_guard<std::mutex> lock(m_chunksMeshingMutex);
-                        m_chunksBeingMeshed.insert(ChunkCoord{chunkX, chunkY, chunkZ});
+                        // Queue mesh generation work for thread pool
+                        {
+                            std::lock_guard<std::mutex> lock(m_meshQueueMutex);
+                            m_meshWorkQueue.push({chunkX, chunkY, chunkZ});
+                        }
+
+                        // Wake one mesh worker to process the work
+                        m_meshQueueCV.notify_one();
+                    } else {
+                        Logger::debug() << "Skipping mesh for far chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") - TERRAIN_ONLY";
                     }
-
-                    // Queue mesh generation work for thread pool
-                    {
-                        std::lock_guard<std::mutex> lock(m_meshQueueMutex);
-                        m_meshWorkQueue.push({chunkX, chunkY, chunkZ});
-                    }
-
-                    // Wake one mesh worker to process the work
-                    m_meshQueueCV.notify_one();
 
                 } else {
                     Logger::warning() << "Failed to integrate chunk (" << chunkX << ", "
                                   << chunkY << ", " << chunkZ << ") - duplicate or out of bounds";
                 }
             } catch (const std::exception& e) {
-                int chunkX = chunk ? chunk->getChunkX() : -1;
-                int chunkY = chunk ? chunk->getChunkY() : -1;
-                int chunkZ = chunk ? chunk->getChunkZ() : -1;
+                int chunkX = completed.chunk ? completed.chunk->getChunkX() : -1;
+                int chunkY = completed.chunk ? completed.chunk->getChunkY() : -1;
+                int chunkZ = completed.chunk ? completed.chunk->getChunkZ() : -1;
 
                 Logger::error() << "Failed to process chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): " << e.what();
 
-                if (chunk) {
+                if (completed.chunk) {
                     trackFailedChunk(chunkX, chunkY, chunkZ, std::string("Buffer creation failed: ") + e.what());
                     std::lock_guard<std::mutex> lock(m_loadQueueMutex);
                     m_chunksInFlight.erase(ChunkCoord{chunkX, chunkY, chunkZ});
@@ -402,12 +453,33 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
     // Chunks from background threads queue up here and get uploaded next frame
     // ============================================================================
 
+    // ============================================================================
+    // FRAME BUDGET CHECK: Stop if we've exceeded our time allocation
+    // ============================================================================
+    if (maxMilliseconds > 0.0f) {
+        auto now = std::chrono::high_resolution_clock::now();
+        float elapsed = std::chrono::duration<float, std::milli>(now - startTime).count();
+        if (elapsed >= maxMilliseconds) {
+            // Exceeded budget - defer remaining work to next frame
+            return;
+        }
+    }
+
     std::vector<std::tuple<int, int, int>> chunksToUpload;
     {
         std::lock_guard<std::mutex> lock(m_readyForUploadMutex);
 
-        // Take up to 10 ready chunks (can increase since no blocking!)
-        while (!m_chunksReadyForUpload.empty() && chunksToUpload.size() < 10) {
+        // GPU upload bottleneck - keep at 1 chunk to prevent command queue overflow
+        while (!m_chunksReadyForUpload.empty() && chunksToUpload.size() < 1) {
+            // Check time budget before adding more chunks
+            if (maxMilliseconds > 0.0f) {
+                auto now = std::chrono::high_resolution_clock::now();
+                float elapsed = std::chrono::duration<float, std::milli>(now - startTime).count();
+                if (elapsed >= maxMilliseconds * 0.8f) {  // Reserve 20% for upload
+                    break;
+                }
+            }
+
             chunksToUpload.push_back(m_chunksReadyForUpload.front());
             m_chunksReadyForUpload.pop();
         }
@@ -423,6 +495,16 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame) {
                 Chunk* chunkPtr = m_world->getChunkAt(chunkX, chunkY, chunkZ);
                 if (chunkPtr) {
                     m_renderer->addChunkToBatch(chunkPtr);
+                }
+
+                // Check time budget during upload loop
+                if (maxMilliseconds > 0.0f) {
+                    auto now = std::chrono::high_resolution_clock::now();
+                    float elapsed = std::chrono::duration<float, std::milli>(now - startTime).count();
+                    if (elapsed >= maxMilliseconds) {
+                        // Exceeded budget - submit what we have so far
+                        break;
+                    }
                 }
             }
 
@@ -452,6 +534,28 @@ std::tuple<size_t, size_t, int> WorldStreaming::getStats() const {
         getCompletedChunkCount(),
         m_activeWorkers.load()
     );
+}
+
+void WorldStreaming::queueChunkForMeshing(int chunkX, int chunkY, int chunkZ) {
+    // PERFORMANCE FIX (2025-11-25): Allow decoration system to use async mesh pipeline
+    // This prevents 4+ second frame stalls from sync mesh generation in processPendingDecorations
+
+    // Track chunk to prevent deletion during meshing
+    {
+        std::lock_guard<std::mutex> lock(m_chunksMeshingMutex);
+        m_chunksBeingMeshed.insert(ChunkCoord{chunkX, chunkY, chunkZ});
+    }
+
+    // Queue mesh generation work for thread pool
+    {
+        std::lock_guard<std::mutex> lock(m_meshQueueMutex);
+        m_meshWorkQueue.push({chunkX, chunkY, chunkZ});
+    }
+
+    // Wake one mesh worker to process the work
+    m_meshQueueCV.notify_one();
+
+    Logger::debug() << "Queued decorated chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") for async meshing";
 }
 
 void WorldStreaming::workerThreadFunction() {
@@ -491,15 +595,16 @@ void WorldStreaming::workerThreadFunction() {
                 // Generate chunk (CPU-only operations)
                 auto chunk = generateChunk(request.chunkX, request.chunkY, request.chunkZ);
 
-                // Add to completed queue
+                // Add to completed queue (with LOD tier)
                 {
                     std::lock_guard<std::mutex> lock(m_completedMutex);
-                    m_completedChunks.push_back(std::move(chunk));
+                    m_completedChunks.push_back({std::move(chunk), request.lod});
                 }
 
                 Logger::debug() << "Worker generated chunk (" << request.chunkX << ", "
                                << request.chunkY << ", " << request.chunkZ
-                               << ") - Priority: " << request.priority;
+                               << ") - Priority: " << request.priority
+                               << ", LOD: " << static_cast<int>(request.lod);
             } catch (const std::exception& e) {
                 Logger::error() << "Worker failed to generate chunk (" << request.chunkX << ", "
                                << request.chunkY << ", " << request.chunkZ << "): " << e.what();
@@ -555,19 +660,55 @@ void WorldStreaming::meshWorkerThreadFunction() {
             int chunkY = std::get<1>(chunkCoord);
             int chunkZ = std::get<2>(chunkCoord);
 
+            // PERFORMANCE FIX (2025-11-24): Backpressure to prevent queue overflow
+            // Check upload queue occupancy BEFORE expensive mesh generation
+            // If queue is nearly full, wait for GPU to catch up (prevents wasted work)
+            const size_t MAX_QUEUE_SIZE = 100;
+            const size_t THROTTLE_THRESHOLD = 85;  // Start throttling at 85% capacity (raised from 75%)
+            bool shouldThrottle = false;
+
+            {
+                std::lock_guard<std::mutex> lock(m_readyForUploadMutex);
+                shouldThrottle = m_chunksReadyForUpload.size() >= THROTTLE_THRESHOLD;
+            }
+
+            if (shouldThrottle) {
+                // Queue nearly full - wait for GPU upload to catch up
+                // This prevents wasted mesh generation that would be dropped
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+                // Put work back in queue for retry
+                // NOTE: Keep chunk in m_chunksBeingMeshed tracking set - it's still in the pipeline
+                {
+                    std::lock_guard<std::mutex> lock(m_meshQueueMutex);
+                    m_meshWorkQueue.push({chunkX, chunkY, chunkZ});
+                }
+
+                continue;  // Skip to next iteration
+            }
+
             try {
                 Chunk* chunkPtr = m_world->getChunkAt(chunkX, chunkY, chunkZ);
                 if (chunkPtr) {
+                    // ASYNC LIGHTING (2025-11-25): Initialize lighting on worker thread
+                    // This is now safe because:
+                    // 1. If no emissive blocks exist (common case), this is instant
+                    // 2. If emissive blocks exist, we only scan for those specific IDs
+                    // 3. Lighting system's addLightSource is thread-safe
+                    if (!chunkPtr->hasLightingData()) {
+                        m_world->initializeChunkLighting(chunkPtr);
+                    }
+
                     // Generate mesh (CPU-intensive, runs in background)
-                    chunkPtr->generateMesh(m_world);
+                    chunkPtr->generateMesh(m_world, false, 0);
 
                     // Add to ready queue for GPU upload (next frame)
                     {
                         std::lock_guard<std::mutex> lock(m_readyForUploadMutex);
-                        const size_t MAX_QUEUE_SIZE = 100;
                         if (m_chunksReadyForUpload.size() < MAX_QUEUE_SIZE) {
                             m_chunksReadyForUpload.push({chunkX, chunkY, chunkZ});
                         } else {
+                            // Should rarely happen now due to throttling above
                             Logger::warning() << "Ready queue full, dropping chunk ("
                                              << chunkX << ", " << chunkY << ", " << chunkZ << ")";
                         }
@@ -653,7 +794,14 @@ bool WorldStreaming::shouldLoadChunk(int chunkX, int chunkY, int chunkZ,
 float WorldStreaming::calculateChunkPriority(int chunkX, int chunkY, int chunkZ,
                                              const glm::vec3& playerPos) const {
     glm::vec3 chunkCenter = chunkToWorldPos(chunkX, chunkY, chunkZ);
-    return glm::distance(playerPos, chunkCenter);
+    float distance = glm::distance(playerPos, chunkCenter);
+
+    // PERFORMANCE OPTIMIZATION (2025-11-24): Quadratic priority
+    // Makes nearby chunks WAY higher priority than distant ones
+    // Linear: chunk at distance 10 is 2x priority of distance 20
+    // Quadratic: chunk at distance 10 is 4x priority of distance 20
+    // Result: Dramatically reduces time spent on distant chunks
+    return distance * distance;  // Squared distance = quadratic priority
 }
 
 glm::vec3 WorldStreaming::chunkToWorldPos(int chunkX, int chunkY, int chunkZ) const {
@@ -774,4 +922,28 @@ void WorldStreaming::retryFailedChunks() {
             m_loadQueueCV.notify_all();
         }
     }
+}
+
+// ========== Spawn Anchor (Minecraft-style spawn chunks) ==========
+
+void WorldStreaming::setSpawnAnchor(int chunkX, int chunkY, int chunkZ, int radius) {
+    m_spawnAnchorX = chunkX;
+    m_spawnAnchorY = chunkY;
+    m_spawnAnchorZ = chunkZ;
+    m_spawnAnchorRadius = radius;
+    m_spawnAnchorEnabled = true;
+
+    Logger::info() << "Spawn anchor set at chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                   << ") with radius " << radius << " (" << ((2*radius+1)*(2*radius+1)*(2*radius+1)) << " chunks)";
+}
+
+bool WorldStreaming::isInSpawnAnchor(int chunkX, int chunkY, int chunkZ) const {
+    if (!m_spawnAnchorEnabled) return false;
+
+    // Check if chunk is within spawn anchor radius (cube, not sphere)
+    int dx = std::abs(chunkX - m_spawnAnchorX);
+    int dy = std::abs(chunkY - m_spawnAnchorY);
+    int dz = std::abs(chunkZ - m_spawnAnchorZ);
+
+    return dx <= m_spawnAnchorRadius && dy <= m_spawnAnchorRadius && dz <= m_spawnAnchorRadius;
 }

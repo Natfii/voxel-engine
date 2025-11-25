@@ -7,6 +7,7 @@
 #include "vulkan_renderer.h"
 #include "structure_system.h"
 #include "raycast.h"
+#include "perf_monitor.h"
 #include <sstream>
 #include <iomanip>
 #include <cmath>
@@ -57,10 +58,10 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
         s_console->addMessage("Note: Regenerate chunks (move around) to see effect", ConsoleMessageType::INFO);
     });
 
-    registry.registerCommand("debug", "Toggle debug rendering modes (render, drawfps, targetinfo)",
-                           "debug <render|drawfps|targetinfo>", [](const std::vector<std::string>& args) {
+    registry.registerCommand("debug", "Toggle debug rendering modes and performance monitoring",
+                           "debug <render|drawfps|targetinfo|perf>", [](const std::vector<std::string>& args) {
         if (args.size() < 2) {
-            s_console->addMessage("Usage: debug <render|drawfps|targetinfo>", ConsoleMessageType::WARNING);
+            s_console->addMessage("Usage: debug <render|drawfps|targetinfo|perf>", ConsoleMessageType::WARNING);
             return;
         }
 
@@ -70,11 +71,37 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
             cmdDebugDrawFPS(args);
         } else if (args[1] == "targetinfo") {
             cmdDebugTargetInfo(args);
+        } else if (args[1] == "perf") {
+            auto& monitor = PerformanceMonitor::instance();
+
+            if (args.size() >= 3) {
+                // Set report interval: debug perf <interval>
+                try {
+                    float interval = std::stof(args[2]);
+                    if (interval < 1.0f) {
+                        s_console->addMessage("Interval must be at least 1 second", ConsoleMessageType::ERROR);
+                        return;
+                    }
+                    monitor.setReportInterval(interval);
+                    s_console->addMessage("Performance report interval: " + std::to_string(interval) + " seconds", ConsoleMessageType::INFO);
+                } catch (...) {
+                    s_console->addMessage("Invalid interval value", ConsoleMessageType::ERROR);
+                    return;
+                }
+            }
+
+            bool newValue = !monitor.isEnabled();
+            monitor.setEnabled(newValue);
+            s_console->addMessage("Performance monitoring: " + std::string(newValue ? "ON" : "OFF"), ConsoleMessageType::INFO);
+            if (newValue) {
+                s_console->addMessage("Performance reports will print to console", ConsoleMessageType::INFO);
+                s_console->addMessage("Use 'debug perf <seconds>' to change report interval", ConsoleMessageType::INFO);
+            }
         } else {
             s_console->addMessage("Unknown debug option: " + args[1], ConsoleMessageType::ERROR);
-            s_console->addMessage("Available options: render, drawfps, targetinfo", ConsoleMessageType::INFO);
+            s_console->addMessage("Available options: render, drawfps, targetinfo, perf", ConsoleMessageType::INFO);
         }
-    }, {"render", "drawfps", "targetinfo"});
+    }, {"render", "drawfps", "targetinfo", "perf", "perf 5", "perf 10", "perf 30"});
 
     registry.registerCommand("tp", "Teleport to coordinates",
                            "tp <x> <y> <z>", cmdTeleport);

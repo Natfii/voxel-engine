@@ -404,6 +404,21 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         buildTextureAtlas(renderer);
     }
 
+    // PERFORMANCE (2025-11-25): Build cached list of emissive block IDs
+    // This allows lighting system to skip 32,768 block scans when no emissive blocks exist
+    m_emissiveBlockIDs.clear();
+    for (size_t i = 0; i < m_defs.size(); i++) {
+        const BlockDefinition& def = m_defs[i];
+        if (def.isEmissive && def.lightLevel > 0) {
+            m_emissiveBlockIDs.push_back(static_cast<int>(i));
+        }
+    }
+    if (m_emissiveBlockIDs.empty()) {
+        std::cout << "  No emissive blocks found - lighting scan will be skipped!" << std::endl;
+    } else {
+        std::cout << "  Found " << m_emissiveBlockIDs.size() << " emissive block types for lighting" << std::endl;
+    }
+
     // Debug: Print final block registry state
     std::cout << "\nBlock Registry Summary:" << std::endl;
     for (size_t i = 0; i < m_defs.size(); i++) {
@@ -418,6 +433,9 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
                 std::cout << " (textured)";
             } else if (def.hasColor) {
                 std::cout << " (colored)";
+            }
+            if (def.isEmissive) {
+                std::cout << " (EMISSIVE L" << (int)def.lightLevel << ")";
             }
             std::cout << std::endl;
         }
@@ -721,6 +739,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
         } else {
             convertFace(def.all);
         }
+
     }
 
     // Texture memory automatically freed by unique_ptr destructors

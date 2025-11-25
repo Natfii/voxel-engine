@@ -17,6 +17,7 @@
 
 #include "vulkan_renderer.h"
 #include "chunk.h"
+#include "mesh/mesh.h"
 #include "logger.h"
 #include <stdexcept>
 #include <iostream>
@@ -24,6 +25,7 @@
 #include <algorithm>
 #include <fstream>
 #include <cstring>
+#include <chrono>
 
 // Debug callback
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
@@ -92,6 +94,7 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : m_window(window) {
     createWireframePipeline();
     createLinePipeline();
     createSkyboxPipeline();
+    createMeshPipeline();
     createCommandPool();
     createDepthResources();
     createFramebuffers();
@@ -200,7 +203,12 @@ void VulkanRenderer::createLogicalDevice() {
     QueueFamilyIndices indices = findQueueFamilies(m_physicalDevice);
 
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-    std::set<uint32_t> uniqueQueueFamilies = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+    // PERF (2025-11-24): Include transfer queue family for async uploads
+    std::set<uint32_t> uniqueQueueFamilies = {
+        indices.graphicsFamily.value(),
+        indices.presentFamily.value(),
+        indices.transferFamily.value()  // May be same as graphics family on some GPUs
+    };
 
     float queuePriority = 1.0f;
     for (uint32_t queueFamily : uniqueQueueFamilies) {
@@ -235,6 +243,8 @@ void VulkanRenderer::createLogicalDevice() {
 
     vkGetDeviceQueue(m_device, indices.graphicsFamily.value(), 0, &m_graphicsQueue);
     vkGetDeviceQueue(m_device, indices.presentFamily.value(), 0, &m_presentQueue);
+    // PERF (2025-11-24): Get transfer queue for async GPU uploads
+    vkGetDeviceQueue(m_device, indices.transferFamily.value(), 0, &m_transferQueue);
 }
 
 // Create swapchain
@@ -1047,6 +1057,168 @@ void VulkanRenderer::createSkyboxPipeline() {
     vkDestroyShaderModule(m_device, vertShaderModule, nullptr);
 }
 
+// Create mesh rendering pipeline
+void VulkanRenderer::createMeshPipeline() {
+    auto vertShaderCode = readFile("shaders/mesh_vert.spv");
+    auto fragShaderCode = readFile("shaders/mesh_frag.spv");
+
+    VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+    VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = vertShaderModule;
+    vertShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = fragShaderModule;
+    fragShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+    // Vertex input: MeshVertex (binding 0) + InstanceData (binding 1)
+    auto meshVertexBinding = MeshVertex::getBindingDescription();
+    auto meshVertexAttributes = MeshVertex::getAttributeDescriptions();
+
+    auto instanceBinding = InstanceData::getBindingDescription();
+    auto instanceAttributes = InstanceData::getAttributeDescriptions();
+
+    // Combine bindings and attributes
+    std::vector<VkVertexInputBindingDescription> bindings = { meshVertexBinding, instanceBinding };
+    std::vector<VkVertexInputAttributeDescription> attributes = meshVertexAttributes;
+    attributes.insert(attributes.end(), instanceAttributes.begin(), instanceAttributes.end());
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = static_cast<uint32_t>(bindings.size());
+    vertexInputInfo.pVertexBindingDescriptions = bindings.data();
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributes.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)m_swapChainExtent.width;
+    viewport.height = (float)m_swapChainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = m_swapChainExtent;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;  // Back-face culling for meshes
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;       // Enable depth testing
+    depthStencil.depthWriteEnable = VK_TRUE;      // Write to depth buffer
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;  // Standard depth test
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;  // No alpha blending for now (Phase 1)
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.logicOp = VK_LOGIC_OP_COPY;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    // Create descriptor set layout for mesh rendering (camera UBO only for now)
+    VkDescriptorSetLayoutBinding cameraBinding{};
+    cameraBinding.binding = 0;
+    cameraBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    cameraBinding.descriptorCount = 1;
+    cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding materialBinding{};
+    materialBinding.binding = 1;
+    materialBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    materialBinding.descriptorCount = 1;
+    materialBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    std::vector<VkDescriptorSetLayoutBinding> meshBindings = { cameraBinding, materialBinding };
+
+    VkDescriptorSetLayoutCreateInfo meshLayoutInfo{};
+    meshLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    meshLayoutInfo.bindingCount = static_cast<uint32_t>(meshBindings.size());
+    meshLayoutInfo.pBindings = meshBindings.data();
+
+    if (vkCreateDescriptorSetLayout(m_device, &meshLayoutInfo, nullptr, &m_meshDescriptorSetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create mesh descriptor set layout!");
+    }
+
+    // Create pipeline layout
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &m_meshDescriptorSetLayout;
+
+    if (vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_meshPipelineLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create mesh pipeline layout!");
+    }
+
+    // Create graphics pipeline
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = nullptr;
+    pipelineInfo.layout = m_meshPipelineLayout;
+    pipelineInfo.renderPass = m_renderPass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_meshPipeline) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create mesh pipeline!");
+    }
+
+    vkDestroyShaderModule(m_device, fragShaderModule, nullptr);
+    vkDestroyShaderModule(m_device, vertShaderModule, nullptr);
+
+    Logger::info() << "Mesh rendering pipeline created successfully";
+}
+
 // Create framebuffers
 void VulkanRenderer::createFramebuffers() {
     m_swapChainFramebuffers.resize(m_swapChainImageViews.size());
@@ -1076,6 +1248,7 @@ void VulkanRenderer::createFramebuffers() {
 void VulkanRenderer::createCommandPool() {
     QueueFamilyIndices queueFamilyIndices = findQueueFamilies(m_physicalDevice);
 
+    // Graphics command pool
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -1083,6 +1256,17 @@ void VulkanRenderer::createCommandPool() {
 
     if (vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create command pool!");
+    }
+
+    // PERF (2025-11-24): Transfer command pool for async GPU uploads
+    // Use TRANSIENT_BIT flag since transfer commands are short-lived (single-use)
+    VkCommandPoolCreateInfo transferPoolInfo{};
+    transferPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    transferPoolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    transferPoolInfo.queueFamilyIndex = queueFamilyIndices.transferFamily.value();
+
+    if (vkCreateCommandPool(m_device, &transferPoolInfo, nullptr, &m_transferCommandPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create transfer command pool!");
     }
 }
 
@@ -1262,8 +1446,62 @@ bool VulkanRenderer::beginFrame() {
     // This allows GPU to work on previous frame while CPU waits, reducing idle time
     // Old order: acquire image → wait fence (CPU idle while GPU finishes)
     // New order: wait fence → acquire image (GPU works while CPU waits, then both ready)
-    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+
+    // PERFORMANCE FIX (2025-11-24): Async fence wait with timeout
+    // Instead of blocking indefinitely, check if fence is ready with short timeout
+    // If GPU is busy, skip frame to prevent massive stalls
+    auto fenceWaitStart = std::chrono::high_resolution_clock::now();
+
+    // Try non-blocking check first
+    VkResult fenceStatus = vkGetFenceStatus(m_device, m_inFlightFences[m_currentFrame]);
+
+    if (fenceStatus == VK_NOT_READY) {
+        // GPU still busy - wait with timeout (100ms = allow GPU to finish complex frames)
+        // Previous 8ms was too aggressive for large chunk counts (1000+ chunks)
+        // 100ms allows frames up to 10fps before giving up, preventing infinite hangs
+        constexpr uint64_t FENCE_TIMEOUT_NS = 100'000'000;  // 100 milliseconds
+
+        VkResult waitResult = vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame],
+                                              VK_TRUE, FENCE_TIMEOUT_NS);
+
+        if (waitResult == VK_TIMEOUT) {
+            // GPU severely overloaded - only skip if taking > 100ms per frame
+            static int skipCounter = 0;
+            if (++skipCounter % 10 == 0) {  // Log every 10th skip
+                std::cerr << "[GPU OVERLOAD] Skipping frame (GPU busy after 100ms timeout)" << std::endl;
+            }
+            return false;  // Skip frame
+        }
+    }
+
+    // Fence ready - reset and continue
     vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+
+    auto fenceWaitEnd = std::chrono::high_resolution_clock::now();
+    auto fenceWaitMs = std::chrono::duration_cast<std::chrono::milliseconds>(fenceWaitEnd - fenceWaitStart).count();
+
+    // Log slow fence waits (>10ms indicates GPU backlog)
+    static int slowFenceCounter = 0;
+    if (fenceWaitMs > 10) {
+        size_t pendingCount = 0;
+        {
+            std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
+            pendingCount = m_pendingUploads.size();
+        }
+
+        if (++slowFenceCounter % 10 == 0) {  // Log every 10th slow fence
+            size_t deletionQueueSize = 0;
+            {
+                std::lock_guard<std::mutex> deletionLock(m_deletionQueueMutex);
+                deletionQueueSize = m_deletionQueue.size();
+            }
+
+            std::cerr << "[GPU FENCE STALL] " << fenceWaitMs << "ms wait"
+                     << " | Pending async uploads: " << pendingCount
+                     << " | Deletion queue: " << deletionQueueSize
+                     << std::endl;
+        }
+    }
 
     // Now acquire an image from the swap chain
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
@@ -1505,11 +1743,33 @@ QueueFamilyIndices VulkanRenderer::findQueueFamilies(VkPhysicalDevice device) {
             indices.presentFamily = i;
         }
 
+        // PERFORMANCE OPTIMIZATION (2025-11-24): Find dedicated transfer queue
+        // Look for a queue that supports transfer but NOT graphics (dedicated transfer queue)
+        // This allows async GPU uploads to run in parallel with rendering
+        if ((queueFamily.queueFlags & VK_QUEUE_TRANSFER_BIT) && !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+            indices.transferFamily = i;
+        }
+
         if (indices.isComplete()) {
             break;
         }
 
         i++;
+    }
+
+    // Fallback: If no dedicated transfer queue, use graphics queue
+    // Most GPUs have dedicated transfer queues, but integrated GPUs might not
+    static bool loggedTransferQueueStatus = false;
+    if (!indices.transferFamily.has_value() && indices.graphicsFamily.has_value()) {
+        indices.transferFamily = indices.graphicsFamily.value();
+        if (!loggedTransferQueueStatus) {
+            std::cout << "[INFO] No dedicated transfer queue found, using graphics queue for transfers" << std::endl;
+            loggedTransferQueueStatus = true;
+        }
+    } else if (indices.hasDedicatedTransferQueue() && !loggedTransferQueueStatus) {
+        std::cout << "[INFO] Dedicated transfer queue found (family " << indices.transferFamily.value()
+                  << ") - async GPU uploads enabled!" << std::endl;
+        loggedTransferQueueStatus = true;
     }
 
     return indices;
@@ -2199,11 +2459,11 @@ void VulkanRenderer::processAsyncUploads() {
 
     // CRITICAL FIX (2025-11-23): Limit staging buffer deletions per frame to prevent stalls
     // Each chunk has 4 staging buffers (vertex, index, transparent vertex, transparent index)
-    // PERFORMANCE FIX (2025-11-24): Increased to 30 to handle higher upload rate
-    // With decoration batches (20 chunks) + WorldStreaming (10 chunks) = 30 chunks/frame possible
+    // PERFORMANCE FIX (2025-11-24): Increased to 50 to match MAX_PENDING_UPLOADS
+    // With MAX_PENDING_UPLOADS=50, we need to clean up faster to prevent backlog
     // Must clean up AT LEAST as many as we upload to prevent queue backlog
     // Higher limit allows GPU to catch up faster during heavy streaming
-    const int MAX_UPLOAD_COMPLETIONS_PER_FRAME = 30;
+    const int MAX_UPLOAD_COMPLETIONS_PER_FRAME = 50;
     int completionsThisFrame = 0;
 
     // PERFORMANCE FIX (2025-11-24): Limit fence checks to avoid wasting time on unready uploads
@@ -2378,6 +2638,121 @@ void VulkanRenderer::recreateSwapChain() {
     createWireframePipeline();
     createLinePipeline();
     createSkyboxPipeline();
+    createMeshPipeline();
+}
+
+// ========== Mesh Buffer Management ==========
+
+void VulkanRenderer::uploadMeshBuffers(const void* vertices, uint32_t vertexCount, uint32_t vertexSize,
+                                        const void* indices, uint32_t indexCount,
+                                        VkBuffer& outVertexBuffer, VkBuffer& outIndexBuffer,
+                                        VkDeviceMemory& outVertexMemory, VkDeviceMemory& outIndexMemory) {
+    VkDeviceSize vertexBufferSize = vertexCount * vertexSize;
+    VkDeviceSize indexBufferSize = indexCount * sizeof(uint32_t);
+
+    // Create vertex staging buffer
+    VkBuffer vertexStagingBuffer;
+    VkDeviceMemory vertexStagingMemory;
+
+    createBuffer(vertexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                vertexStagingBuffer, vertexStagingMemory);
+
+    // Copy vertex data to staging buffer
+    void* data;
+    vkMapMemory(m_device, vertexStagingMemory, 0, vertexBufferSize, 0, &data);
+    memcpy(data, vertices, vertexBufferSize);
+    vkUnmapMemory(m_device, vertexStagingMemory);
+
+    // Create device-local vertex buffer
+    createBuffer(vertexBufferSize,
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                outVertexBuffer, outVertexMemory);
+
+    // Copy from staging to device-local
+    copyBuffer(vertexStagingBuffer, outVertexBuffer, vertexBufferSize);
+
+    // Cleanup vertex staging buffer
+    vkDestroyBuffer(m_device, vertexStagingBuffer, nullptr);
+    vkFreeMemory(m_device, vertexStagingMemory, nullptr);
+
+    // Only create index buffer if indices are provided
+    if (indices != nullptr && indexCount > 0) {
+        VkBuffer indexStagingBuffer;
+        VkDeviceMemory indexStagingMemory;
+
+        createBuffer(indexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    indexStagingBuffer, indexStagingMemory);
+
+        // Copy index data to staging buffer
+        vkMapMemory(m_device, indexStagingMemory, 0, indexBufferSize, 0, &data);
+        memcpy(data, indices, indexBufferSize);
+        vkUnmapMemory(m_device, indexStagingMemory);
+
+        // Create device-local index buffer
+        createBuffer(indexBufferSize,
+                    VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                    outIndexBuffer, outIndexMemory);
+
+        // Copy from staging to device-local
+        copyBuffer(indexStagingBuffer, outIndexBuffer, indexBufferSize);
+
+        // Cleanup index staging buffer
+        vkDestroyBuffer(m_device, indexStagingBuffer, nullptr);
+        vkFreeMemory(m_device, indexStagingMemory, nullptr);
+    } else {
+        // No indices - set output handles to null
+        outIndexBuffer = VK_NULL_HANDLE;
+        outIndexMemory = VK_NULL_HANDLE;
+    }
+}
+
+void VulkanRenderer::destroyMeshBuffers(VkBuffer vertexBuffer, VkBuffer indexBuffer,
+                                         VkDeviceMemory vertexMemory, VkDeviceMemory indexMemory) {
+    if (vertexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_device, vertexBuffer, nullptr);
+    }
+    if (indexBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_device, indexBuffer, nullptr);
+    }
+    if (vertexMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(m_device, vertexMemory, nullptr);
+    }
+    if (indexMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(m_device, indexMemory, nullptr);
+    }
+}
+
+void VulkanRenderer::createMaterialBuffer(const void* materialData,
+                                           VkBuffer& outBuffer,
+                                           VkDeviceMemory& outMemory,
+                                           void*& outMapped) {
+    VkDeviceSize bufferSize = sizeof(MaterialUBO);
+
+    createBuffer(bufferSize,
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                outBuffer, outMemory);
+
+    vkMapMemory(m_device, outMemory, 0, bufferSize, 0, &outMapped);
+    memcpy(outMapped, materialData, bufferSize);
+}
+
+void VulkanRenderer::updateMaterialBuffer(void* mapped, const void* materialData) {
+    memcpy(mapped, materialData, sizeof(MaterialUBO));
+}
+
+void VulkanRenderer::destroyMaterialBuffer(VkBuffer buffer, VkDeviceMemory memory) {
+    if (buffer != VK_NULL_HANDLE) {
+        vkUnmapMemory(m_device, memory);
+        vkDestroyBuffer(m_device, buffer, nullptr);
+    }
+    if (memory != VK_NULL_HANDLE) {
+        vkFreeMemory(m_device, memory, nullptr);
+    }
 }
 
 void VulkanRenderer::cleanupSwapChain() {
@@ -2387,6 +2762,7 @@ void VulkanRenderer::cleanupSwapChain() {
     vkDestroyPipeline(m_device, m_wireframePipeline, nullptr);
     vkDestroyPipeline(m_device, m_linePipeline, nullptr);
     vkDestroyPipeline(m_device, m_skyboxPipeline, nullptr);
+    vkDestroyPipeline(m_device, m_meshPipeline, nullptr);
 
     vkDestroyImageView(m_device, m_depthImageView, nullptr);
     vkDestroyImage(m_device, m_depthImage, nullptr);
@@ -2846,6 +3222,8 @@ void VulkanRenderer::cleanup() {
     std::cout << "    Cleaning up pipeline layout..." << std::endl;
     // Pipelines are already destroyed in cleanupSwapChain()
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+    vkDestroyPipelineLayout(m_device, m_meshPipelineLayout, nullptr);
+    vkDestroyDescriptorSetLayout(m_device, m_meshDescriptorSetLayout, nullptr);
     vkDestroyRenderPass(m_device, m_renderPass, nullptr);
 
     std::cout << "    Cleaning up sync objects..." << std::endl;
@@ -2895,8 +3273,9 @@ void VulkanRenderer::cleanup() {
     }
     m_pendingUploads.clear();
 
-    std::cout << "    Cleaning up command pool..." << std::endl;
+    std::cout << "    Cleaning up command pools..." << std::endl;
     vkDestroyCommandPool(m_device, m_commandPool, nullptr);
+    vkDestroyCommandPool(m_device, m_transferCommandPool, nullptr);  // PERF (2025-11-24): Transfer command pool
 
     std::cout << "    Destroying device..." << std::endl;
     vkDestroyDevice(m_device, nullptr);

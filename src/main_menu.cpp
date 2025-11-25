@@ -206,15 +206,6 @@ void MainMenu::renderSeedDialog() {
     ImGui::Spacing();
     ImGui::Spacing();
 
-    // Spawn radius slider
-    ImGui::Text("Initial Spawn Area:");
-    ImGui::SetNextItemWidth(dialogWidth - 40.0f);
-    ImGui::SliderInt("##spawnradius", &spawnRadiusSlider, 2, 8, "%d chunks radius");
-    ImGui::TextDisabled("Larger areas take longer to generate");
-
-    ImGui::Spacing();
-    ImGui::Spacing();
-
     // Temperature slider
     ImGui::Text("Temperature:");
     ImGui::SetNextItemWidth(dialogWidth - 40.0f);

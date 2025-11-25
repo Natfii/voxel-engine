@@ -24,16 +24,15 @@ layout(location = 6) in float fragAO;          // Ambient occlusion from vertex 
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    const float atlasSize = 4.0;  // 4x4 atlas
+    const float cellSize = 1.0 / atlasSize;
     vec2 texCoord = fragTexCoord;
 
     // Parallax scrolling ONLY for water (not ice or other transparent blocks)
     // Water has transparency=0.25 (alpha=0.75), ice has transparency=0.4 (alpha=0.6)
+    // NOTE: Water uses OLD stretched UV encoding (animatedTiles > 1 in mesh gen)
     if (fragColor.a > 0.7 && fragColor.a < 0.8) {  // Only water blocks
-        // Water is in an atlas, need to wrap within cell boundaries
-        const float atlasSize = 4.0;  // 4x4 atlas
-        const float cellSize = 1.0 / atlasSize;
-
-        // Find which atlas cell we're in
+        // Find which atlas cell we're in (old encoding: UVs in 0-1 atlas space)
         vec2 cellIndex = floor(texCoord * atlasSize);
 
         // Convert to cell-local coordinates (0-1 within cell)
@@ -49,6 +48,17 @@ void main() {
 
         // Convert back to global atlas coordinates
         texCoord = (cellIndex + localUV) * cellSize;
+    }
+    else {
+        // TILED UV DECODING for greedy meshing
+        // UV encoding: cellIndex + (localUV * quadSize) / atlasSize
+        // - Integer part = atlas cell index (0-3 for 4x4 atlas)
+        // - Fractional part * atlasSize = local position (0 to quadSize)
+        // Using fract() on local position gives automatic tiling
+        vec2 cell = floor(fragTexCoord);                   // Which atlas cell
+        vec2 localUV = fract(fragTexCoord) * atlasSize;    // Position scaled by quad size
+        vec2 tiledUV = fract(localUV);                     // Tile within 0-1
+        texCoord = (cell + tiledUV) * cellSize;            // Convert back to atlas space
     }
 
     // Sample texture and multiply by vertex color
@@ -168,13 +178,41 @@ void main() {
         finalColor = mix(finalColor, finalColor * ubo.liquidTint.rgb, depthFactor);
     }
 
-    // Apply fog LAST so it's not affected by lighting
-    // This keeps fog color bright and visible
-    if (distance > fogStart) {
-        // Calculate linear fog factor (1.0 = no fog, 0.0 = full fog)
-        float fogFactor = clamp((fogEnd - distance) / (fogEnd - fogStart), 0.0, 1.0);
-        // Mix lit block color with dynamic fog color
-        finalColor = mix(fogColor, finalColor, fogFactor);
+    // ATMOSPHERIC FOG SYSTEM - Puffy, cloud-like fog with height attenuation
+    // Three components combine for realistic atmospheric scattering:
+    // 1. Distance fog: exponential falloff (natural looking, no hard edges)
+    // 2. Height fog: thicker at low altitudes (ground haze), thinner above
+    // 3. Horizon fog: extra density at far horizontal distances (hides distant mountains)
+
+    if (cameraUnderwater) {
+        // Underwater: use simple linear fog from YAML settings
+        float underwaterFog = clamp((distance - fogStart) / (fogEnd - fogStart), 0.0, 1.0);
+        finalColor = mix(finalColor, fogColor, underwaterFog);
+    } else {
+        // Above water: atmospheric fog with height and horizon effects
+        float worldY = fragWorldPos.y;
+        float heightFogCenter = 80.0;   // Sea level fog is thickest
+        float heightFogFalloff = 0.008; // How quickly fog clears with altitude
+        float heightDiff = abs(worldY - heightFogCenter);
+        float heightFogFactor = exp(-heightDiff * heightFogFalloff);  // 1.0 at sea level, fades away
+
+        // Distance fog with exponential falloff (soft, natural edges)
+        float fogDensity = 2.5 / renderDistance;  // Scales with render distance
+        float distanceFog = 1.0 - exp(-distance * fogDensity);
+
+        // Horizon fog: extra density for distant objects near the horizon
+        // This hides mountains that peek through when looking up
+        vec3 viewDir = normalize(fragWorldPos - camPos);
+        float horizonFactor = 1.0 - abs(viewDir.y);  // 1.0 when looking horizontal, 0.0 when looking up/down
+        horizonFactor = horizonFactor * horizonFactor;  // Squared for sharper falloff
+        float horizonFog = horizonFactor * distanceFog * 0.4;  // Extra 40% fog at horizon
+
+        // Combine fog factors (multiplicative for height, additive for horizon)
+        float combinedFog = distanceFog * (0.6 + 0.4 * heightFogFactor) + horizonFog;
+        combinedFog = clamp(combinedFog, 0.0, 1.0);
+
+        // Apply fog (mix between scene color and fog color based on fog density)
+        finalColor = mix(finalColor, fogColor, combinedFog);
     }
 
     // Output with alpha from vertex color (for liquid transparency)

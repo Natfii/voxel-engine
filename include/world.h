@@ -27,6 +27,7 @@
 class VulkanRenderer;
 class BiomeMap;
 class LightingSystem;
+enum class ChunkLOD : uint8_t;  // Defined in world_streaming.h
 
 /**
  * @brief Chunk coordinate key for spatial hash map
@@ -233,9 +234,10 @@ public:
      * @param renderer Vulkan renderer for buffer creation (after decoration/lighting)
      * @param deferGPUUpload If true, mesh generation happens but GPU upload is deferred
      * @param deferMeshGeneration If true, even mesh generation is deferred
+     * @param lod LOD tier: FULL=decorate+mesh, MESH_ONLY=mesh only, TERRAIN_ONLY=no mesh
      * @return True if chunk was added, false if duplicate/out of bounds
      */
-    bool addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer, bool deferGPUUpload = false, bool deferMeshGeneration = false);
+    bool addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer, bool deferGPUUpload = false, bool deferMeshGeneration = false, ChunkLOD lod = static_cast<ChunkLOD>(0));
 
     /**
      * @brief Removes a chunk from the world
@@ -461,9 +463,10 @@ public:
      * because their neighbors weren't loaded yet.
      *
      * @param renderer Vulkan renderer for mesh/buffer updates
+     * @param streaming WorldStreaming for async mesh generation (nullptr = sync fallback)
      * @param maxChunks Maximum chunks to process this call (default: 5)
      */
-    void processPendingDecorations(VulkanRenderer* renderer, int maxChunks = 5);
+    void processPendingDecorations(VulkanRenderer* renderer, class WorldStreaming* streaming, int maxChunks = 5);
 
     /**
      * @brief Updates interpolated lighting for all loaded chunks
@@ -619,6 +622,34 @@ public:
      */
     int getBlockAtUnsafe(float worldX, float worldY, float worldZ);
 
+    // ============================================================================
+    // PERFORMANCE MONITORING (2025-11-24): Queue size accessors
+    // ============================================================================
+
+    /**
+     * @brief Gets the number of chunks pending decoration
+     *
+     * Chunks waiting for neighbors to be ready before decoration can proceed.
+     *
+     * @return Number of chunks in pending decoration queue
+     */
+    size_t getPendingDecorationCount() const {
+        std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+        return m_pendingDecorations.size();
+    }
+
+    /**
+     * @brief Gets the number of chunks currently being decorated
+     *
+     * Chunks actively running decoration in background threads.
+     *
+     * @return Number of chunks with active decoration tasks
+     */
+    size_t getDecorationsInProgressCount() const {
+        std::lock_guard<std::mutex> lock(m_decorationsInProgressMutex);
+        return m_decorationsInProgress.size();
+    }
+
 private:
     /**
      * @brief Internal chunk lookup without locking (caller must hold lock)
@@ -671,6 +702,9 @@ private:
 
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
     int m_seed;                          ///< World generation seed
+    float m_temperatureBias = 0.0f;      ///< Temperature bias for biome generation (-1 to +1)
+    float m_moistureBias = 0.0f;         ///< Moisture bias for biome generation (-1 to +1)
+    float m_ageBias = 0.0f;              ///< Age/roughness bias for terrain (-1 to +1)
     std::string m_worldName;             ///< World name (extracted from save path)
     std::string m_worldPath;             ///< World save path for chunk streaming persistence
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_chunkMap;  ///< Fast O(1) chunk lookup by coordinates
@@ -680,7 +714,7 @@ private:
     std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>> m_unloadedChunksCache;  ///< Cached unloaded chunks (still in RAM)
     std::unordered_set<ChunkCoord> m_dirtyChunks;  ///< Chunks modified since last save (need disk write)
     mutable std::mutex m_dirtyChunksMutex;  ///< THREAD SAFETY (2025-11-23): Protects m_dirtyChunks for parallel decoration
-    size_t m_maxCachedChunks = 5000;  ///< Maximum cached chunks before forced eviction (~490MB at 98KB/chunk)
+    size_t m_maxCachedChunks = 2000;  ///< Maximum cached chunks before forced eviction (~900MB at 450KB/chunk)
 
     // CHUNK POOLING: Reuse chunk objects instead of new/delete (100x faster allocation)
     std::vector<std::unique_ptr<Chunk>> m_chunkPool;  ///< Pool of reusable chunk objects
@@ -708,7 +742,8 @@ private:
 
     // DECORATION FIX: Track chunks waiting for neighbors before decoration
     std::unordered_set<Chunk*> m_pendingDecorations;  ///< Chunks waiting for neighbors to be decorated
-    mutable std::mutex m_pendingDecorationsMutex;  ///< THREAD SAFETY (2025-11-23): Protects m_pendingDecorations
+    std::unordered_map<Chunk*, std::chrono::steady_clock::time_point> m_pendingDecorationTimestamps;  ///< DEADLOCK FIX (2025-11-24): Track when chunks were added to pending queue
+    mutable std::mutex m_pendingDecorationsMutex;  ///< THREAD SAFETY (2025-11-23): Protects m_pendingDecorations + timestamps
 
     // ASYNC DECORATION PIPELINE (2025-11-24): Track decorations in progress (don't block main thread!)
     struct DecorationTask {

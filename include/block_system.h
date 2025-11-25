@@ -262,6 +262,17 @@ public:
      */
     bool isBreakable(int blockID) const;
 
+    /**
+     * @brief Gets the list of emissive block IDs (for fast lighting scan)
+     *
+     * PERFORMANCE: Instead of scanning 32,768 blocks and checking each one,
+     * lighting system can iterate only through known emissive block types.
+     * If empty, no emissive blocks exist and lighting scan can be skipped entirely.
+     *
+     * @return Reference to vector of emissive block IDs
+     */
+    const std::vector<int>& getEmissiveBlockIDs() const { return m_emissiveBlockIDs; }
+
 private:
     /**
      * @brief Private constructor (singleton pattern)
@@ -282,6 +293,7 @@ private:
     // ========== Data Storage ==========
     std::vector<BlockDefinition> m_defs;           ///< Block definitions indexed by ID
     std::unordered_map<std::string,int> m_nameToID; ///< Name to ID lookup
+    std::vector<int> m_emissiveBlockIDs;           ///< Cached list of emissive block IDs (for fast lighting scan)
 
     // ========== Texture Atlas ==========
     VkImage m_atlasImage = VK_NULL_HANDLE;         ///< Combined texture atlas

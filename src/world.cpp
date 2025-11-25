@@ -16,6 +16,7 @@
 #include "world.h"
 #include "world_utils.h"
 #include "world_constants.h"
+#include "world_streaming.h"
 #include "terrain_constants.h"
 #include "vulkan_renderer.h"
 #include "frustum.h"
@@ -53,7 +54,8 @@ constexpr int OCEAN_DEPTH_THRESHOLD = 8;  // Blocks below water level to trigger
 // ====================================================
 
 World::World(int width, int height, int depth, int seed, float tempBias, float moistBias, float ageBias)
-    : m_width(width), m_height(height), m_depth(depth), m_seed(seed) {
+    : m_width(width), m_height(height), m_depth(depth), m_seed(seed),
+      m_temperatureBias(tempBias), m_moistureBias(moistBias), m_ageBias(ageBias) {
     // Center world generation around origin (0, 0, 0)
     int halfWidth = width / 2;
     int halfHeight = height / 2;  // CHANGED: Center Y axis too for deep caves
@@ -119,24 +121,36 @@ World::~World() {
 
 void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerChunkZ, int radius) {
     /**
-     * Generate only the chunks needed for initial spawn (avoids generating entire world)
-     * This creates a small region around spawn so the player has something to stand on.
-     * The WorldStreaming system will handle the rest dynamically.
+     * OPTIMIZED SPAWN GENERATION (2025-11-25)
+     *
+     * Two-tier generation for faster streaming startup:
+     * 1. Inner radius (spawn area): Full decoration + lighting + mesh
+     * 2. Outer radius (terrain buffer): Terrain only, no decoration/mesh
+     *
+     * Two-thread generation for better parallelism:
+     * - Surface thread: Generates Y >= 0 chunks (terrain + biomes)
+     * - Underground thread: Generates Y < 0 chunks (caves + ores)
      */
-    Logger::info() << "Generating spawn chunks in " << radius << " chunk radius around ("
-                   << centerChunkX << ", " << centerChunkY << ", " << centerChunkZ << ")";
 
-    // Collect chunks to generate
-    std::vector<Chunk*> chunksToGenerate;
+    // Calculate outer radius for terrain-only pre-generation
+    // Double the spawn radius for terrain buffer - player can wait for smoother gameplay
+    const int TERRAIN_BUFFER_RADIUS = radius * 2;  // 2x spawn radius for terrain buffer
+
+    Logger::info() << "Generating spawn chunks: inner=" << radius << " (decorated), outer="
+                   << TERRAIN_BUFFER_RADIUS << " (terrain-only)";
+
+    // Collect chunks to generate, split by surface/underground
+    std::vector<Chunk*> surfaceChunks;      // Y >= 0
+    std::vector<Chunk*> undergroundChunks;  // Y < 0
+    std::vector<Chunk*> innerChunks;        // Within spawn radius (for decoration)
 
     // THREAD SAFETY: Acquire unique lock for chunk creation
-    // Prevents race conditions with renderWorld() and other chunk operations
     {
         std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
-        for (int dx = -radius; dx <= radius; dx++) {
-            for (int dy = -radius; dy <= radius; dy++) {
-                for (int dz = -radius; dz <= radius; dz++) {
+        for (int dx = -TERRAIN_BUFFER_RADIUS; dx <= TERRAIN_BUFFER_RADIUS; dx++) {
+            for (int dy = -TERRAIN_BUFFER_RADIUS; dy <= TERRAIN_BUFFER_RADIUS; dy++) {
+                for (int dz = -TERRAIN_BUFFER_RADIUS; dz <= TERRAIN_BUFFER_RADIUS; dz++) {
                     int chunkX = centerChunkX + dx;
                     int chunkY = centerChunkY + dy;
                     int chunkZ = centerChunkZ + dz;
@@ -150,79 +164,110 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
                         m_chunks.push_back(chunkPtr);
                     }
 
-                    chunksToGenerate.push_back(m_chunkMap[coord].get());
+                    Chunk* chunkPtr = m_chunkMap[coord].get();
+
+                    // Split by surface/underground for parallel generation
+                    if (chunkY >= 0) {
+                        surfaceChunks.push_back(chunkPtr);
+                    } else {
+                        undergroundChunks.push_back(chunkPtr);
+                    }
+
+                    // Track inner chunks for decoration
+                    bool isInner = std::abs(dx) <= radius && std::abs(dy) <= radius && std::abs(dz) <= radius;
+                    if (isInner) {
+                        innerChunks.push_back(chunkPtr);
+                    }
                 }
             }
         }
     }  // Lock released here before terrain generation
 
-    Logger::info() << "Generating terrain for " << chunksToGenerate.size() << " spawn chunks...";
+    size_t totalChunks = surfaceChunks.size() + undergroundChunks.size();
+    Logger::info() << "Generating terrain: " << surfaceChunks.size() << " surface + "
+                   << undergroundChunks.size() << " underground = " << totalChunks << " total";
 
-    // Step 1: Generate terrain blocks in parallel
-    unsigned int numThreads = std::thread::hardware_concurrency();
-    if (numThreads == 0) {
-        // hardware_concurrency() can return 0 in containers/CI environments
-        numThreads = std::min<unsigned int>(static_cast<unsigned int>(chunksToGenerate.size()), 4);
-        Logger::warning() << "hardware_concurrency() returned 0, using fallback: " << numThreads << " threads";
-    }
-    const size_t chunksPerThread = (chunksToGenerate.size() + numThreads - 1) / numThreads;
-
-    std::vector<std::thread> threads;
-    threads.reserve(numThreads);
-
+    // Step 1: Generate terrain in TWO PARALLEL THREADS (surface + underground)
     BiomeMap* biomeMapPtr = m_biomeMap.get();
-    for (unsigned int i = 0; i < numThreads; ++i) {
-        size_t startIdx = i * chunksPerThread;
-        size_t endIdx = std::min(startIdx + chunksPerThread, chunksToGenerate.size());
 
-        if (startIdx >= chunksToGenerate.size()) break;
+    auto generateChunks = [biomeMapPtr](std::vector<Chunk*>& chunks) {
+        // Use all available cores for this batch
+        unsigned int numThreads = std::max(1u, std::thread::hardware_concurrency() / 2);
+        const size_t chunksPerThread = (chunks.size() + numThreads - 1) / numThreads;
 
-        threads.emplace_back([&chunksToGenerate, biomeMapPtr, startIdx, endIdx]() {
-            for (size_t j = startIdx; j < endIdx; ++j) {
-                chunksToGenerate[j]->generate(biomeMapPtr);
-            }
-        });
-    }
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
 
-    for (auto& thread : threads) {
-        thread.join();
-    }
+        for (unsigned int i = 0; i < numThreads; ++i) {
+            size_t startIdx = i * chunksPerThread;
+            size_t endIdx = std::min(startIdx + chunksPerThread, chunks.size());
 
-    Logger::info() << "Decorating " << chunksToGenerate.size() << " spawn chunks with trees...";
+            if (startIdx >= chunks.size()) break;
 
-    // Step 2: Decorate chunks (add trees, structures, etc.)
-    for (Chunk* chunk : chunksToGenerate) {
+            threads.emplace_back([&chunks, biomeMapPtr, startIdx, endIdx]() {
+                for (size_t j = startIdx; j < endIdx; ++j) {
+                    chunks[j]->generate(biomeMapPtr);
+                }
+            });
+        }
+
+        for (auto& thread : threads) {
+            thread.join();
+        }
+    };
+
+    // Launch surface and underground generation in parallel
+    std::thread surfaceThread([&]() {
+        Logger::info() << "Surface thread: generating " << surfaceChunks.size() << " chunks...";
+        generateChunks(surfaceChunks);
+        Logger::info() << "Surface thread: complete";
+    });
+
+    std::thread undergroundThread([&]() {
+        Logger::info() << "Underground thread: generating " << undergroundChunks.size() << " chunks...";
+        generateChunks(undergroundChunks);
+        Logger::info() << "Underground thread: complete";
+    });
+
+    surfaceThread.join();
+    undergroundThread.join();
+
+    // Step 2: Decorate ONLY inner chunks (spawn area)
+    // Outer chunks are terrain-only buffer for streaming
+    Logger::info() << "Decorating " << innerChunks.size() << " inner spawn chunks with trees...";
+
+    for (Chunk* chunk : innerChunks) {
         if (chunk->getChunkY() >= 0) {  // Only decorate surface chunks
             decorateChunk(chunk);
+            chunk->setNeedsDecoration(false);  // Mark as decorated
         }
     }
 
-    Logger::info() << "Initializing lighting for spawn chunks...";
+    // Step 3: Initialize lighting for INNER chunks only
+    // Outer chunks get lighting when they become visible
+    Logger::info() << "Initializing lighting for " << innerChunks.size() << " inner spawn chunks...";
 
-    // Step 3: Initialize lighting for all chunks
-    for (Chunk* chunk : chunksToGenerate) {
+    for (Chunk* chunk : innerChunks) {
         initializeChunkLighting(chunk);
         chunk->markLightingDirty();  // Let lighting system propagate
     }
 
-    // PERFORMANCE FIX: Skip mesh generation here
-    // Meshes will be regenerated in main.cpp after initializeWorldLighting()
-    // completes horizontal BFS propagation. Generating meshes now with incomplete
-    // lighting is wasted work (would need regeneration anyway).
-    //
-    // NOTE: Chunks are marked dirty (line 204), so regenerateAllDirtyChunks()
-    // in main.cpp will handle final mesh generation with complete lighting.
-    //
-    // This eliminates 1,331 wasted mesh operations for typical spawn area!
+    // Mark outer chunks as terrain-only (no decoration needed)
+    for (Chunk* chunk : surfaceChunks) {
+        bool isOuter = true;
+        for (Chunk* inner : innerChunks) {
+            if (chunk == inner) {
+                isOuter = false;
+                break;
+            }
+        }
+        if (isOuter) {
+            chunk->setNeedsDecoration(false);  // Skip decoration for outer chunks
+        }
+    }
 
-    Logger::info() << "Spawn chunks ready (meshes deferred until lighting completes)";
-
-    // Old code removed (was generating meshes with incomplete lighting):
-    // - Parallel mesh generation threads
-    // - thread.join() loops
-    // All mesh generation now happens in main.cpp after lighting completes
-
-    Logger::info() << "Spawn chunks generated successfully - awaiting lighting completion";
+    Logger::info() << "Spawn generation complete: " << innerChunks.size() << " decorated, "
+                   << (totalChunks - innerChunks.size()) << " terrain-only buffer";
 }
 
 void World::generateWorld() {
@@ -535,10 +580,22 @@ bool World::hasHorizontalNeighbors(Chunk* chunk) {
     bool eastOk = (neighborEast == nullptr) || neighborEast->isTerrainReady();
     bool westOk = (neighborWest == nullptr) || neighborWest->isTerrainReady();
 
+    // DIAGNOSTIC (2025-11-24): Debug the deadlock - sample one chunk periodically
+    static int debugCounter = 0;
+    static int lastChunkX = -999, lastChunkY = -999, lastChunkZ = -999;
+    if (++debugCounter % 600 == 0 && (chunkX != lastChunkX || chunkY != lastChunkY || chunkZ != lastChunkZ)) {
+        lastChunkX = chunkX; lastChunkY = chunkY; lastChunkZ = chunkZ;
+        Logger::info() << "[NEIGHBOR DEBUG] Chunk(" << chunkX << "," << chunkY << "," << chunkZ << ")"
+                      << " | N:" << (neighborNorth ? (neighborNorth->isTerrainReady() ? "READY" : "NOT_READY") : "NULL")
+                      << " | S:" << (neighborSouth ? (neighborSouth->isTerrainReady() ? "READY" : "NOT_READY") : "NULL")
+                      << " | E:" << (neighborEast ? (neighborEast->isTerrainReady() ? "READY" : "NOT_READY") : "NULL")
+                      << " | W:" << (neighborWest ? (neighborWest->isTerrainReady() ? "READY" : "NOT_READY") : "NULL");
+    }
+
     return northOk && southOk && eastOk && westOk;
 }
 
-void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
+void World::processPendingDecorations(VulkanRenderer* renderer, WorldStreaming* streaming, int maxChunks) {
     // ============================================================================
     // ASYNC DECORATION PIPELINE (2025-11-24): NEVER block main thread!
     // ============================================================================
@@ -547,10 +604,10 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
     // ============================================================================
 
     // PHASE 1: Process decorations that completed in background (from previous frames)
-    // PERFORMANCE FIX (2025-11-24): Limit processed chunks per frame to avoid frame stalls!
-    // Even though decoration is async, lighting+mesh+upload is synchronous on main thread.
-    // Processing 10+ chunks at once causes 1.2s frame stalls (mesh generation is expensive!)
-    const int MAX_COMPLETED_PER_FRAME = 4;  // Process at most 4 completed chunks per frame
+    // PERFORMANCE FIX (2025-11-25): Mesh generation now uses async worker threads!
+    // Only lighting init runs on main thread (fast - just scans for emissive blocks)
+    // Can process many completed decorations per frame since mesh gen is queued async
+    const int MAX_COMPLETED_PER_FRAME = 10;  // Process up to 10 completed chunks per frame
 
     std::vector<Chunk*> completedChunks;
     {
@@ -567,43 +624,44 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
         }
     }
 
-    // Process completed decorations: lighting + mesh + GPU upload
-    // TODO: This could also be made async in future, but decoration is the main bottleneck
-    if (!completedChunks.empty() && renderer) {
-        // Initialize lighting for decorated chunks
-        for (Chunk* chunk : completedChunks) {
-            if (!chunk->needsDecoration()) {  // Only if decoration succeeded
-                try {
-                    initializeChunkLighting(chunk);
-                } catch (const std::exception& e) {
-                    Logger::error() << "Failed to initialize lighting for decorated chunk: " << e.what();
+    // Process completed decorations: queue for async mesh + lighting
+    // PERFORMANCE FIX (2025-11-25): Both lighting and mesh now run on worker threads!
+    if (!completedChunks.empty()) {
+        // ASYNC PATH: Queue to mesh worker threads (lighting happens there too)
+        // This eliminates ALL main thread stalls from decorated chunk processing
+        if (streaming && streaming->isActive()) {
+            for (Chunk* chunk : completedChunks) {
+                if (!chunk->needsDecoration()) {  // Only if decoration succeeded
+                    streaming->queueChunkForMeshing(chunk->getChunkX(), chunk->getChunkY(), chunk->getChunkZ());
                 }
             }
-        }
-
-        // Generate meshes for decorated chunks
-        for (Chunk* chunk : completedChunks) {
-            if (!chunk->needsDecoration()) {  // Only if decoration succeeded
-                try {
-                    chunk->generateMesh(this);
-                } catch (const std::exception& e) {
-                    Logger::error() << "Failed to mesh decorated chunk: " << e.what();
-                }
-            }
-        }
-
-        // Batched GPU upload
-        try {
-            renderer->beginBatchedChunkUploads();
+            Logger::info() << "Queued " << completedChunks.size() << " decorated chunks for async lighting+meshing";
+        } else if (renderer) {
+            // Fallback: sync path if no streaming system available
+            Logger::warning() << "No streaming system - using sync lighting+mesh (may cause stalls)";
             for (Chunk* chunk : completedChunks) {
                 if (!chunk->needsDecoration()) {
-                    renderer->addChunkToBatch(chunk);
+                    try {
+                        initializeChunkLighting(chunk);
+                        chunk->generateMesh(this);
+                    } catch (const std::exception& e) {
+                        Logger::error() << "Failed to process decorated chunk: " << e.what();
+                    }
                 }
             }
-            renderer->submitBatchedChunkUploads();
-            Logger::info() << "Batched GPU upload for " << completedChunks.size() << " decorated chunks";
-        } catch (const std::exception& e) {
-            Logger::error() << "Failed to batch upload decorated chunks: " << e.what();
+
+            // Batched GPU upload (only for sync path)
+            try {
+                renderer->beginBatchedChunkUploads();
+                for (Chunk* chunk : completedChunks) {
+                    if (!chunk->needsDecoration()) {
+                        renderer->addChunkToBatch(chunk);
+                    }
+                }
+                renderer->submitBatchedChunkUploads();
+            } catch (const std::exception& e) {
+                Logger::error() << "Failed to batch upload decorated chunks: " << e.what();
+            }
         }
 
         // Remove from pending decorations
@@ -611,6 +669,7 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
             std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
             for (Chunk* chunk : completedChunks) {
                 m_pendingDecorations.erase(chunk);
+                m_pendingDecorationTimestamps.erase(chunk);  // Clean up timestamp
             }
         }
 
@@ -620,8 +679,7 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
             pendingCount = m_pendingDecorations.size();
         }
         Logger::info() << "Processed " << completedChunks.size()
-                      << " pending decorations in parallel ("
-                      << pendingCount << " still pending)";
+                      << " decorated chunks (" << pendingCount << " still pending)";
     }
 
     // PHASE 2: Launch NEW decoration tasks (don't block!)
@@ -632,7 +690,7 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
         currentDecorations = m_decorationsInProgress.size();
     }
 
-    const int MAX_CONCURRENT_DECORATIONS = 4;
+    const int MAX_CONCURRENT_DECORATIONS = 8;  // INCREASED: 4 → 8 for faster throughput
     int slotsAvailable = MAX_CONCURRENT_DECORATIONS - currentDecorations;
 
     if (slotsAvailable <= 0) {
@@ -640,13 +698,21 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
     }
 
     // Check if there's any work to do
+    size_t pendingCount = 0;
     {
         std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
+        pendingCount = m_pendingDecorations.size();
         if (m_pendingDecorations.empty()) return;
     }
 
     // Collect chunks ready for decoration (limit to available slots)
     std::vector<Chunk*> chunksToDecorate;
+    int blockedByNeighbors = 0;
+    int notNeedingDecoration = 0;
+    int skippedByTimeout = 0;  // CHANGED: Don't force, just skip
+
+    auto now = std::chrono::steady_clock::now();
+    const auto TIMEOUT_THRESHOLD = std::chrono::milliseconds(500);  // REDUCED: 3s → 500ms aggressive timeout
 
     {
         // THREAD SAFETY: Lock while iterating pending decorations
@@ -657,11 +723,63 @@ void World::processPendingDecorations(VulkanRenderer* renderer, int maxChunks) {
         while (it != m_pendingDecorations.end() && chunksToDecorate.size() < slotsAvailable) {
             Chunk* chunk = *it;
 
-            if (chunk && chunk->needsDecoration() && hasHorizontalNeighbors(chunk)) {
-                chunksToDecorate.push_back(chunk);
+            if (!chunk) {
+                ++it;
+                continue;
             }
+
+            if (!chunk->needsDecoration()) {
+                notNeedingDecoration++;
+                ++it;
+                continue;
+            }
+
+            // PERFORMANCE FIX (2025-11-24): Skip decorations that timeout waiting for neighbors
+            // DON'T force them - this causes massive stalls when decorations cross chunk boundaries
+            // Better to have some chunks without decorations than multi-second frame stalls
+            bool skipDueToTimeout = false;
+            auto timestampIt = m_pendingDecorationTimestamps.find(chunk);
+            if (timestampIt != m_pendingDecorationTimestamps.end()) {
+                auto waitTime = now - timestampIt->second;
+                if (waitTime > TIMEOUT_THRESHOLD) {
+                    skipDueToTimeout = true;
+                    skippedByTimeout++;
+
+                    // Remove from pending - we're giving up on this chunk
+                    m_pendingDecorations.erase(it++);
+                    m_pendingDecorationTimestamps.erase(chunk);
+                    chunk->setNeedsDecoration(false);  // Mark as "decorated" (even though we skipped)
+                    continue;
+                }
+            }
+
+            // Check if neighbors are ready
+            if (!hasHorizontalNeighbors(chunk)) {
+                blockedByNeighbors++;
+                ++it;
+                continue;
+            }
+
+            chunksToDecorate.push_back(chunk);
             ++it;
         }
+    }
+
+    // DIAGNOSTIC OUTPUT (2025-11-24): Debug decoration system
+    static int diagnosticCounter = 0;
+    if (++diagnosticCounter % 300 == 0 && pendingCount > 0) {  // Every 5 seconds at 60 FPS
+        Logger::info() << "[DECORATION DIAGNOSTIC] Pending: " << pendingCount
+                      << " | Slots: " << slotsAvailable
+                      << " | Blocked by neighbors: " << blockedByNeighbors
+                      << " | Already decorated: " << notNeedingDecoration
+                      << " | Skipped by timeout: " << skippedByTimeout
+                      << " | Ready to process: " << chunksToDecorate.size();
+    }
+
+    // Log when skipping chunks due to timeout (performance optimization)
+    if (skippedByTimeout > 0) {
+        Logger::info() << "[DECORATION SKIP] Skipped " << skippedByTimeout
+                      << " chunks after 500ms timeout (neighbors not ready - preventing stalls)";
     }
 
     // Launch decoration tasks (DON'T WAIT!)
@@ -742,13 +860,40 @@ void World::decorateChunk(Chunk* chunk) {
             // Get terrain height from biome map
             int terrainHeight = m_biomeMap->getTerrainHeightAt(worldX, worldZ);
 
-            // Find actual solid ground near terrain height
+            // PERFORMANCE FIX (2025-11-24): Use direct chunk access instead of getBlockAt()
+            // getBlockAt() locks mutex every time - 320+ locks per decoration!
+            // Direct chunk access = zero locks (chunk already guaranteed to exist)
             int groundY = terrainHeight;
-            for (int y = terrainHeight; y >= std::max(0, terrainHeight - 5); y--) {
-                int blockID = getBlockAt(worldX, static_cast<float>(y), worldZ);
-                if (blockID != BLOCK_AIR && blockID != BLOCK_WATER) {
-                    groundY = y;
-                    break;
+
+            // Check if position is within THIS chunk (common case - fast path)
+            bool inCurrentChunk = (static_cast<int>(worldX) >= chunkX * Chunk::WIDTH &&
+                                   static_cast<int>(worldX) < (chunkX + 1) * Chunk::WIDTH &&
+                                   static_cast<int>(worldZ) >= chunkZ * Chunk::DEPTH &&
+                                   static_cast<int>(worldZ) < (chunkZ + 1) * Chunk::DEPTH);
+
+            if (inCurrentChunk) {
+                // Fast path: Direct chunk access (no mutex!)
+                int localX = static_cast<int>(worldX) - chunkX * Chunk::WIDTH;
+                int localZ = static_cast<int>(worldZ) - chunkZ * Chunk::DEPTH;
+
+                for (int y = terrainHeight; y >= std::max(0, terrainHeight - 5); y--) {
+                    int localY = y - chunkY * Chunk::HEIGHT;
+                    if (localY >= 0 && localY < Chunk::HEIGHT) {
+                        int blockID = chunk->getBlock(localX, localY, localZ);
+                        if (blockID != BLOCK_AIR && blockID != BLOCK_WATER) {
+                            groundY = y;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Slow path: Need to access neighbor chunk (rare - happens at chunk edges)
+                for (int y = terrainHeight; y >= std::max(0, terrainHeight - 5); y--) {
+                    int blockID = getBlockAt(worldX, static_cast<float>(y), worldZ);
+                    if (blockID != BLOCK_AIR && blockID != BLOCK_WATER) {
+                        groundY = y;
+                        break;
+                    }
                 }
             }
 
@@ -770,47 +915,58 @@ void World::decorateChunk(Chunk* chunk) {
 void World::initializeChunkLighting(Chunk* chunk) {
     if (!chunk || !m_lightingSystem) return;
 
-    // ========== OPTIMIZATION (2025-11-23): REMOVED ZOMBIE SKY LIGHT SYSTEM ==========
+    // ========== OPTIMIZATION (2025-11-25): SKIP SCAN IF NO EMISSIVE BLOCKS EXIST ==========
     //
-    // OLD SYSTEM (REMOVED):
-    // - Scanned all 32,768 blocks top-to-bottom setting setSkyLight()
-    // - Queued ~1,000 BFS nodes per chunk for horizontal sky light propagation
-    // - **COMPLETELY WASTED**: Mesh generation ignores this and uses heightmap!
+    // OLD: Scanned all 32,768 blocks checking each for emissive properties
+    // NEW: Check cached emissive block list first - if empty, skip entire scan!
     //
-    // NEW SYSTEM (FAST):
-    // - Sky light: Chunk heightmap provides instant O(1) lookup (already built)
-    // - Block light: Only scan for emissive blocks (torches, lava)
-    //
-    // RESULT: ~90% faster chunk lighting initialization!
+    // Currently no emissive blocks (torch, lava, glowstone) are defined in YAML,
+    // so this skips the entire 32K block scan for EVERY chunk = massive speedup!
     // ==================================================================================
 
-    // Scan chunk for emissive block light sources (torches, lava, etc.)
+    const auto& emissiveBlockIDs = BlockRegistry::instance().getEmissiveBlockIDs();
+
+    // FAST PATH: No emissive blocks defined - skip entire scan!
+    if (emissiveBlockIDs.empty()) {
+        chunk->initializeInterpolatedLighting();
+        return;
+    }
+
+    // SLOW PATH: Emissive blocks exist - scan only for those specific block IDs
+    // Build a fast lookup set for O(1) checking
+    std::unordered_set<int> emissiveSet(emissiveBlockIDs.begin(), emissiveBlockIDs.end());
+
+    int foundCount = 0;
     for (int x = 0; x < Chunk::WIDTH; x++) {
         for (int y = 0; y < Chunk::HEIGHT; y++) {
             for (int z = 0; z < Chunk::DEPTH; z++) {
                 int blockID = chunk->getBlock(x, y, z);
 
-                // Check if block is emissive (torch, lava, etc.)
-                if (blockID != BlockID::AIR) {
+                // Only check if this block ID is in our emissive set
+                if (emissiveSet.count(blockID)) {
                     try {
                         const auto& blockDef = BlockRegistry::instance().get(blockID);
-                        if (blockDef.isEmissive && blockDef.lightLevel > 0) {
-                            // Found emissive block - add as block light source
-                            int worldX = (chunk->getChunkX() << 5) + x;
-                            int worldY = (chunk->getChunkY() << 5) + y;
-                            int worldZ = (chunk->getChunkZ() << 5) + z;
+                        // Found emissive block - add as block light source
+                        int worldX = (chunk->getChunkX() << 5) + x;
+                        int worldY = (chunk->getChunkY() << 5) + y;
+                        int worldZ = (chunk->getChunkZ() << 5) + z;
 
-                            m_lightingSystem->addLightSource(
-                                glm::vec3(worldX, worldY, worldZ),
-                                blockDef.lightLevel
-                            );
-                        }
+                        m_lightingSystem->addLightSource(
+                            glm::vec3(worldX, worldY, worldZ),
+                            blockDef.lightLevel
+                        );
+                        foundCount++;
                     } catch (...) {
                         // Unknown block, skip
                     }
                 }
             }
         }
+    }
+
+    if (foundCount > 0) {
+        Logger::debug() << "Chunk (" << chunk->getChunkX() << ", " << chunk->getChunkY()
+                       << ", " << chunk->getChunkZ() << ") has " << foundCount << " light sources";
     }
 
     // Initialize interpolated lighting values to match target values
@@ -1256,7 +1412,7 @@ Chunk* World::getChunkAtWorldPos(float worldX, float worldY, float worldZ) {
     return getChunkAt(coords.chunkX, coords.chunkY, coords.chunkZ);
 }
 
-bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer, bool deferGPUUpload, bool deferMeshGeneration) {
+bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* renderer, bool deferGPUUpload, bool deferMeshGeneration, ChunkLOD lod) {
     if (!chunk) {
         return false;  // Null chunk
     }
@@ -1283,9 +1439,10 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
 
     lock.unlock();  // Release lock before decoration (can be slow)
 
-    // FIXED (2025-11-23): Re-enabled decoration for streamed chunks
-    // Trees now spawn properly when moving far from spawn
-    const bool SKIP_DECORATION_FOR_FPS = false;
+    // LOD TIER (2025-11-25): Skip decoration for non-FULL LOD chunks
+    // MESH_ONLY: Skip decoration (fog hides trees anyway)
+    // TERRAIN_ONLY: Skip decoration AND mesh (beyond render distance)
+    const bool skipDecoration = (lod != ChunkLOD::FULL);
 
     // MAIN THREAD: Decorate, Light, Mesh, Upload - IN THAT ORDER
     // This is safe because:
@@ -1294,7 +1451,7 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
     // 3. Lighting happens AFTER all blocks are placed
     // 4. GPU upload happens AFTER final mesh is generated
     // 5. Mesh generation happens AFTER neighbors are loaded (for occlusion culling)
-    if (chunkPtr->getChunkY() >= 0 && !SKIP_DECORATION_FOR_FPS) {  // Only decorate surface chunks
+    if (chunkPtr->getChunkY() >= 0 && !skipDecoration) {  // Only decorate surface chunks with FULL LOD
         try {
             Logger::debug() << "Processing surface chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): decorate → light → mesh → upload";
 
@@ -1309,10 +1466,14 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
                     chunkPtr->setNeedsDecoration(false);  // Mark as decorated
                 } else {
                     // Neighbors not ready yet - defer decoration until later
+                    // DEADLOCK FIX (2025-11-24): Track when chunk was added to queue for timeout-based processing
                     size_t pendingCount;
                     {
                         std::lock_guard<std::mutex> lock(m_pendingDecorationsMutex);
-                        m_pendingDecorations.insert(chunkPtr);
+                        if (m_pendingDecorations.find(chunkPtr) == m_pendingDecorations.end()) {
+                            m_pendingDecorations.insert(chunkPtr);
+                            m_pendingDecorationTimestamps[chunkPtr] = std::chrono::steady_clock::now();
+                        }
                         pendingCount = m_pendingDecorations.size();
                     }
                     Logger::debug() << "Chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
@@ -1325,9 +1486,9 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
             }
 
             // Step 2: Initialize lighting ONCE after all blocks are in place
-            // PERFORMANCE FIX (2025-11-23): Skip for Version 3 chunks that already have lighting
-            // This prevents unnecessary re-meshing of loaded chunks with lighting data
-            if (!chunkPtr->hasLightingData()) {
+            // PERFORMANCE FIX (2025-11-25): Skip if deferred - mesh workers handle lighting async!
+            // Only do sync lighting for immediate (non-deferred) mesh generation
+            if (!deferMeshGeneration && !chunkPtr->hasLightingData()) {
                 initializeChunkLighting(chunkPtr);
             }
 
@@ -1354,12 +1515,12 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
             Logger::error() << "Failed to decorate/light chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): " << e.what();
             // Continue anyway - chunk has terrain even without decoration
         }
-    } else if (!SKIP_DECORATION_FOR_FPS) {
+    } else if (!skipDecoration) {
         // Underground chunks: Light and mesh (no decoration)
         Logger::debug() << "Processing underground chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << "): light → mesh → upload";
 
-        // PERFORMANCE FIX (2025-11-23): Skip for Version 3 chunks that already have lighting
-        if (!chunkPtr->hasLightingData()) {
+        // PERFORMANCE FIX (2025-11-25): Skip if deferred - mesh workers handle lighting async!
+        if (!deferMeshGeneration && !chunkPtr->hasLightingData()) {
             initializeChunkLighting(chunkPtr);
         }
         // CRITICAL FIX (2025-11-23): Don't mark fresh underground chunks dirty either!
@@ -1378,37 +1539,31 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
             renderer->submitAsyncChunkUpload(chunkPtr);
         }
     } else {
-        // SKIP MODE: Just mesh and upload (no decoration, no lighting for FPS test)
-        auto meshStart = std::chrono::high_resolution_clock::now();
+        // LOD SKIP MODE (2025-11-25): Skip decoration for distant chunks
+        // MESH_ONLY: Terrain visible in fog, but trees not visible → skip decoration
+        // TERRAIN_ONLY: Beyond render distance → skip decoration AND mesh
+        Logger::debug() << "LOD skip for chunk (" << chunkX << ", " << chunkY << ", " << chunkZ
+                       << ") - LOD=" << static_cast<int>(lod) << " (skipping decoration)";
 
-        // OPTIMIZATION (2025-11-23): Removed zombie sky light initialization
-        // Heightmap already handles sky light automatically - no need to set it manually
-        // Just initialize interpolated lighting to prevent fade-in
+        // Mark as "decorated" since we're intentionally skipping - don't re-queue
+        if (chunkPtr->needsDecoration()) {
+            chunkPtr->setNeedsDecoration(false);
+        }
+
+        // Initialize basic lighting for visual consistency (even if mesh deferred)
         chunkPtr->initializeInterpolatedLighting();
 
-        auto meshGenStart = std::chrono::high_resolution_clock::now();
-
-        if (!deferMeshGeneration) {
+        // Mesh generation deferred to worker threads for MESH_ONLY
+        // TERRAIN_ONLY chunks don't need mesh at all (beyond render distance)
+        if (!deferMeshGeneration && lod == ChunkLOD::MESH_ONLY) {
             chunkPtr->generateMesh(this);
         }
 
-        auto meshGenEnd = std::chrono::high_resolution_clock::now();
-
-        if (renderer && !deferGPUUpload && !deferMeshGeneration) {
-            auto uploadStart = std::chrono::high_resolution_clock::now();
+        // GPU upload only if mesh was generated and not deferred
+        if (renderer && !deferGPUUpload && !deferMeshGeneration && lod == ChunkLOD::MESH_ONLY) {
             renderer->beginAsyncChunkUpload();
             chunkPtr->createVertexBufferBatched(renderer);
             renderer->submitAsyncChunkUpload(chunkPtr);
-            auto uploadEnd = std::chrono::high_resolution_clock::now();
-
-            auto lightMs = std::chrono::duration_cast<std::chrono::milliseconds>(meshGenStart - meshStart).count();
-            auto meshMs = std::chrono::duration_cast<std::chrono::milliseconds>(meshGenEnd - meshGenStart).count();
-            auto uploadMs = std::chrono::duration_cast<std::chrono::milliseconds>(uploadEnd - uploadStart).count();
-            auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(uploadEnd - meshStart).count();
-
-            Logger::info() << "FAST MODE chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") timing: "
-                          << "light=" << lightMs << "ms, mesh=" << meshMs << "ms, upload=" << uploadMs
-                          << "ms, TOTAL=" << totalMs << "ms";
         }
     }
 
@@ -1440,6 +1595,7 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
     {
         std::lock_guard<std::mutex> decorLock(m_pendingDecorationsMutex);
         m_pendingDecorations.erase(chunkPtr);
+        m_pendingDecorationTimestamps.erase(chunkPtr);  // Clean up timestamp
     }
     auto vecIt = std::find(m_chunks.begin(), m_chunks.end(), chunkPtr);
     if (vecIt != m_chunks.end()) {
@@ -1480,6 +1636,9 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
     }
 
     // Move chunk to cache instead of deleting (RAM cache for fast reload)
+    // MEMORY OPTIMIZATION (2025-11-25): Deallocate interpolated lighting before caching
+    // Saves 256KB per cached chunk since smooth transitions not needed when unloaded
+    it->second->deallocateInterpolatedLighting();
     m_unloadedChunksCache[coord] = std::move(it->second);
     m_chunkMap.erase(it);
 
@@ -1750,9 +1909,14 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
         }
     }
 
-    // Always update all 6 adjacent chunks (not just on boundaries)
-    // This handles cases like breaking grass revealing stone below
-    // Note: Using unsafe version since we already hold unique_lock
+    // CRITICAL FIX (2025-11-24): Collect chunks to update, then release lock BEFORE mesh generation
+    // Old code did mesh+GPU upload while holding lock → deadlock + GPU stalls blocking world access!
+    // New code: collect chunks → unlock → mesh → GPU upload
+
+    // Collect neighbor chunks while holding lock
+    std::vector<Chunk*> chunksToUpdate;
+    chunksToUpdate.push_back(affectedChunk);
+
     Chunk* neighbors[6] = {
         getChunkAtWorldPosUnsafe(worldX - 1.0f, worldY, worldZ),  // -X
         getChunkAtWorldPosUnsafe(worldX + 1.0f, worldY, worldZ),  // +X
@@ -1762,36 +1926,38 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
         getChunkAtWorldPosUnsafe(worldX, worldY, worldZ + 1.0f)   // +Z
     };
 
-    // Regenerate mesh and buffer for each unique neighbor chunk
     for (int i = 0; i < 6; i++) {
         if (neighbors[i] && neighbors[i] != affectedChunk) {
-            // Skip if already updated (same chunk)
-            bool alreadyUpdated = false;
-            for (int j = 0; j < i; j++) {
-                if (neighbors[j] == neighbors[i]) {
-                    alreadyUpdated = true;
+            // Skip duplicates
+            bool alreadyAdded = false;
+            for (Chunk* existing : chunksToUpdate) {
+                if (existing == neighbors[i]) {
+                    alreadyAdded = true;
                     break;
                 }
             }
-            if (!alreadyUpdated) {
-                try {
-                    // Pass true to indicate we already hold the lock (prevents deadlock)
-                    neighbors[i]->generateMesh(this, true);
-
-                    // Upload to GPU (async to prevent frame stalls)
-                    renderer->beginAsyncChunkUpload();
-                    neighbors[i]->createVertexBufferBatched(renderer);
-                    renderer->submitAsyncChunkUpload(neighbors[i]);
-                } catch (const std::exception& e) {
-                    Logger::error() << "Failed to update neighbor chunk: " << e.what();
-                    // Continue updating other chunks even if one fails
-                }
+            if (!alreadyAdded) {
+                chunksToUpdate.push_back(neighbors[i]);
             }
         }
     }
 
-    // IMPORTANT: Release lock before calling lighting system to avoid deadlock
+    // IMPORTANT: Release lock BEFORE mesh generation and GPU upload!
     lock.unlock();
+
+    // Now regenerate meshes WITHOUT holding lock (much safer!)
+    for (Chunk* chunk : chunksToUpdate) {
+        try {
+            chunk->generateMesh(this);  // Mesh generation acquires its own locks as needed
+
+            // Upload to GPU
+            renderer->beginAsyncChunkUpload();
+            chunk->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(chunk);
+        } catch (const std::exception& e) {
+            Logger::error() << "Failed to update chunk after block break: " << e.what();
+        }
+    }
 
     // LIGHTING FIX: Update lighting AFTER releasing lock
     // The lighting system methods call getChunkAtWorldPos() which acquires locks
@@ -1871,23 +2037,12 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
     bool isOpaque = (blockDef.transparency < 0.5f);  // Opaque if transparency < 50%
     bool needsOpacityUpdate = (wasOpaque != isOpaque);
 
-    // Update the affected chunk and all adjacent chunks
-    // Must regenerate MESH (not just vertex buffer) because face culling needs updating
+    // Collect all chunks that need mesh updates while holding lock
+    std::vector<Chunk*> chunksToUpdate;
+
     Chunk* affectedChunk = getChunkAtWorldPosUnsafe(worldX, worldY, worldZ);
     if (affectedChunk) {
-        try {
-            // Pass true to indicate we already hold the lock (prevents deadlock)
-            affectedChunk->generateMesh(this, true);
-
-            // Upload to GPU (async to prevent frame stalls)
-            renderer->beginAsyncChunkUpload();
-            affectedChunk->createVertexBufferBatched(renderer);
-            renderer->submitAsyncChunkUpload(affectedChunk);
-        } catch (const std::exception& e) {
-            Logger::error() << "Failed to update chunk after placing block: " << e.what();
-            // Mesh is already generated, just buffer creation failed
-            // Chunk will still render with old buffer until next update
-        }
+        chunksToUpdate.push_back(affectedChunk);
     }
 
     // Always update all 6 adjacent chunks (not just on boundaries)
@@ -1901,36 +2056,41 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
         getChunkAtWorldPosUnsafe(worldX, worldY, worldZ + 1.0f)   // +Z
     };
 
-    // Regenerate mesh and buffer for each unique neighbor chunk
+    // Collect unique neighbor chunks
     for (int i = 0; i < 6; i++) {
         if (neighbors[i] && neighbors[i] != affectedChunk) {
-            // Skip if already updated (same chunk)
-            bool alreadyUpdated = false;
-            for (int j = 0; j < i; j++) {
-                if (neighbors[j] == neighbors[i]) {
-                    alreadyUpdated = true;
+            // Skip if already in list (deduplicate)
+            bool alreadyInList = false;
+            for (Chunk* chunk : chunksToUpdate) {
+                if (chunk == neighbors[i]) {
+                    alreadyInList = true;
                     break;
                 }
             }
-            if (!alreadyUpdated) {
-                try {
-                    // Pass true to indicate we already hold the lock (prevents deadlock)
-                    neighbors[i]->generateMesh(this, true);
-
-                    // Upload to GPU (async to prevent frame stalls)
-                    renderer->beginAsyncChunkUpload();
-                    neighbors[i]->createVertexBufferBatched(renderer);
-                    renderer->submitAsyncChunkUpload(neighbors[i]);
-                } catch (const std::exception& e) {
-                    Logger::error() << "Failed to update neighbor chunk: " << e.what();
-                    // Continue updating other chunks even if one fails
-                }
+            if (!alreadyInList) {
+                chunksToUpdate.push_back(neighbors[i]);
             }
         }
     }
 
-    // IMPORTANT: Release lock before calling lighting system to avoid deadlock
+    // CRITICAL FIX: Release lock BEFORE mesh generation!
+    // generateMesh() calls getBlockAt() on neighbors, which needs locks
     lock.unlock();
+
+    // Now regenerate meshes and upload to GPU WITHOUT holding lock
+    for (Chunk* chunk : chunksToUpdate) {
+        try {
+            chunk->generateMesh(this);  // Acquires locks as needed
+
+            // Upload to GPU (async to prevent frame stalls)
+            renderer->beginAsyncChunkUpload();
+            chunk->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(chunk);
+        } catch (const std::exception& e) {
+            Logger::error() << "Failed to update chunk after placing block: " << e.what();
+            // Continue updating other chunks even if one fails
+        }
+    }
 
     // LIGHTING FIX: Update lighting AFTER releasing lock
     // The lighting system methods call getChunkAtWorldPos() which acquires locks
@@ -2167,8 +2327,8 @@ bool World::saveWorld(const std::string& worldPath) const {
             return false;
         }
 
-        // Write metadata header (version 1)
-        constexpr uint32_t WORLD_FILE_VERSION = 1;
+        // Write metadata header (version 2 - adds biome biases)
+        constexpr uint32_t WORLD_FILE_VERSION = 2;
         metaFile.write(reinterpret_cast<const char*>(&WORLD_FILE_VERSION), sizeof(uint32_t));
 
         // Write world dimensions
@@ -2183,6 +2343,11 @@ bool World::saveWorld(const std::string& worldPath) const {
         uint32_t nameLength = static_cast<uint32_t>(m_worldName.length());
         metaFile.write(reinterpret_cast<const char*>(&nameLength), sizeof(uint32_t));
         metaFile.write(m_worldName.c_str(), nameLength);
+
+        // V2: Write biome biases
+        metaFile.write(reinterpret_cast<const char*>(&m_temperatureBias), sizeof(float));
+        metaFile.write(reinterpret_cast<const char*>(&m_moistureBias), sizeof(float));
+        metaFile.write(reinterpret_cast<const char*>(&m_ageBias), sizeof(float));
 
         metaFile.close();
         Logger::info() << "World metadata saved successfully";
@@ -2375,7 +2540,7 @@ bool World::loadWorld(const std::string& worldPath) {
         // Read and verify version
         uint32_t version;
         metaFile.read(reinterpret_cast<char*>(&version), sizeof(uint32_t));
-        if (version != 1) {
+        if (version != 1 && version != 2) {
             Logger::error() << "Unsupported world file version: " << version;
             return false;
         }
@@ -2403,8 +2568,31 @@ bool World::loadWorld(const std::string& worldPath) {
         m_worldName.resize(nameLength);
         metaFile.read(&m_worldName[0], nameLength);
 
+        // V2: Read biome biases (defaults to 0 for v1 saves)
+        if (version >= 2) {
+            metaFile.read(reinterpret_cast<char*>(&m_temperatureBias), sizeof(float));
+            metaFile.read(reinterpret_cast<char*>(&m_moistureBias), sizeof(float));
+            metaFile.read(reinterpret_cast<char*>(&m_ageBias), sizeof(float));
+            Logger::info() << "Loaded biome biases: temp=" << m_temperatureBias
+                          << ", moisture=" << m_moistureBias << ", age=" << m_ageBias;
+        } else {
+            // V1 save - use default biases
+            m_temperatureBias = 0.0f;
+            m_moistureBias = 0.0f;
+            m_ageBias = 0.0f;
+            Logger::info() << "V1 save file - using default biome biases";
+        }
+
         metaFile.close();
-        Logger::info() << "Loaded world metadata: " << m_worldName << " (seed: " << m_seed << ")";
+        Logger::info() << "Loaded world metadata: " << m_worldName << " (seed: " << m_seed << ", version: " << version << ")";
+
+        // Recreate biome map with loaded biases (required for consistent terrain generation)
+        auto& biomeRegistry = BiomeRegistry::getInstance();
+        auto [minTemp, maxTemp] = biomeRegistry.getTemperatureRange();
+        auto [minMoisture, maxMoisture] = biomeRegistry.getMoistureRange();
+        m_biomeMap = std::make_unique<BiomeMap>(m_seed, m_temperatureBias, m_moistureBias, m_ageBias,
+                                                 minTemp, maxTemp, minMoisture, maxMoisture);
+        Logger::info() << "Biome map recreated with saved biases";
 
         // Store world path for chunk streaming persistence
         m_worldPath = worldPath;

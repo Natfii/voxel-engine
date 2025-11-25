@@ -45,7 +45,21 @@ class VulkanRenderer;
 class BiomeMap;
 
 /**
- * @brief Chunk loading request with priority
+ * @brief LOD tier for chunk loading (2025-11-25)
+ *
+ * Tiered loading reduces work for distant chunks:
+ * - FULL: Close chunks get decoration + full mesh (visible)
+ * - MESH_ONLY: Medium chunks skip decoration, get mesh (fog hides detail)
+ * - TERRAIN_ONLY: Far chunks skip decoration AND mesh (beyond render distance)
+ */
+enum class ChunkLOD : uint8_t {
+    FULL = 0,           ///< Full detail: decoration + mesh (within ~48 blocks)
+    MESH_ONLY = 1,      ///< Medium detail: mesh only, no decoration (48-80 blocks, fog hides trees)
+    TERRAIN_ONLY = 2    ///< Terrain only: no decoration, no mesh (>80 blocks, not rendered)
+};
+
+/**
+ * @brief Chunk loading request with priority and LOD tier
  *
  * Chunks closer to the player have higher priority (lower distance).
  * The priority queue orders by distance (smaller = higher priority).
@@ -53,6 +67,7 @@ class BiomeMap;
 struct ChunkLoadRequest {
     int chunkX, chunkY, chunkZ;      ///< Chunk coordinates to load
     float priority;                   ///< Priority (distance from player, lower = higher priority)
+    ChunkLOD lod = ChunkLOD::FULL;   ///< LOD tier based on distance
 
     /**
      * @brief Comparison operator for priority queue
@@ -148,8 +163,9 @@ public:
      * Call this once per frame after updatePlayerPosition().
      *
      * @param maxChunksPerFrame Maximum chunks to upload per frame (prevents frame stutter)
+     * @param maxMilliseconds Maximum time budget for chunk processing in milliseconds (0 = unlimited)
      */
-    void processCompletedChunks(int maxChunksPerFrame = 4);
+    void processCompletedChunks(int maxChunksPerFrame = 4, float maxMilliseconds = 8.0f);
 
     /**
      * @brief Gets the number of chunks in the load queue
@@ -174,6 +190,47 @@ public:
      * @return True if worker threads are running
      */
     bool isActive() const { return m_running.load(); }
+
+    /**
+     * @brief Gets the mesh generation queue size
+     * @return Number of chunks waiting for mesh generation
+     */
+    size_t getMeshQueueSize() const {
+        std::lock_guard<std::mutex> lock(m_meshQueueMutex);
+        return m_meshWorkQueue.size();
+    }
+
+    /**
+     * @brief Queue a chunk for async mesh generation (used by decoration system)
+     *
+     * This allows decorated chunks to use the same async mesh pipeline as streamed chunks.
+     * The chunk will be meshed by worker threads and queued for GPU upload.
+     *
+     * @param chunkX Chunk X coordinate
+     * @param chunkY Chunk Y coordinate
+     * @param chunkZ Chunk Z coordinate
+     */
+    void queueChunkForMeshing(int chunkX, int chunkY, int chunkZ);
+
+    /**
+     * @brief Sets the spawn anchor point (like Minecraft spawn chunks)
+     *
+     * Chunks within the anchor radius will NEVER be unloaded, staying permanently
+     * in memory for instant access. This mimics Minecraft's "spawn chunks" behavior
+     * where chunks around world origin stay loaded for redstone farms, etc.
+     *
+     * @param chunkX Spawn chunk X coordinate
+     * @param chunkY Spawn chunk Y coordinate
+     * @param chunkZ Spawn chunk Z coordinate
+     * @param radius Radius in chunks to keep loaded (default: 6 = 13×13×13 cube)
+     */
+    void setSpawnAnchor(int chunkX, int chunkY, int chunkZ, int radius = 6);
+
+    /**
+     * @brief Checks if a chunk is within the spawn anchor (never unloaded)
+     * @return True if chunk should never be unloaded
+     */
+    bool isInSpawnAnchor(int chunkX, int chunkY, int chunkZ) const;
 
 private:
     /**
@@ -289,8 +346,12 @@ private:
     mutable std::mutex m_failedChunksMutex;        ///< Protects m_failedChunks
 
     // === Completed Chunks (accessed by workers + main thread) ===
-    std::vector<std::unique_ptr<Chunk>> m_completedChunks;  ///< Chunks ready for buffer upload
-    mutable std::mutex m_completedMutex;                    ///< Protects m_completedChunks
+    struct CompletedChunk {
+        std::unique_ptr<Chunk> chunk;
+        ChunkLOD lod;
+    };
+    std::vector<CompletedChunk> m_completedChunks;  ///< Chunks ready for processing (with LOD)
+    mutable std::mutex m_completedMutex;            ///< Protects m_completedChunks
 
     // === Async Mesh Generation (PERFORMANCE FIX 2025-11-23) ===
     // Chunks that have finished mesh generation and are ready for GPU upload
@@ -316,7 +377,10 @@ private:
 
     // === Player Position ===
     glm::vec3 m_lastPlayerPos;              ///< Last known player position
-    mutable std::mutex m_playerPosMutex;    ///< Protects m_lastPlayerPos
+    glm::vec3 m_previousPlayerPos;          ///< Previous player position for velocity calculation
+    std::chrono::high_resolution_clock::time_point m_lastVelocityUpdate;  ///< Last time velocity was calculated
+    float m_playerVelocity;                 ///< Current player velocity (blocks/sec)
+    mutable std::mutex m_playerPosMutex;    ///< Protects m_lastPlayerPos and velocity data
 
     // PERFORMANCE FIX (2025-11-24): Track last chunk to avoid 13,500 iterations/sec
     // Only run expensive cube iteration (15×15×15 = 3,375 checks) when player crosses chunk boundary
@@ -326,4 +390,12 @@ private:
     // === Statistics ===
     std::atomic<size_t> m_totalChunksLoaded;    ///< Total chunks loaded since start
     std::atomic<size_t> m_totalChunksUnloaded;  ///< Total chunks unloaded since start
+
+    // === Spawn Anchor (Minecraft-style spawn chunks) ===
+    // Chunks within anchor radius NEVER unload - stay in memory permanently
+    int m_spawnAnchorX = 0;      ///< Spawn anchor chunk X
+    int m_spawnAnchorY = 0;      ///< Spawn anchor chunk Y
+    int m_spawnAnchorZ = 0;      ///< Spawn anchor chunk Z
+    int m_spawnAnchorRadius = 0; ///< Radius of spawn chunks (0 = disabled)
+    bool m_spawnAnchorEnabled = false;  ///< True if spawn anchor is set
 };

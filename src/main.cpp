@@ -44,6 +44,7 @@
 #include "console.h"
 #include "console_commands.h"
 #include "debug_state.h"
+#include "perf_monitor.h"
 #include "targeting_system.h"
 #include "raycast.h"
 #include "input_manager.h"
@@ -51,6 +52,8 @@
 #include "terrain_constants.h"
 #include "sun_tracker.h"
 #include "frustum.h"
+#include "mesh/mesh_renderer.h"
+#include "mesh/mesh_loader.h"
 // BlockIconRenderer is now part of block_system.h
 
 // Game state
@@ -509,13 +512,12 @@ int main() {
             int spawnChunkY = 2;  // Y=64 surface is in chunk Y=2
             int spawnChunkZ = 0;
 
-            // CRITICAL FIX: Match spawn radius to load radius for instant 60 FPS
-            // loadDistance = 152 blocks sphere requires radius=5 chunk CUBE to fully cover
-            // Chunk (-5,2,0) is 128 blocks from center = INSIDE 152-block sphere
-            // Spawn radius=5 generates 1331 chunks (11x11x11 cube)
-            // This ensures NO chunks within load sphere need streaming
-            const int INITIAL_SPAWN_RADIUS = 5;  // Minimum to cover 152-block load sphere
-            int spawnRadius = INITIAL_SPAWN_RADIUS;
+            // MINECRAFT-STYLE SPAWN GENERATION (2025-11-25)
+            // Minecraft generates ~19×19 chunk "spawn chunks" that stay loaded
+            // We generate: inner=6 (decorated), outer=12 (terrain buffer)
+            // This creates a solid starting area with pre-loaded terrain buffer
+            const int SPAWN_RADIUS = 6;  // Inner decorated area (13×13×13 = 2197 chunks)
+            int spawnRadius = SPAWN_RADIUS;
 
             std::cout << "Generating " << spawnRadius << " chunk radius ("
                      << ((2*spawnRadius+1)*(2*spawnRadius+1)*(2*spawnRadius+1))
@@ -813,7 +815,68 @@ int main() {
         // Initialize world streaming for infinite world generation
         std::cout << "Starting world streaming system..." << std::endl;
         WorldStreaming worldStreaming(&world, world.getBiomeMap(), &renderer);
+
+        // SPAWN ANCHOR (2025-11-25): Keep spawn chunks permanently loaded (like Minecraft)
+        // Uses same radius as spawn generation - these chunks never unload
+        worldStreaming.setSpawnAnchor(0, 2, 0, 6);  // chunk (0,2,0) = world origin surface, radius=6
+
         worldStreaming.start();  // Starts worker threads (default: CPU cores - 1)
+
+        // Initialize mesh rendering system
+        std::cout << "Initializing mesh rendering system..." << std::endl;
+        MeshRenderer meshRenderer(&renderer);
+
+        // Create test meshes near spawn
+        std::cout << "Creating test meshes..." << std::endl;
+
+        // Test 1: Red cube near spawn
+        Mesh cube1 = MeshLoader::createCube(2.0f);
+        uint32_t cubeMeshId = meshRenderer.createMesh(cube1);
+
+        PBRMaterial redMaterial = PBRMaterial::createDefault();
+        redMaterial.baseColor = glm::vec4(1.0f, 0.2f, 0.2f, 1.0f);
+        redMaterial.metallic = 0.0f;
+        redMaterial.roughness = 0.6f;
+        uint32_t redMatId = meshRenderer.createMaterial(redMaterial);
+        meshRenderer.setMeshMaterial(cubeMeshId, redMatId);
+
+        // Create instance 10 blocks in front of spawn
+        glm::mat4 cubeTransform = glm::translate(glm::mat4(1.0f),
+                                                 glm::vec3(spawnX + 10.0f, spawnY, spawnZ));
+        meshRenderer.createInstance(cubeMeshId, cubeTransform);
+
+        // Test 2: Green sphere
+        Mesh sphere = MeshLoader::createSphere(1.5f, 16);
+        uint32_t sphereMeshId = meshRenderer.createMesh(sphere);
+
+        PBRMaterial greenMaterial = PBRMaterial::createDefault();
+        greenMaterial.baseColor = glm::vec4(0.2f, 1.0f, 0.2f, 1.0f);
+        greenMaterial.metallic = 0.0f;
+        greenMaterial.roughness = 0.4f;
+        uint32_t greenMatId = meshRenderer.createMaterial(greenMaterial);
+        meshRenderer.setMeshMaterial(sphereMeshId, greenMatId);
+
+        glm::mat4 sphereTransform = glm::translate(glm::mat4(1.0f),
+                                                   glm::vec3(spawnX + 15.0f, spawnY + 3.0f, spawnZ));
+        meshRenderer.createInstance(sphereMeshId, sphereTransform);
+
+        // Test 3: Blue cylinder
+        Mesh cylinder = MeshLoader::createCylinder(1.0f, 3.0f, 12);
+        uint32_t cylinderMeshId = meshRenderer.createMesh(cylinder);
+
+        PBRMaterial blueMaterial = PBRMaterial::createDefault();
+        blueMaterial.baseColor = glm::vec4(0.2f, 0.4f, 1.0f, 1.0f);
+        blueMaterial.metallic = 0.2f;
+        blueMaterial.roughness = 0.3f;
+        uint32_t blueMatId = meshRenderer.createMaterial(blueMaterial);
+        meshRenderer.setMeshMaterial(cylinderMeshId, blueMatId);
+
+        glm::mat4 cylinderTransform = glm::translate(glm::mat4(1.0f),
+                                                     glm::vec3(spawnX + 5.0f, spawnY, spawnZ + 5.0f));
+        meshRenderer.createInstance(cylinderMeshId, cylinderTransform);
+
+        std::cout << "Mesh system ready: " << meshRenderer.getMeshCount() << " meshes, "
+                 << meshRenderer.getInstanceCount() << " instances" << std::endl;
 
         bool isPaused = false;
         bool escPressed = false;
@@ -848,6 +911,9 @@ int main() {
                 clampedDeltaTime = 0.1f;
             }
 
+            // PERFORMANCE MONITORING (2025-11-24): Begin frame tracking
+            PerformanceMonitor::instance().beginFrame();
+
             // Autosave system (RAM cache → disk every 5 min)
             autosaveTimer += clampedDeltaTime;
             if (autosaveTimer >= AUTOSAVE_INTERVAL) {
@@ -860,6 +926,13 @@ int main() {
 
             glfwPollEvents();
             auto afterInput = std::chrono::high_resolution_clock::now();
+
+            // Record input timing
+            {
+                auto inputDuration = std::chrono::duration_cast<std::chrono::microseconds>(afterInput - checkpoint);
+                PerformanceMonitor::instance().recordTiming("input", inputDuration.count() / 1000.0f);
+                checkpoint = afterInput;
+            }
 
             // Update sky time (handles day/night cycle)
             ConsoleCommands::updateSkyTime(clampedDeltaTime);
@@ -977,7 +1050,19 @@ int main() {
             // Based on voxel engine best practices: smaller batches + higher frequency
             // With parallel processing (4 concurrent), can handle smaller batches efficiently
             // 10 chunks × 60Hz = 600 chunks/sec throughput (but 4 parallel = faster wall time)
-            world.processPendingDecorations(&renderer, 10);  // Process 10 per frame @ 60Hz
+            {
+                auto decorationStart = std::chrono::high_resolution_clock::now();
+
+                world.processPendingDecorations(&renderer, &worldStreaming, 10);  // Async mesh via worker threads
+
+                auto decorationEnd = std::chrono::high_resolution_clock::now();
+                auto decorationDuration = std::chrono::duration_cast<std::chrono::microseconds>(decorationEnd - decorationStart);
+                PerformanceMonitor::instance().recordTiming("decoration", decorationDuration.count() / 1000.0f);
+
+                // Record decoration queue sizes
+                PerformanceMonitor::instance().recordQueueSize("pending_decorations", world.getPendingDecorationCount());
+                PerformanceMonitor::instance().recordQueueSize("decorations_in_progress", world.getDecorationsInProgressCount());
+            }
 
             // Particles disabled for performance
             // world.getParticleSystem()->update(deltaTime);
@@ -1020,15 +1105,28 @@ int main() {
             static float streamingUpdateTimer = 0.0f;
             streamingUpdateTimer += clampedDeltaTime;
             const float STREAMING_UPDATE_INTERVAL = 0.25f;  // 4 times per second
-            const float renderDistance = 120.0f;
+            const float renderDistance = 80.0f;  // Reduced from 120 for better performance
 
             if (streamingUpdateTimer >= STREAMING_UPDATE_INTERVAL) {
                 streamingUpdateTimer = 0.0f;
                 const float loadDistance = renderDistance + 32.0f;     // Load chunks slightly beyond render distance
-                const float unloadDistance = renderDistance + 128.0f;  // INCREASED: Much larger buffer to prevent thrashing
+                const float unloadDistance = renderDistance + 192.0f;  // Hysteresis: chunks stay loaded longer when moving away
                 worldStreaming.updatePlayerPosition(player.Position, loadDistance, unloadDistance);
             }
             auto afterStreaming = std::chrono::high_resolution_clock::now();
+
+            // Record streaming timing and queue sizes
+            {
+                auto streamingDuration = std::chrono::duration_cast<std::chrono::microseconds>(afterStreaming - checkpoint);
+                PerformanceMonitor::instance().recordTiming("streaming", streamingDuration.count() / 1000.0f);
+
+                auto stats = worldStreaming.getStats();
+                PerformanceMonitor::instance().recordQueueSize("pending_loads", std::get<0>(stats));
+                PerformanceMonitor::instance().recordQueueSize("completed_chunks", std::get<1>(stats));
+                PerformanceMonitor::instance().recordQueueSize("mesh_queue", worldStreaming.getMeshQueueSize());
+
+                checkpoint = afterStreaming;
+            }
 
             // OPTIMIZATION: Process multiple chunks per frame with indirect drawing
             // ASYNC MESH GENERATION (2025-11-23): Main thread NEVER blocks!
@@ -1041,11 +1139,19 @@ int main() {
             //   v4: ASYNC (detached threads) → ZERO main thread blocking!
             // Can now process more chunks per frame since we never wait
 #if USE_INDIRECT_DRAWING
-            worldStreaming.processCompletedChunks(5);  // Async pipeline - no stalls!
+            // GPU upload bottleneck - keep at 1 chunk to prevent command queue overflow
+            worldStreaming.processCompletedChunks(1, 3.0f);  // Max 1 chunk, 3ms budget
 #else
-            worldStreaming.processCompletedChunks(1);   // Conservative for legacy path
+            worldStreaming.processCompletedChunks(1, 6.0f);   // Conservative for legacy path
 #endif
             auto afterChunkProcess = std::chrono::high_resolution_clock::now();
+
+            // Record chunk processing timing
+            {
+                auto chunkDuration = std::chrono::duration_cast<std::chrono::microseconds>(afterChunkProcess - checkpoint);
+                PerformanceMonitor::instance().recordTiming("chunk_process", chunkDuration.count() / 1000.0f);
+                checkpoint = afterChunkProcess;
+            }
 
             // Calculate matrices
             glm::mat4 model = glm::mat4(1.0f);
@@ -1204,6 +1310,9 @@ int main() {
             world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, renderDistance, &renderer);
             auto afterWorldRender = std::chrono::high_resolution_clock::now();
 
+            // Render meshes (shares depth buffer with voxels)
+            meshRenderer.render(renderer.getCurrentCommandBuffer());
+
             // Render block outline with line pipeline
             if (target.hasTarget) {
                 renderer.bindPipelineCached(renderer.getCurrentCommandBuffer(), renderer.getLinePipeline());
@@ -1343,6 +1452,20 @@ int main() {
 
             // End rendering
             auto renderEnd = std::chrono::high_resolution_clock::now();
+
+            // Record render timing
+            {
+                auto renderDuration = std::chrono::duration_cast<std::chrono::microseconds>(renderEnd - checkpoint);
+                PerformanceMonitor::instance().recordTiming("render", renderDuration.count() / 1000.0f);
+            }
+
+            // Record player position and distance from spawn
+            static glm::vec3 spawnPos(spawnX, spawnY, spawnZ);
+            PerformanceMonitor::instance().recordPlayerPosition(player.Position, spawnPos);
+
+            // End performance monitoring frame
+            PerformanceMonitor::instance().endFrame();
+
             renderer.endFrame();
             auto frameEnd = std::chrono::high_resolution_clock::now();
 

@@ -29,6 +29,10 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
     if errorlevel 1 goto :compile_error
     "%VULKAN_SDK%\Bin\glslc.exe" skybox.frag -o skybox_frag.spv
     if errorlevel 1 goto :compile_error
+    "%VULKAN_SDK%\Bin\glslc.exe" mesh.vert -o mesh_vert.spv
+    if errorlevel 1 goto :compile_error
+    "%VULKAN_SDK%\Bin\glslc.exe" mesh.frag -o mesh_frag.spv
+    if errorlevel 1 goto :compile_error
 
     echo.
     echo SUCCESS! All shaders compiled:
@@ -38,6 +42,8 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
     echo   - line_frag.spv
     echo   - skybox_vert.spv
     echo   - skybox_frag.spv
+    echo   - mesh_vert.spv
+    echo   - mesh_frag.spv
     echo.
     goto :success
 
@@ -55,6 +61,10 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
     if errorlevel 1 goto :compile_error
     "%VULKAN_SDK%\Bin\glslangValidator.exe" -V skybox.frag -o skybox_frag.spv
     if errorlevel 1 goto :compile_error
+    "%VULKAN_SDK%\Bin\glslangValidator.exe" -V mesh.vert -o mesh_vert.spv
+    if errorlevel 1 goto :compile_error
+    "%VULKAN_SDK%\Bin\glslangValidator.exe" -V mesh.frag -o mesh_frag.spv
+    if errorlevel 1 goto :compile_error
 
     echo.
     echo SUCCESS! All shaders compiled:
@@ -64,6 +74,8 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
     echo   - line_frag.spv
     echo   - skybox_vert.spv
     echo   - skybox_frag.spv
+    echo   - mesh_vert.spv
+    echo   - mesh_frag.spv
     echo.
     goto :success
 

@@ -88,8 +88,9 @@ Chunk::Chunk(int x, int y, int z)
     // Initialize all light data to 0 (complete darkness)
     m_lightData.fill(BlockLight(0, 0));
 
-    // Initialize interpolated lighting to 0 (prevents accessing uninitialized memory)
-    m_interpolatedLightData.fill(InterpolatedLight());
+    // MEMORY OPTIMIZATION (2025-11-25): Interpolated lighting is lazy-allocated
+    // Don't allocate here - will be allocated on first use (saves 256KB per cached chunk)
+    m_interpolatedLightData = nullptr;
 
     // BUG FIX: Initialize heightmap to -1 (indicates all air columns)
     // Without this, heightmap contains garbage memory causing incorrect lighting
@@ -133,7 +134,8 @@ void Chunk::reset(int x, int y, int z) {
 
     // Reset lighting to darkness
     m_lightData.fill(BlockLight(0, 0));
-    m_interpolatedLightData.fill(InterpolatedLight());
+    // MEMORY OPTIMIZATION (2025-11-25): Deallocate interpolated lighting on reset
+    m_interpolatedLightData = nullptr;
     m_lightingDirty = false;
 
     // BUG FIX: Reset heightmap to -1 (all air)
@@ -442,7 +444,7 @@ void Chunk::generate(BiomeMap* biomeMap) {
  *
  * @param world World instance to query neighboring chunks
  */
-void Chunk::generateMesh(World* world, bool callerHoldsLock) {
+void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
     // OCCLUSION CULLING: Skip mesh generation for fully-occluded chunks
     // Underground chunks surrounded by solid stone don't need any geometry!
     // This saves ~40% of mesh generation work for typical terrain
@@ -566,6 +568,11 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
     int atlasGridSize = registry.getAtlasGridSize();
     float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
 
+    // Max quad size for greedy meshing - prevents UV from crossing integer boundaries
+    // For tiled UV encoding, UV = cell + localUV * quadSize / atlasSize
+    // To keep UV in [cell, cell+1), quadSize must be <= atlasSize
+    const int maxQuadSize = (atlasGridSize > 0) ? atlasGridSize : 4;
+
     // ============================================================================
     // PERFORMANCE FIX (2025-11-24): Cache neighbor chunks to eliminate hash lookups
     // ============================================================================
@@ -576,12 +583,14 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
     //      Direct chunk->getBlock() access (array lookup, no hash, no mutex)
     // IMPACT: 99.995% reduction in neighbor queries → Massive mesh generation speedup
     // ============================================================================
-    Chunk* neighborPosX = world ? world->getChunkAt(m_x + 1, m_y, m_z) : nullptr;  // +X (East)
-    Chunk* neighborNegX = world ? world->getChunkAt(m_x - 1, m_y, m_z) : nullptr;  // -X (West)
-    Chunk* neighborPosY = world ? world->getChunkAt(m_x, m_y + 1, m_z) : nullptr;  // +Y (Up)
-    Chunk* neighborNegY = world ? world->getChunkAt(m_x, m_y - 1, m_z) : nullptr;  // -Y (Down)
-    Chunk* neighborPosZ = world ? world->getChunkAt(m_x, m_y, m_z + 1) : nullptr;  // +Z (North)
-    Chunk* neighborNegZ = world ? world->getChunkAt(m_x, m_y, m_z - 1) : nullptr;  // -Z (South)
+    // DEADLOCK FIX (2025-11-25): Use getChunkAtUnsafe when caller already holds the lock!
+    // Otherwise getChunkAt tries to acquire shared_lock while caller holds unique_lock → deadlock
+    Chunk* neighborPosX = world ? (callerHoldsLock ? world->getChunkAtUnsafe(m_x + 1, m_y, m_z) : world->getChunkAt(m_x + 1, m_y, m_z)) : nullptr;
+    Chunk* neighborNegX = world ? (callerHoldsLock ? world->getChunkAtUnsafe(m_x - 1, m_y, m_z) : world->getChunkAt(m_x - 1, m_y, m_z)) : nullptr;
+    Chunk* neighborPosY = world ? (callerHoldsLock ? world->getChunkAtUnsafe(m_x, m_y + 1, m_z) : world->getChunkAt(m_x, m_y + 1, m_z)) : nullptr;
+    Chunk* neighborNegY = world ? (callerHoldsLock ? world->getChunkAtUnsafe(m_x, m_y - 1, m_z) : world->getChunkAt(m_x, m_y - 1, m_z)) : nullptr;
+    Chunk* neighborPosZ = world ? (callerHoldsLock ? world->getChunkAtUnsafe(m_x, m_y, m_z + 1) : world->getChunkAt(m_x, m_y, m_z + 1)) : nullptr;
+    Chunk* neighborNegZ = world ? (callerHoldsLock ? world->getChunkAtUnsafe(m_x, m_y, m_z - 1) : world->getChunkAt(m_x, m_y, m_z - 1)) : nullptr;
 
     // Helper: Convert local chunk coordinates to world position (eliminates code duplication)
     auto localToWorldPos = [this](int x, int y, int z) -> glm::vec3 {
@@ -758,10 +767,27 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
         return (3 - blockCount) / 3.0f;
     };
 
+    // =================================================================================================
+    // GREEDY MESHING OPTIMIZATION (2025-11-24): Merge adjacent identical block faces
+    // =================================================================================================
+    // Track which blocks have been processed for horizontal merging
+    // Using bitset for memory efficiency (32x32x32 = 32768 bits = 4KB per direction)
+    std::vector<bool> processedPosX(WIDTH * HEIGHT * DEPTH, false);
+    std::vector<bool> processedNegX(WIDTH * HEIGHT * DEPTH, false);
+    std::vector<bool> processedPosY(WIDTH * HEIGHT * DEPTH, false);
+    std::vector<bool> processedNegY(WIDTH * HEIGHT * DEPTH, false);
+    std::vector<bool> processedPosZ(WIDTH * HEIGHT * DEPTH, false);
+    std::vector<bool> processedNegZ(WIDTH * HEIGHT * DEPTH, false);
+
+    // Helper: Convert 3D coordinates to 1D index
+    auto coordToIndex = [](int x, int y, int z) -> int {
+        return x + y * WIDTH + z * WIDTH * HEIGHT;
+    };
+
     // Iterate over every block in the chunk (optimized order for cache locality)
-    for(int X = 0; X < WIDTH;  ++X) {
-        for(int Y = 0; Y < HEIGHT; ++Y) {
-            for(int Z = 0; Z < DEPTH;  ++Z) {
+    for(int X = 0; X < WIDTH;  X++) {
+        for(int Y = 0; Y < HEIGHT; Y++) {
+            for(int Z = 0; Z < DEPTH;  Z++) {
                 int id = m_blocks[X][Y][Z];
                 if (id == 0) continue; // Skip air
 
@@ -836,9 +862,17 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                 // adjustTopOnly: If true, only apply heightAdjust to vertices with y=0.5 (top of block)
                 // useTransparent: If true, adds to transparent buffers; if false, adds to opaque buffers
                 // faceNormal: Direction the face is facing (for smooth lighting calculation)
+                // width, height: Size of the merged quad (1.0 = single block, >1.0 = merged)
+                // startX, startY, startZ: Starting position of the merged quad
                 auto renderFace = [&](const BlockDefinition::FaceTexture& faceTexture, int cubeStart, int uvStart,
                                       float heightAdjust = 0.0f, bool adjustTopOnly = false, bool useTransparent = false,
-                                      glm::ivec3 faceNormal = glm::ivec3(0, 0, 0)) {
+                                      glm::ivec3 faceNormal = glm::ivec3(0, 0, 0),
+                                      float quadWidth = 1.0f, float quadHeight = 1.0f,
+                                      int startX = -1, int startY = -1, int startZ = -1) {
+                    // Use provided start position or fall back to current block position
+                    float blockX = (startX >= 0) ? float(m_x * WIDTH + startX) : bx;
+                    float blockY = (startY >= 0) ? float(m_y * HEIGHT + startY) : by;
+                    float blockZ = (startZ >= 0) ? float(m_z * DEPTH + startZ) : bz;
                     auto [uMin, vMin] = getUVsForFace(faceTexture);
                     float uvScaleZoomed = uvScale;
 
@@ -860,20 +894,78 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                     uint32_t baseIndex = static_cast<uint32_t>(targetVerts.size());
 
                     // Create 4 vertices for this face (corners of the quad)
+                    // For merged quads, scale vertices based on quadWidth/quadHeight
                     for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
                         Vertex v;
-                        v.x = cube[i+0] + bx;
-                        float yPos = cube[i+1];
-                        // Apply height adjustment: if adjustTopOnly=true, only adjust top vertices (y=0.5)
-                        if (adjustTopOnly) {
-                            v.y = yPos + by + (yPos > 0.4f ? heightAdjust : 0.0f);
+
+                        // Scale vertex position for merged quads
+                        // Determine which axes to scale based on face normal
+                        float vx = cube[i+0];
+                        float vy = cube[i+1];
+                        float vz = cube[i+2];
+
+                        // Scale based on face orientation
+                        if (abs(faceNormal.x) > 0) {
+                            // X-facing face: scale Y and Z
+                            if (vy > 0.5f) vy *= quadHeight;
+                            if (vz > 0.5f) vz *= quadWidth;
+                        } else if (abs(faceNormal.y) > 0) {
+                            // Y-facing face: scale X and Z
+                            if (vx > 0.5f) vx *= quadWidth;
+                            if (vz > 0.5f) vz *= quadHeight;
                         } else {
-                            v.y = yPos + by + heightAdjust;
+                            // Z-facing face: scale X and Y
+                            if (vx > 0.5f) vx *= quadWidth;
+                            if (vy > 0.5f) vy *= quadHeight;
                         }
-                        v.z = cube[i+2] + bz;
+
+                        v.x = vx + blockX;
+                        v.z = vz + blockZ;
+
+                        // Apply height adjustment: if adjustTopOnly=true, only adjust top vertices (y>0.5)
+                        if (adjustTopOnly) {
+                            v.y = vy + blockY + (vy > 0.4f ? heightAdjust : 0.0f);
+                        } else {
+                            v.y = vy + blockY + heightAdjust;
+                        }
                         v.r = cr; v.g = cg; v.b = cb; v.a = ca;
-                        v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                        v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
+
+                        // TILED UV ENCODING for greedy meshing
+                        // Encode UV as: cellIndex + (localUV * quadSize) / atlasSize
+                        // This keeps UV in [cellIndex, cellIndex+1) range
+                        // Shader extracts cell with floor() and tiles with fract()
+                        // NOTE: Liquids use stretched UVs for shader scrolling animation
+                        bool useStretchedUV = (def.animatedTiles > 1) || def.isLiquid || (uvScale <= 0.0f);
+                        if (useStretchedUV) {
+                            // Animated textures and liquids - use stretched UVs (shader has special handling)
+                            v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
+                            v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
+                        } else {
+                            // Tiled encoding: integer cell + fractional local UV
+                            // Works for both single blocks (1x1 tiling) and merged quads (NxM tiling)
+                            float atlasSize = 1.0f / uvScale;
+                            int maxCell = static_cast<int>(atlasSize) - 1;
+
+                            // Validate atlas indices - log warning if out of bounds (helps debug texture issues)
+                            if (faceTexture.atlasX < 0 || faceTexture.atlasX > maxCell ||
+                                faceTexture.atlasY < 0 || faceTexture.atlasY > maxCell) {
+                                static int warningCount = 0;
+                                if (warningCount < 10) {
+                                    Logger::warning() << "Block ID " << id << " has invalid atlas coords ("
+                                                   << faceTexture.atlasX << ", " << faceTexture.atlasY
+                                                   << ") - max is " << maxCell;
+                                    warningCount++;
+                                }
+                            }
+
+                            // Bounds check atlas indices to prevent invalid values
+                            int cellXi = std::clamp(faceTexture.atlasX, 0, maxCell);
+                            int cellYi = std::clamp(faceTexture.atlasY, 0, maxCell);
+                            float cellX = static_cast<float>(cellXi);
+                            float cellY = static_cast<float>(cellYi);
+                            v.u = cellX + cubeUVs[uv+0] * quadWidth / atlasSize;
+                            v.v = cellY + cubeUVs[uv+1] * quadHeight / atlasSize;
+                        }
 
                         // CLASSIC RETRO LIGHTING - Per-face uniform lighting
                         // Sample light from the block adjacent to this face (not per-vertex)
@@ -950,144 +1042,411 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock) {
                 bool isCurrentLiquid = def.isLiquid;
                 bool isCurrentTransparent = (def.transparency > 0.0f);  // Has any transparency
 
-                // Front face (z=0, facing -Z direction)
+                // Front face (z=0, facing -Z direction) - WITH GREEDY MESHING
                 {
-                    int neighborBlockID = getBlockID(X, Y, Z - 1);
-                    bool neighborIsLiquid = isLiquid(X, Y, Z - 1);
-                    bool neighborIsSolid = isSolid(X, Y, Z - 1);
+                    int idx = coordToIndex(X, Y, Z);
+                    if (!processedNegZ[idx]) {
+                        int neighborBlockID = getBlockID(X, Y, Z - 1);
+                        bool neighborIsLiquid = isLiquid(X, Y, Z - 1);
+                        bool neighborIsSolid = isSolid(X, Y, Z - 1);
 
-                    bool shouldRender;
-                    if (isCurrentLiquid) {
-                        // Water: render if neighbor is not water, OR if water at different level
-                        if (neighborIsLiquid) {
-                            uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                            uint8_t neighborLevel = (Z > 0) ? m_blockMetadata[X][Y][Z-1] : 0;
-                            shouldRender = (currentLevel != neighborLevel);
+                        bool shouldRender;
+                        if (isCurrentLiquid) {
+                            // Water: render if neighbor is not water, OR if water at different level
+                            if (neighborIsLiquid) {
+                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
+                                uint8_t neighborLevel = (Z > 0) ? m_blockMetadata[X][Y][Z-1] : 0;
+                                shouldRender = (currentLevel != neighborLevel);
+                            } else {
+                                shouldRender = true;
+                            }
+                        } else if (isCurrentTransparent) {
+                            // Transparent blocks (leaves, glass): render unless neighbor is same block type
+                            shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
-                            shouldRender = true;
+                            // Solid opaque: render against non-solid (air or water)
+                            shouldRender = !neighborIsSolid;
                         }
-                    } else if (isCurrentTransparent) {
-                        // Transparent blocks (leaves, glass): render unless neighbor is same block type
-                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
-                    } else {
-                        // Solid opaque: render against non-solid (air or water)
-                        shouldRender = !neighborIsSolid;
-                    }
 
-                    if (shouldRender) {
-                        renderFace(frontTex, 0, 0, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(0, 0, -1));
-                    }
-                }
+                        if (shouldRender) {
+                            // GREEDY MESHING: Merge in +X and +Y directions
+                            int width = 1;
+                            int height = 1;
 
-                // Back face (z=0.5, facing +Z direction)
-                {
-                    int neighborBlockID = getBlockID(X, Y, Z + 1);
-                    bool neighborIsLiquid = isLiquid(X, Y, Z + 1);
-                    bool neighborIsSolid = isSolid(X, Y, Z + 1);
-                    bool shouldRender;
-                    if (isCurrentLiquid) {
-                        if (neighborIsLiquid) {
-                            uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                            uint8_t neighborLevel = (Z < DEPTH-1) ? m_blockMetadata[X][Y][Z+1] : 0;
-                            shouldRender = (currentLevel != neighborLevel);
+                            if (!isCurrentLiquid && !isCurrentTransparent) {
+                                // Extend in +X direction (limited by maxQuadSize for UV tiling)
+                                while (X + width < WIDTH && width < maxQuadSize) {
+                                    int nextIdx = coordToIndex(X + width, Y, Z);
+                                    if (processedNegZ[nextIdx]) break;
+                                    if (m_blocks[X + width][Y][Z] != id) break;
+                                    if (isSolid(X + width, Y, Z - 1)) break;
+                                    width++;
+                                }
+
+                                // Extend in +Y direction (limited by maxQuadSize for UV tiling)
+                                bool canExtendY = true;
+                                while (Y + height < HEIGHT && height < maxQuadSize && canExtendY) {
+                                    for (int dx = 0; dx < width; dx++) {
+                                        int nextIdx = coordToIndex(X + dx, Y + height, Z);
+                                        if (processedNegZ[nextIdx]) { canExtendY = false; break; }
+                                        if (m_blocks[X + dx][Y + height][Z] != id) { canExtendY = false; break; }
+                                        if (isSolid(X + dx, Y + height, Z - 1)) { canExtendY = false; break; }
+                                    }
+                                    if (canExtendY) height++;
+                                }
+
+                                // Mark all covered blocks as processed
+                                for (int dy = 0; dy < height; dy++) {
+                                    for (int dx = 0; dx < width; dx++) {
+                                        int markIdx = coordToIndex(X + dx, Y + dy, Z);
+                                        processedNegZ[markIdx] = true;
+                                    }
+                                }
+                            } else {
+                                processedNegZ[idx] = true;
+                            }
+
+                            renderFace(frontTex, 0, 0, waterHeightAdjust, true, isCurrentTransparent,
+                                      glm::ivec3(0, 0, -1), float(width), float(height), X, Y, Z);
                         } else {
-                            shouldRender = true;
+                            processedNegZ[idx] = true;
                         }
-                    } else if (isCurrentTransparent) {
-                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
-                    } else {
-                        shouldRender = !neighborIsSolid;
-                    }
-                    if (shouldRender) {
-                        renderFace(backTex, 12, 8, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(0, 0, 1));
                     }
                 }
 
-                // Left face (x=0, facing -X direction)
+                // Back face (z=0.5, facing +Z direction) - WITH GREEDY MESHING
                 {
-                    int neighborBlockID = getBlockID(X - 1, Y, Z);
-                    bool neighborIsLiquid = isLiquid(X - 1, Y, Z);
-                    bool neighborIsSolid = isSolid(X - 1, Y, Z);
-                    bool shouldRender;
-                    if (isCurrentLiquid) {
-                        if (neighborIsLiquid) {
-                            uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                            uint8_t neighborLevel = (X > 0) ? m_blockMetadata[X-1][Y][Z] : 0;
-                            shouldRender = (currentLevel != neighborLevel);
+                    int idx = coordToIndex(X, Y, Z);
+                    if (!processedPosZ[idx]) {
+                        int neighborBlockID = getBlockID(X, Y, Z + 1);
+                        bool neighborIsLiquid = isLiquid(X, Y, Z + 1);
+                        bool neighborIsSolid = isSolid(X, Y, Z + 1);
+                        bool shouldRender;
+                        if (isCurrentLiquid) {
+                            if (neighborIsLiquid) {
+                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
+                                uint8_t neighborLevel = (Z < DEPTH-1) ? m_blockMetadata[X][Y][Z+1] : 0;
+                                shouldRender = (currentLevel != neighborLevel);
+                            } else {
+                                shouldRender = true;
+                            }
+                        } else if (isCurrentTransparent) {
+                            shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
-                            shouldRender = true;
+                            shouldRender = !neighborIsSolid;
                         }
-                    } else if (isCurrentTransparent) {
-                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
-                    } else {
-                        shouldRender = !neighborIsSolid;
-                    }
-                    if (shouldRender) {
-                        renderFace(leftTex, 24, 16, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(-1, 0, 0));
-                    }
-                }
 
-                // Right face (x=0.5, facing +X direction)
-                {
-                    int neighborBlockID = getBlockID(X + 1, Y, Z);
-                    bool neighborIsLiquid = isLiquid(X + 1, Y, Z);
-                    bool neighborIsSolid = isSolid(X + 1, Y, Z);
-                    bool shouldRender;
-                    if (isCurrentLiquid) {
-                        if (neighborIsLiquid) {
-                            uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                            uint8_t neighborLevel = (X < WIDTH-1) ? m_blockMetadata[X+1][Y][Z] : 0;
-                            shouldRender = (currentLevel != neighborLevel);
+                        if (shouldRender) {
+                            // GREEDY MESHING: Merge in +X and +Y directions
+                            int width = 1;
+                            int height = 1;
+
+                            if (!isCurrentLiquid && !isCurrentTransparent) {
+                                // Extend in +X direction
+                                while (X + width < WIDTH && width < maxQuadSize) {
+                                    int nextIdx = coordToIndex(X + width, Y, Z);
+                                    if (processedPosZ[nextIdx]) break;
+                                    if (m_blocks[X + width][Y][Z] != id) break;
+                                    if (isSolid(X + width, Y, Z + 1)) break;
+                                    width++;
+                                }
+
+                                // Extend in +Y direction
+                                bool canExtendY = true;
+                                while (Y + height < HEIGHT && height < maxQuadSize && canExtendY) {
+                                    for (int dx = 0; dx < width; dx++) {
+                                        int nextIdx = coordToIndex(X + dx, Y + height, Z);
+                                        if (processedPosZ[nextIdx]) { canExtendY = false; break; }
+                                        if (m_blocks[X + dx][Y + height][Z] != id) { canExtendY = false; break; }
+                                        if (isSolid(X + dx, Y + height, Z + 1)) { canExtendY = false; break; }
+                                    }
+                                    if (canExtendY) height++;
+                                }
+
+                                // Mark all covered blocks as processed
+                                for (int dy = 0; dy < height; dy++) {
+                                    for (int dx = 0; dx < width; dx++) {
+                                        int markIdx = coordToIndex(X + dx, Y + dy, Z);
+                                        processedPosZ[markIdx] = true;
+                                    }
+                                }
+                            } else {
+                                processedPosZ[idx] = true;
+                            }
+
+                            renderFace(backTex, 12, 8, waterHeightAdjust, true, isCurrentTransparent,
+                                      glm::ivec3(0, 0, 1), float(width), float(height), X, Y, Z);
                         } else {
-                            shouldRender = true;
+                            processedPosZ[idx] = true;
                         }
-                    } else if (isCurrentTransparent) {
-                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
-                    } else {
-                        shouldRender = !neighborIsSolid;
-                    }
-                    if (shouldRender) {
-                        renderFace(rightTex, 36, 24, waterHeightAdjust, true, isCurrentTransparent, glm::ivec3(1, 0, 0));
                     }
                 }
 
-                // Top face (y=0.5, facing +Y direction)
+                // Left face (x=0, facing -X direction) - WITH GREEDY MESHING
                 {
-                    int neighborBlockID = getBlockID(X, Y + 1, Z);
-                    bool neighborIsLiquid = isLiquid(X, Y + 1, Z);
-                    bool neighborIsSolid = isSolid(X, Y + 1, Z);
-                    bool shouldRender;
-                    if (isCurrentLiquid) {
-                        shouldRender = !neighborIsLiquid;
-                    } else if (isCurrentTransparent) {
-                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
-                    } else {
-                        shouldRender = !neighborIsSolid;
-                    }
-                    if (shouldRender) {
-                        // Apply water height adjustment to entire top face for flowing water effect
-                        renderFace(topTex, 48, 32, waterHeightAdjust, false, isCurrentTransparent, glm::ivec3(0, 1, 0));
+                    int idx = coordToIndex(X, Y, Z);
+                    if (!processedNegX[idx]) {
+                        int neighborBlockID = getBlockID(X - 1, Y, Z);
+                        bool neighborIsLiquid = isLiquid(X - 1, Y, Z);
+                        bool neighborIsSolid = isSolid(X - 1, Y, Z);
+                        bool shouldRender;
+                        if (isCurrentLiquid) {
+                            if (neighborIsLiquid) {
+                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
+                                uint8_t neighborLevel = (X > 0) ? m_blockMetadata[X-1][Y][Z] : 0;
+                                shouldRender = (currentLevel != neighborLevel);
+                            } else {
+                                shouldRender = true;
+                            }
+                        } else if (isCurrentTransparent) {
+                            shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
+                        } else {
+                            shouldRender = !neighborIsSolid;
+                        }
+
+                        if (shouldRender) {
+                            // GREEDY MESHING: Merge in +Z and +Y directions
+                            int width = 1;
+                            int height = 1;
+
+                            if (!isCurrentLiquid && !isCurrentTransparent) {
+                                // Extend in +Z direction (limited by maxQuadSize for UV tiling)
+                                while (Z + width < DEPTH && width < maxQuadSize) {
+                                    int nextIdx = coordToIndex(X, Y, Z + width);
+                                    if (processedNegX[nextIdx]) break;
+                                    if (m_blocks[X][Y][Z + width] != id) break;
+                                    if (isSolid(X - 1, Y, Z + width)) break;
+                                    width++;
+                                }
+
+                                // Extend in +Y direction (limited by maxQuadSize for UV tiling)
+                                bool canExtendY = true;
+                                while (Y + height < HEIGHT && height < maxQuadSize && canExtendY) {
+                                    for (int dz = 0; dz < width; dz++) {
+                                        int nextIdx = coordToIndex(X, Y + height, Z + dz);
+                                        if (processedNegX[nextIdx]) { canExtendY = false; break; }
+                                        if (m_blocks[X][Y + height][Z + dz] != id) { canExtendY = false; break; }
+                                        if (isSolid(X - 1, Y + height, Z + dz)) { canExtendY = false; break; }
+                                    }
+                                    if (canExtendY) height++;
+                                }
+
+                                // Mark all covered blocks as processed
+                                for (int dy = 0; dy < height; dy++) {
+                                    for (int dz = 0; dz < width; dz++) {
+                                        int markIdx = coordToIndex(X, Y + dy, Z + dz);
+                                        processedNegX[markIdx] = true;
+                                    }
+                                }
+                            } else {
+                                processedNegX[idx] = true;
+                            }
+
+                            renderFace(leftTex, 24, 16, waterHeightAdjust, true, isCurrentTransparent,
+                                      glm::ivec3(-1, 0, 0), float(width), float(height), X, Y, Z);
+                        } else {
+                            processedNegX[idx] = true;
+                        }
                     }
                 }
 
-                // Bottom face (y=0, facing -Y direction)
+                // Right face (x=0.5, facing +X direction) - WITH GREEDY MESHING
                 {
-                    int neighborBlockID = getBlockID(X, Y - 1, Z);
-                    bool neighborIsLiquid = isLiquid(X, Y - 1, Z);
-                    bool neighborIsSolid = isSolid(X, Y - 1, Z);
-                    bool shouldRender;
-                    if (isCurrentLiquid) {
-                        // Water: render bottom if not water below
-                        // Render against both air AND solid blocks (visible from below)
-                        shouldRender = !neighborIsLiquid;
-                    } else if (isCurrentTransparent) {
-                        shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
-                    } else {
-                        // Solid: render against air/water
-                        shouldRender = !neighborIsSolid;
+                    int idx = coordToIndex(X, Y, Z);
+                    if (!processedPosX[idx]) {
+                        int neighborBlockID = getBlockID(X + 1, Y, Z);
+                        bool neighborIsLiquid = isLiquid(X + 1, Y, Z);
+                        bool neighborIsSolid = isSolid(X + 1, Y, Z);
+                        bool shouldRender;
+                        if (isCurrentLiquid) {
+                            if (neighborIsLiquid) {
+                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
+                                uint8_t neighborLevel = (X < WIDTH-1) ? m_blockMetadata[X+1][Y][Z] : 0;
+                                shouldRender = (currentLevel != neighborLevel);
+                            } else {
+                                shouldRender = true;
+                            }
+                        } else if (isCurrentTransparent) {
+                            shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
+                        } else {
+                            shouldRender = !neighborIsSolid;
+                        }
+
+                        if (shouldRender) {
+                            // GREEDY MESHING: Merge in +Z and +Y directions
+                            int width = 1;
+                            int height = 1;
+
+                            if (!isCurrentLiquid && !isCurrentTransparent) {
+                                // Extend in +Z direction (limited by maxQuadSize for UV tiling)
+                                while (Z + width < DEPTH && width < maxQuadSize) {
+                                    int nextIdx = coordToIndex(X, Y, Z + width);
+                                    if (processedPosX[nextIdx]) break;
+                                    if (m_blocks[X][Y][Z + width] != id) break;
+                                    if (isSolid(X + 1, Y, Z + width)) break;
+                                    width++;
+                                }
+
+                                // Extend in +Y direction (limited by maxQuadSize for UV tiling)
+                                bool canExtendY = true;
+                                while (Y + height < HEIGHT && height < maxQuadSize && canExtendY) {
+                                    for (int dz = 0; dz < width; dz++) {
+                                        int nextIdx = coordToIndex(X, Y + height, Z + dz);
+                                        if (processedPosX[nextIdx]) { canExtendY = false; break; }
+                                        if (m_blocks[X][Y + height][Z + dz] != id) { canExtendY = false; break; }
+                                        if (isSolid(X + 1, Y + height, Z + dz)) { canExtendY = false; break; }
+                                    }
+                                    if (canExtendY) height++;
+                                }
+
+                                // Mark all covered blocks as processed
+                                for (int dy = 0; dy < height; dy++) {
+                                    for (int dz = 0; dz < width; dz++) {
+                                        int markIdx = coordToIndex(X, Y + dy, Z + dz);
+                                        processedPosX[markIdx] = true;
+                                    }
+                                }
+                            } else {
+                                processedPosX[idx] = true;
+                            }
+
+                            renderFace(rightTex, 36, 24, waterHeightAdjust, true, isCurrentTransparent,
+                                      glm::ivec3(1, 0, 0), float(width), float(height), X, Y, Z);
+                        } else {
+                            processedPosX[idx] = true;
+                        }
                     }
-                    if (shouldRender) {
-                        renderFace(bottomTex, 60, 40, 0.0f, false, isCurrentTransparent, glm::ivec3(0, -1, 0));
+                }
+
+                // Top face (y=0.5, facing +Y direction) - WITH GREEDY MESHING
+                {
+                    int idx = coordToIndex(X, Y, Z);
+                    if (!processedPosY[idx]) {
+                        int neighborBlockID = getBlockID(X, Y + 1, Z);
+                        bool neighborIsLiquid = isLiquid(X, Y + 1, Z);
+                        bool neighborIsSolid = isSolid(X, Y + 1, Z);
+                        bool shouldRender;
+                        if (isCurrentLiquid) {
+                            shouldRender = !neighborIsLiquid;
+                        } else if (isCurrentTransparent) {
+                            shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
+                        } else {
+                            shouldRender = !neighborIsSolid;
+                        }
+
+                        if (shouldRender) {
+                            // GREEDY MESHING: Try to extend this face horizontally and vertically
+                            // Only merge solid opaque blocks (skip liquids and transparent)
+                            int width = 1;
+                            int height = 1;
+
+                            if (!isCurrentLiquid && !isCurrentTransparent) {
+                                // Extend in +X direction (limited by maxQuadSize for UV tiling)
+                                while (X + width < WIDTH && width < maxQuadSize) {
+                                    int nextIdx = coordToIndex(X + width, Y, Z);
+                                    if (processedPosY[nextIdx]) break;
+                                    if (m_blocks[X + width][Y][Z] != id) break;
+                                    int nextNeighbor = getBlockID(X + width, Y + 1, Z);
+                                    if (isSolid(X + width, Y + 1, Z)) break; // Neighbor is solid
+                                    width++;
+                                }
+
+                                // Extend in +Z direction (limited by maxQuadSize for UV tiling)
+                                bool canExtendZ = true;
+                                while (Z + height < DEPTH && height < maxQuadSize && canExtendZ) {
+                                    // Check if entire row can be extended
+                                    for (int dx = 0; dx < width; dx++) {
+                                        int nextIdx = coordToIndex(X + dx, Y, Z + height);
+                                        if (processedPosY[nextIdx]) { canExtendZ = false; break; }
+                                        if (m_blocks[X + dx][Y][Z + height] != id) { canExtendZ = false; break; }
+                                        if (isSolid(X + dx, Y + 1, Z + height)) { canExtendZ = false; break; }
+                                    }
+                                    if (canExtendZ) height++;
+                                }
+
+                                // Mark all covered blocks as processed
+                                for (int dz = 0; dz < height; dz++) {
+                                    for (int dx = 0; dx < width; dx++) {
+                                        int markIdx = coordToIndex(X + dx, Y, Z + dz);
+                                        processedPosY[markIdx] = true;
+                                    }
+                                }
+                            } else {
+                                // Transparent/liquid blocks: don't merge, just mark as processed
+                                processedPosY[idx] = true;
+                            }
+
+                            // Render the merged quad
+                            renderFace(topTex, 48, 32, waterHeightAdjust, false, isCurrentTransparent,
+                                      glm::ivec3(0, 1, 0), float(width), float(height), X, Y, Z);
+                        } else {
+                            processedPosY[idx] = true; // Mark as processed even if not rendered
+                        }
+                    }
+                }
+
+                // Bottom face (y=0, facing -Y direction) - WITH GREEDY MESHING
+                {
+                    int idx = coordToIndex(X, Y, Z);
+                    if (!processedNegY[idx]) {
+                        int neighborBlockID = getBlockID(X, Y - 1, Z);
+                        bool neighborIsLiquid = isLiquid(X, Y - 1, Z);
+                        bool neighborIsSolid = isSolid(X, Y - 1, Z);
+                        bool shouldRender;
+                        if (isCurrentLiquid) {
+                            // Water: render bottom if not water below
+                            // Render against both air AND solid blocks (visible from below)
+                            shouldRender = !neighborIsLiquid;
+                        } else if (isCurrentTransparent) {
+                            shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
+                        } else {
+                            // Solid: render against air/water
+                            shouldRender = !neighborIsSolid;
+                        }
+
+                        if (shouldRender) {
+                            // GREEDY MESHING: Merge in +X and +Z directions
+                            int width = 1;
+                            int height = 1;
+
+                            if (!isCurrentLiquid && !isCurrentTransparent) {
+                                // Extend in +X direction (limited by maxQuadSize for UV tiling)
+                                while (X + width < WIDTH && width < maxQuadSize) {
+                                    int nextIdx = coordToIndex(X + width, Y, Z);
+                                    if (processedNegY[nextIdx]) break;
+                                    if (m_blocks[X + width][Y][Z] != id) break;
+                                    if (isSolid(X + width, Y - 1, Z)) break;
+                                    width++;
+                                }
+
+                                // Extend in +Z direction (limited by maxQuadSize for UV tiling)
+                                bool canExtendZ = true;
+                                while (Z + height < DEPTH && height < maxQuadSize && canExtendZ) {
+                                    for (int dx = 0; dx < width; dx++) {
+                                        int nextIdx = coordToIndex(X + dx, Y, Z + height);
+                                        if (processedNegY[nextIdx]) { canExtendZ = false; break; }
+                                        if (m_blocks[X + dx][Y][Z + height] != id) { canExtendZ = false; break; }
+                                        if (isSolid(X + dx, Y - 1, Z + height)) { canExtendZ = false; break; }
+                                    }
+                                    if (canExtendZ) height++;
+                                }
+
+                                // Mark all covered blocks as processed
+                                for (int dz = 0; dz < height; dz++) {
+                                    for (int dx = 0; dx < width; dx++) {
+                                        int markIdx = coordToIndex(X + dx, Y, Z + dz);
+                                        processedNegY[markIdx] = true;
+                                    }
+                                }
+                            } else {
+                                processedNegY[idx] = true;
+                            }
+
+                            renderFace(bottomTex, 60, 40, 0.0f, false, isCurrentTransparent,
+                                      glm::ivec3(0, -1, 0), float(width), float(height), X, Y, Z);
+                        } else {
+                            processedNegY[idx] = true;
+                        }
                     }
                 }
             }
@@ -1773,14 +2132,34 @@ float Chunk::getInterpolatedBlockLight(int x, int y, int z) const {
     return static_cast<float>(m_lightData[index].blockLight);
 }
 
+// ========== Lazy Interpolated Lighting (Memory Optimization 2025-11-25) ==========
+
+void Chunk::ensureInterpolatedLightingAllocated() {
+    if (!m_interpolatedLightData) {
+        m_interpolatedLightData = std::make_unique<InterpolatedLightArray>();
+        // Initialize to match target values (prevents fade-in)
+        for (int i = 0; i < WIDTH * HEIGHT * DEPTH; ++i) {
+            (*m_interpolatedLightData)[i].skyLight = static_cast<float>(m_lightData[i].skyLight);
+            (*m_interpolatedLightData)[i].blockLight = static_cast<float>(m_lightData[i].blockLight);
+        }
+    }
+}
+
+void Chunk::deallocateInterpolatedLighting() {
+    m_interpolatedLightData.reset();
+}
+
 void Chunk::updateInterpolatedLighting(float deltaTime, float speed) {
+    // MEMORY OPTIMIZATION: Only update if allocated (visible chunk)
+    if (!m_interpolatedLightData) return;
+
     // Smoothly interpolate current lighting toward target lighting values
     // This creates natural, gradual lighting transitions over time
     const float lerpFactor = 1.0f - std::exp(-speed * deltaTime);  // Exponential smoothing
 
     for (int i = 0; i < WIDTH * HEIGHT * DEPTH; ++i) {
         const BlockLight& target = m_lightData[i];
-        InterpolatedLight& current = m_interpolatedLightData[i];
+        InterpolatedLight& current = (*m_interpolatedLightData)[i];
 
         // Interpolate toward target values
         float targetSky = static_cast<float>(target.skyLight);
@@ -1800,11 +2179,14 @@ void Chunk::updateInterpolatedLighting(float deltaTime, float speed) {
 }
 
 void Chunk::initializeInterpolatedLighting() {
+    // MEMORY OPTIMIZATION: Lazy allocate on first use
+    ensureInterpolatedLightingAllocated();
+
     // Initialize interpolated values to match target values immediately
     // This prevents fade-in effect when chunks are first loaded
     for (int i = 0; i < WIDTH * HEIGHT * DEPTH; ++i) {
         const BlockLight& target = m_lightData[i];
-        InterpolatedLight& current = m_interpolatedLightData[i];
+        InterpolatedLight& current = (*m_interpolatedLightData)[i];
 
         current.skyLight = static_cast<float>(target.skyLight);
         current.blockLight = static_cast<float>(target.blockLight);

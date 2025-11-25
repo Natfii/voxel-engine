@@ -43,18 +43,29 @@ struct UniformBufferObject {
 /**
  * @brief Queue family indices for Vulkan device
  *
- * Identifies which queue families support graphics and presentation.
+ * Identifies which queue families support graphics, presentation, and transfer.
+ * PERFORMANCE OPTIMIZATION (2025-11-24): Added dedicated transfer queue for async uploads
  */
 struct QueueFamilyIndices {
     std::optional<uint32_t> graphicsFamily;  ///< Queue family supporting graphics ops
     std::optional<uint32_t> presentFamily;   ///< Queue family supporting presentation
+    std::optional<uint32_t> transferFamily;  ///< Queue family for async transfers (optional)
 
     /**
      * @brief Checks if all required queue families are available
      * @return True if both graphics and present queues exist
+     * Note: Transfer queue is optional - will fall back to graphics queue if unavailable
      */
     bool isComplete() {
         return graphicsFamily.has_value() && presentFamily.has_value();
+    }
+
+    /**
+     * @brief Checks if a dedicated transfer queue is available
+     * @return True if transfer queue exists and differs from graphics queue
+     */
+    bool hasDedicatedTransferQueue() {
+        return transferFamily.has_value() && transferFamily.value() != graphicsFamily.value();
     }
 };
 
@@ -219,7 +230,9 @@ public:
     VkPipeline getWireframePipeline() const { return m_wireframePipeline; }     ///< Get wireframe pipeline
     VkPipeline getLinePipeline() const { return m_linePipeline; }               ///< Get line pipeline
     VkPipeline getTransparentPipeline() const { return m_transparentPipeline; } ///< Get transparent pipeline (no depth write)
+    VkPipeline getMeshPipeline() const { return m_meshPipeline; }               ///< Get mesh rendering pipeline
     VkPipelineLayout getPipelineLayout() const { return m_pipelineLayout; }     ///< Get pipeline layout
+    VkPipelineLayout getMeshPipelineLayout() const { return m_meshPipelineLayout; }  ///< Get mesh pipeline layout
     VkCommandBuffer getCurrentCommandBuffer() const { return m_commandBuffers[m_currentFrame]; }  ///< Get current cmd buffer
     VkDescriptorSetLayout getDescriptorSetLayout() const { return m_descriptorSetLayout; }  ///< Get descriptor layout
     VkDescriptorSet getCurrentDescriptorSet() const { return m_descriptorSets[m_currentFrame]; }  ///< Get current descriptor
@@ -434,6 +447,67 @@ public:
      */
     void resetPipelineCache();
 
+    // ========== Mesh Rendering API ==========
+
+    /**
+     * @brief Upload mesh vertex and index data to GPU
+     *
+     * Creates device-local buffers and uploads mesh geometry using staging buffers.
+     *
+     * @param vertices Pointer to vertex data
+     * @param vertexCount Number of vertices
+     * @param indices Pointer to index data
+     * @param indexCount Number of indices
+     * @param outVertexBuffer Output vertex buffer handle
+     * @param outIndexBuffer Output index buffer handle
+     * @param outVertexMemory Output vertex buffer memory
+     * @param outIndexMemory Output index buffer memory
+     */
+    void uploadMeshBuffers(const void* vertices, uint32_t vertexCount, uint32_t vertexSize,
+                          const void* indices, uint32_t indexCount,
+                          VkBuffer& outVertexBuffer, VkBuffer& outIndexBuffer,
+                          VkDeviceMemory& outVertexMemory, VkDeviceMemory& outIndexMemory);
+
+    /**
+     * @brief Destroy mesh buffers and free memory
+     *
+     * @param vertexBuffer Vertex buffer to destroy
+     * @param indexBuffer Index buffer to destroy
+     * @param vertexMemory Vertex memory to free
+     * @param indexMemory Index memory to free
+     */
+    void destroyMeshBuffers(VkBuffer vertexBuffer, VkBuffer indexBuffer,
+                           VkDeviceMemory vertexMemory, VkDeviceMemory indexMemory);
+
+    /**
+     * @brief Create material uniform buffer
+     *
+     * @param materialData Pointer to MaterialUBO data
+     * @param outBuffer Output buffer handle
+     * @param outMemory Output memory handle
+     * @param outMapped Output mapped pointer for updates
+     */
+    void createMaterialBuffer(const void* materialData,
+                             VkBuffer& outBuffer,
+                             VkDeviceMemory& outMemory,
+                             void*& outMapped);
+
+    /**
+     * @brief Update material uniform buffer
+     *
+     * @param mapped Mapped memory pointer
+     * @param materialData New material data
+     */
+    void updateMaterialBuffer(void* mapped, const void* materialData);
+
+    /**
+     * @brief Destroy material buffer
+     *
+     * @param buffer Buffer to destroy
+     * @param memory Memory to free
+     */
+    void destroyMaterialBuffer(VkBuffer buffer, VkDeviceMemory memory);
+
     /**
      * @brief Reset mega-buffer allocation offsets (clears all chunk data)
      *
@@ -647,6 +721,7 @@ private:
     void createWireframePipeline();
     void createLinePipeline();
     void createSkyboxPipeline();
+    void createMeshPipeline();
     void createFramebuffers();
     void createCommandPool();
     void createDepthResources();
@@ -705,6 +780,7 @@ private:
     VkDevice m_device;
     VkQueue m_graphicsQueue;
     VkQueue m_presentQueue;
+    VkQueue m_transferQueue;  ///< PERF (2025-11-24): Dedicated transfer queue for async GPU uploads
 
     // Swapchain
     VkSwapchainKHR m_swapChain;
@@ -724,8 +800,14 @@ private:
     VkPipeline m_transparentPipeline;  // Same as graphics pipeline but with depth writes disabled
     VkPipeline m_skyboxPipeline;
 
+    // Mesh rendering pipeline (separate from voxel pipeline)
+    VkDescriptorSetLayout m_meshDescriptorSetLayout;
+    VkPipelineLayout m_meshPipelineLayout;
+    VkPipeline m_meshPipeline;
+
     // Command buffers
     VkCommandPool m_commandPool;
+    VkCommandPool m_transferCommandPool;  ///< PERF (2025-11-24): Separate command pool for transfer queue
     std::vector<VkCommandBuffer> m_commandBuffers;
 
     // Depth buffer
@@ -793,7 +875,7 @@ private:
     };
     std::deque<PendingUpload> m_pendingUploads;
     std::mutex m_pendingUploadsMutex;
-    static const int MAX_PENDING_UPLOADS = 25;  // Limit concurrent uploads (increased for better throughput)
+    static const int MAX_PENDING_UPLOADS = 50;  // Limit concurrent uploads (doubled for reduced stalls)
 
     // Deferred deletion queue (fence-based resource cleanup)
     struct DeferredDeletion {

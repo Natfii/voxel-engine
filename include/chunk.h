@@ -181,16 +181,18 @@ public:
     void generate(class BiomeMap* biomeMap);
 
     /**
-     * @brief Generates optimized mesh with face culling
+     * @brief Generates optimized mesh with face culling and LOD support
      *
      * Creates vertex and index data for visible block faces only.
      * Performs face culling against adjacent chunks.
+     * PERFORMANCE (2025-11-24): LOD reduces triangle count for distant chunks
      *
      * @param world World instance to query neighboring chunks
      * @param callerHoldsLock If true, caller already holds world's chunk map lock (prevents deadlock)
+     * @param lodLevel Level of detail (0=full, 1=half, 2=quarter resolution)
      * @note Must be called after all chunks are generated
      */
-    void generateMesh(class World* world, bool callerHoldsLock = false);
+    void generateMesh(class World* world, bool callerHoldsLock = false, int lodLevel = 0);
 
     /**
      * @brief Creates Vulkan vertex and index buffers
@@ -679,6 +681,12 @@ public:
      */
     bool isEmpty() const;
 
+    /**
+     * @brief Deallocates interpolated lighting to save memory
+     * Called when chunk is unloaded to cache (saves 256KB per chunk)
+     */
+    void deallocateInterpolatedLighting();
+
 private:
     // ========== Position and Storage ==========
     int m_x, m_y, m_z;                      ///< Chunk coordinates in chunk space
@@ -697,12 +705,21 @@ private:
     std::array<int16_t, WIDTH * DEPTH> m_heightMap; ///< Highest solid block Y per XZ column (2 KB, 32x32 grid)
 
     // ========== Interpolated Lighting (Smooth Time-Based Transitions) ==========
+    // MEMORY OPTIMIZATION (2025-11-25): Lazy-allocated to save 256KB per cached chunk
+    // Only allocated when chunk is actively rendering, deallocated when unloaded
     struct InterpolatedLight {
         float skyLight;    // Current interpolated sky light (0.0-15.0)
         float blockLight;  // Current interpolated block light (0.0-15.0)
         InterpolatedLight() : skyLight(0.0f), blockLight(0.0f) {}
     };
-    std::array<InterpolatedLight, WIDTH * HEIGHT * DEPTH> m_interpolatedLightData; ///< Smooth lighting values (256 KB)
+    using InterpolatedLightArray = std::array<InterpolatedLight, WIDTH * HEIGHT * DEPTH>;
+    std::unique_ptr<InterpolatedLightArray> m_interpolatedLightData; ///< Lazy-allocated smooth lighting (256 KB when allocated)
+
+    /**
+     * @brief Ensures interpolated lighting is allocated (lazy allocation)
+     * Called automatically by getInterpolatedXXX and initializeInterpolatedLighting
+     */
+    void ensureInterpolatedLightingAllocated();
 
     // ========== Mesh Data ==========
     std::vector<Vertex> m_vertices;         ///< CPU-side vertex data (opaque)

@@ -70,6 +70,8 @@ void MainMenu::renderLoadWorldDialog() {
         // Scrollable list of worlds
         ImGui::BeginChild("WorldList", ImVec2(dialogWidth - 40.0f, dialogHeight - 150.0f), true);
 
+        static int confirmDeleteIndex = -1;  // Track which world is pending delete confirmation
+
         for (size_t i = 0; i < availableWorlds.size(); i++) {
             namespace fs = std::filesystem;
             std::string worldName = fs::path(availableWorlds[i]).filename().string();
@@ -80,14 +82,50 @@ void MainMenu::renderLoadWorldDialog() {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.8f, 1.0f));
             }
 
-            if (ImGui::Button(worldName.c_str(), ImVec2(dialogWidth - 60.0f, 35.0f))) {
+            // World name button (narrower to make room for delete)
+            if (ImGui::Button(worldName.c_str(), ImVec2(dialogWidth - 120.0f, 35.0f))) {
                 selectedWorldIndex = (int)i;
+                confirmDeleteIndex = -1;  // Cancel any pending delete
             }
 
             if (isSelected) {
                 ImGui::PopStyleColor();
             }
 
+            // Delete button
+            ImGui::SameLine();
+            ImGui::PushID(static_cast<int>(i));
+
+            if (confirmDeleteIndex == (int)i) {
+                // Show confirmation
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                if (ImGui::Button("Sure?", ImVec2(50.0f, 35.0f))) {
+                    // Actually delete the world
+                    try {
+                        fs::remove_all(availableWorlds[i]);
+                        availableWorlds.erase(availableWorlds.begin() + i);
+                        if (selectedWorldIndex >= (int)availableWorlds.size()) {
+                            selectedWorldIndex = (int)availableWorlds.size() - 1;
+                        }
+                        confirmDeleteIndex = -1;
+                        ImGui::PopStyleColor();
+                        ImGui::PopID();
+                        break;  // List changed, restart iteration
+                    } catch (...) {
+                        // Delete failed, just cancel
+                        confirmDeleteIndex = -1;
+                    }
+                }
+                ImGui::PopStyleColor();
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.2f, 0.2f, 1.0f));
+                if (ImGui::Button("Del", ImVec2(50.0f, 35.0f))) {
+                    confirmDeleteIndex = (int)i;  // Ask for confirmation
+                }
+                ImGui::PopStyleColor();
+            }
+
+            ImGui::PopID();
             ImGui::Spacing();
         }
 
