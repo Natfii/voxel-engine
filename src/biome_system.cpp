@@ -1,8 +1,8 @@
 #include "biome_system.h"
 #include "tree_generator.h"
+#include "logger.h"
 #include <yaml-cpp/yaml.h>
 #include <filesystem>
-#include <iostream>
 #include <algorithm>
 #include <cctype>
 #include <sstream>
@@ -19,10 +19,10 @@ BiomeRegistry& BiomeRegistry::getInstance() {
 // ==================== Loading Functions ====================
 
 bool BiomeRegistry::loadBiomes(const std::string& directory) {
-    std::cout << "Loading biomes from: " << directory << std::endl;
+    Logger::info() << "Loading biomes from: " << directory;
 
     if (!fs::exists(directory)) {
-        std::cerr << "Biome directory does not exist: " << directory << std::endl;
+        Logger::error() << "Biome directory does not exist: " << directory;
         return false;
     }
 
@@ -34,32 +34,32 @@ bool BiomeRegistry::loadBiomes(const std::string& directory) {
                 if (loadBiomeFromFile(path.string())) {
                     loadedCount++;
                 } else {
-                    std::cerr << "Failed to load biome from: " << path << std::endl;
+                    Logger::error() << "Failed to load biome from: " << path.string();
                 }
             }
         }
     }
 
-    std::cout << "Successfully loaded " << loadedCount << " biome(s)" << std::endl;
+    Logger::info() << "Successfully loaded " << loadedCount << " biome(s)";
     return loadedCount > 0;
 }
 
 void BiomeRegistry::generateTreeTemplates(TreeGenerator* treeGenerator) {
     if (!treeGenerator) {
-        std::cerr << "Cannot generate tree templates: TreeGenerator is null" << std::endl;
+        Logger::error() << "Cannot generate tree templates: TreeGenerator is null";
         return;
     }
 
-    std::cout << "Generating tree templates for " << m_biomes.size() << " biome(s)..." << std::endl;
+    Logger::info() << "Generating tree templates for " << m_biomes.size() << " biome(s)...";
 
     for (auto& biome : m_biomes) {
         if (biome->trees_spawn) {
             treeGenerator->generateTreeTemplatesForBiome(biome.get());
-            std::cout << "  Generated 10 tree templates for biome: " << biome->name << std::endl;
+            Logger::debug() << "  Generated 10 tree templates for biome: " << biome->name;
         }
     }
 
-    std::cout << "Tree template generation complete" << std::endl;
+    Logger::info() << "Tree template generation complete";
 }
 
 bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
@@ -70,50 +70,50 @@ bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
 
         // ===== REQUIRED FIELDS =====
         if (!doc["name"]) {
-            std::cerr << "Missing required field 'name' in: " << filepath << std::endl;
+            Logger::error() << "Missing required field 'name' in: " << filepath;
             return false;
         }
         biome->name = normalizeName(doc["name"].as<std::string>());
 
         if (!doc["temperature"]) {
-            std::cerr << "Missing required field 'temperature' in: " << filepath << std::endl;
+            Logger::error() << "Missing required field 'temperature' in: " << filepath;
             return false;
         }
         biome->temperature = doc["temperature"].as<int>();
 
         if (!doc["moisture"]) {
-            std::cerr << "Missing required field 'moisture' in: " << filepath << std::endl;
+            Logger::error() << "Missing required field 'moisture' in: " << filepath;
             return false;
         }
         biome->moisture = doc["moisture"].as<int>();
 
         if (!doc["age"]) {
-            std::cerr << "Missing required field 'age' in: " << filepath << std::endl;
+            Logger::error() << "Missing required field 'age' in: " << filepath;
             return false;
         }
         biome->age = doc["age"].as<int>();
 
         if (!doc["activity"]) {
-            std::cerr << "Missing required field 'activity' in: " << filepath << std::endl;
+            Logger::error() << "Missing required field 'activity' in: " << filepath;
             return false;
         }
         biome->activity = doc["activity"].as<int>();
 
         // Validate ranges
         if (biome->temperature < 0 || biome->temperature > 100) {
-            std::cerr << "Temperature must be 0-100 in: " << filepath << std::endl;
+            Logger::error() << "Temperature must be 0-100 in: " << filepath;
             return false;
         }
         if (biome->moisture < 0 || biome->moisture > 100) {
-            std::cerr << "Moisture must be 0-100 in: " << filepath << std::endl;
+            Logger::error() << "Moisture must be 0-100 in: " << filepath;
             return false;
         }
         if (biome->age < 0 || biome->age > 100) {
-            std::cerr << "Age must be 0-100 in: " << filepath << std::endl;
+            Logger::error() << "Age must be 0-100 in: " << filepath;
             return false;
         }
         if (biome->activity < 0 || biome->activity > 100) {
-            std::cerr << "Activity must be 0-100 in: " << filepath << std::endl;
+            Logger::error() << "Activity must be 0-100 in: " << filepath;
             return false;
         }
 
@@ -225,14 +225,14 @@ bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
         m_biomeNameToIndex[biome->name] = index;
         m_biomes.push_back(std::move(biome));
 
-        std::cout << "  Loaded biome: " << m_biomes.back()->name << std::endl;
+        Logger::debug() << "  Loaded biome: " << m_biomes.back()->name;
         return true;
 
     } catch (const YAML::Exception& e) {
-        std::cerr << "YAML parsing error in " << filepath << ": " << e.what() << std::endl;
+        Logger::error() << "YAML parsing error in " << filepath << ": " << e.what();
         return false;
     } catch (const std::exception& e) {
-        std::cerr << "Error loading biome from " << filepath << ": " << e.what() << std::endl;
+        Logger::error() << "Error loading biome from " << filepath << ": " << e.what();
         return false;
     }
 }
@@ -290,7 +290,7 @@ BiomeSpawnLocation BiomeRegistry::parseSpawnLocation(const std::string& location
         return BiomeSpawnLocation::Both;
     }
 
-    std::cerr << "Warning: Unknown spawn location '" << location_str << "', defaulting to AboveGround" << std::endl;
+    Logger::warning() << "Unknown spawn location '" << location_str << "', defaulting to AboveGround";
     return BiomeSpawnLocation::AboveGround;
 }
 
@@ -308,8 +308,8 @@ std::vector<int> BiomeRegistry::parseIntList(const std::string& str) {
         if (!token.empty()) {
             try {
                 result.push_back(std::stoi(token));
-            } catch (const std::exception& e) {
-                std::cerr << "Warning: Invalid integer '" << token << "' in list" << std::endl;
+            } catch (const std::exception&) {
+                Logger::warning() << "Invalid integer '" << token << "' in list";
             }
         }
     }
@@ -361,11 +361,11 @@ std::vector<OreSpawnRate> BiomeRegistry::parseOreSpawnRates(const std::string& s
                 try {
                     float multiplier = std::stof(multiplier_str);
                     result.push_back({ore_name, multiplier});
-                } catch (const std::exception& e) {
-                    std::cerr << "Warning: Invalid ore spawn rate '" << token << "'" << std::endl;
+                } catch (const std::exception&) {
+                    Logger::warning() << "Invalid ore spawn rate '" << token << "'";
                 }
             } else {
-                std::cerr << "Warning: Invalid ore spawn rate format '" << token << "' (expected 'name:multiplier')" << std::endl;
+                Logger::warning() << "Invalid ore spawn rate format '" << token << "' (expected 'name:multiplier')";
             }
         }
     }
@@ -384,8 +384,8 @@ glm::vec3 BiomeRegistry::parseColor(const std::string& str) {
         if (!token.empty()) {
             try {
                 components.push_back(std::stoi(token));
-            } catch (const std::exception& e) {
-                std::cerr << "Warning: Invalid color component '" << token << "'" << std::endl;
+            } catch (const std::exception&) {
+                Logger::warning() << "Invalid color component '" << token << "'";
             }
         }
     }
@@ -399,7 +399,7 @@ glm::vec3 BiomeRegistry::parseColor(const std::string& str) {
         );
     }
 
-    std::cerr << "Warning: Invalid color format '" << str << "', using default" << std::endl;
+    Logger::warning() << "Invalid color format '" << str << "', using default";
     return glm::vec3(0.5f, 0.7f, 0.9f);  // Default sky-ish color
 }
 

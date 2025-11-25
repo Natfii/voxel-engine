@@ -81,6 +81,81 @@ struct SwapChainSupportDetails {
     std::vector<VkPresentModeKHR> presentModes;   ///< Supported presentation modes
 };
 
+// ========== Staging Buffer Pool (2025-11-25) ==========
+// Persistent staging buffer pool for efficient GPU uploads
+// Buffers are mapped once and reused, eliminating per-transfer map/unmap overhead
+
+/**
+ * @brief A single staging buffer with persistent mapping
+ */
+struct StagingBuffer {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    void* mappedPtr = nullptr;   ///< Persistently mapped - never unmapped
+    VkDeviceSize size = 0;
+    bool inUse = false;
+};
+
+/**
+ * @brief Pool of persistently mapped staging buffers
+ *
+ * Eliminates vkMapMemory/vkUnmapMemory overhead by mapping buffers once at creation.
+ * Use acquire() to get a buffer, memcpy data, then release() when done.
+ */
+class StagingBufferPool {
+public:
+    StagingBufferPool() = default;
+    ~StagingBufferPool() = default;
+
+    /**
+     * @brief Initialize the pool with pre-allocated buffers
+     * @param device Vulkan device
+     * @param physicalDevice Physical device for memory type lookup
+     * @param bufferSize Size of each staging buffer
+     * @param count Number of buffers to create
+     */
+    void initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize bufferSize, size_t count);
+
+    /**
+     * @brief Cleanup all buffers
+     * @param device Vulkan device
+     */
+    void cleanup(VkDevice device);
+
+    /**
+     * @brief Acquire an available staging buffer
+     * @return Pointer to staging buffer, or nullptr if all in use
+     */
+    StagingBuffer* acquire();
+
+    /**
+     * @brief Acquire a buffer of at least the specified size
+     * @param minSize Minimum required size
+     * @return Pointer to staging buffer, or nullptr if none available
+     */
+    StagingBuffer* acquireWithSize(VkDeviceSize minSize);
+
+    /**
+     * @brief Release a staging buffer back to the pool
+     * @param buffer Buffer to release
+     */
+    void release(StagingBuffer* buffer);
+
+    /**
+     * @brief Get total number of buffers in pool
+     */
+    size_t getPoolSize() const { return m_pool.size(); }
+
+    /**
+     * @brief Get number of buffers currently in use
+     */
+    size_t getInUseCount() const;
+
+private:
+    std::vector<StagingBuffer> m_pool;
+    std::mutex m_poolMutex;
+};
+
 /**
  * @brief Vulkan rendering backend with complete graphics pipeline
  *
@@ -236,6 +311,19 @@ public:
     VkCommandBuffer getCurrentCommandBuffer() const { return m_commandBuffers[m_currentFrame]; }  ///< Get current cmd buffer
     VkDescriptorSetLayout getDescriptorSetLayout() const { return m_descriptorSetLayout; }  ///< Get descriptor layout
     VkDescriptorSet getCurrentDescriptorSet() const { return m_descriptorSets[m_currentFrame]; }  ///< Get current descriptor
+    VkDescriptorPool getDescriptorPool() const { return m_descriptorPool; }  ///< Get descriptor pool
+
+    /**
+     * @brief Create a descriptor set for a custom texture (e.g., map preview on loading sphere)
+     *
+     * Creates a descriptor set matching the graphics pipeline layout but using
+     * a custom texture instead of the texture atlas at binding 1.
+     *
+     * @param imageView The texture's image view
+     * @param sampler The texture's sampler
+     * @return VkDescriptorSet that can be bound during rendering
+     */
+    VkDescriptorSet createCustomTextureDescriptorSet(VkImageView imageView, VkSampler sampler);
     uint32_t getCurrentFrame() const { return m_currentFrame; }                 ///< Get current frame index
     VkExtent2D getSwapChainExtent() const { return m_swapChainExtent; }        ///< Get swapchain extent
 
@@ -367,6 +455,36 @@ public:
      * Staging buffers will be cleaned up asynchronously when GPU completes.
      */
     void submitBatchedChunkUploads();
+
+    // ========== GPU Backlog Monitoring (2025-11-25) ==========
+
+    /**
+     * @brief Get number of pending async uploads waiting for GPU completion
+     * @return Number of uploads in flight
+     */
+    size_t getPendingUploadCount() const;
+
+    /**
+     * @brief Check if GPU upload queue is backlogged
+     *
+     * Returns true if pending uploads exceed threshold, indicating
+     * the GPU can't keep up with upload rate. Callers should defer
+     * new uploads when backlogged to prevent frame stalls.
+     *
+     * @param threshold Max pending uploads before considered backlogged (default: 20)
+     * @return True if pending uploads >= threshold
+     */
+    bool isUploadBacklogged(size_t threshold = 20) const;
+
+    /**
+     * @brief Get recommended number of chunks to upload this frame
+     *
+     * Returns 0 if GPU is severely backlogged, otherwise returns
+     * a value based on current backlog level for smooth streaming.
+     *
+     * @return Recommended upload count (0-4)
+     */
+    size_t getRecommendedUploadCount() const;
 
     // ========== Indirect Drawing API (GPU Optimization) ==========
 
@@ -782,6 +900,10 @@ private:
     VkQueue m_presentQueue;
     VkQueue m_transferQueue;  ///< PERF (2025-11-24): Dedicated transfer queue for async GPU uploads
 
+    // Queue family indices (needed for queue ownership transfer barriers)
+    uint32_t m_graphicsQueueFamily = 0;
+    uint32_t m_transferQueueFamily = 0;
+
     // Swapchain
     VkSwapchainKHR m_swapChain;
     std::vector<VkImage> m_swapChainImages;
@@ -874,7 +996,7 @@ private:
         std::vector<std::pair<VkBuffer, VkDeviceMemory>> stagingBuffers;
     };
     std::deque<PendingUpload> m_pendingUploads;
-    std::mutex m_pendingUploadsMutex;
+    mutable std::mutex m_pendingUploadsMutex;  // mutable for const getters
     static const int MAX_PENDING_UPLOADS = 50;  // Limit concurrent uploads (doubled for reduced stalls)
 
     // Deferred deletion queue (fence-based resource cleanup)
@@ -919,6 +1041,20 @@ private:
 
     // Pipeline state caching (reduces redundant vkCmdBindPipeline calls)
     VkPipeline m_currentlyBoundPipeline = VK_NULL_HANDLE;
+
+    // ========== Staging Buffer Pool (2025-11-25) ==========
+    // Persistently mapped staging buffers for efficient GPU uploads
+    StagingBufferPool m_stagingBufferPool;
+    static constexpr VkDeviceSize STAGING_BUFFER_SIZE = 4 * 1024 * 1024;  // 4MB per staging buffer
+    static constexpr size_t STAGING_BUFFER_COUNT = 16;  // Pre-allocate 16 buffers (64MB total)
+
+    /**
+     * @brief Check if we have a dedicated transfer queue (different from graphics)
+     * @return True if transfer and graphics queue families differ
+     */
+    bool hasDedicatedTransferQueue() const {
+        return m_transferQueueFamily != m_graphicsQueueFamily;
+    }
 
 private:
     /**

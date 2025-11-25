@@ -298,6 +298,64 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
         }
     }
 
+    // ============================================================================
+    // PREDICTIVE PRE-GENERATION (2025-11-25): Generate chunks ahead of movement
+    // ============================================================================
+    // When player is moving, pre-generate chunks in their movement direction.
+    // This reduces pop-in when moving quickly through the world.
+    // ============================================================================
+    if (m_predictiveEnabled && m_playerVelocity > 2.0f) {
+        // Calculate movement direction
+        glm::vec3 delta = playerPos - m_previousPlayerPos;
+        if (glm::length(delta) > 0.1f) {
+            m_playerMovementDir = glm::normalize(delta);
+
+            // Calculate look-ahead position (where player will be)
+            glm::vec3 lookAheadPos = playerPos + m_playerMovementDir * m_lookAheadDistance;
+
+            // Convert to chunk coordinates
+            int lookAheadChunkX = static_cast<int>(std::floor(lookAheadPos.x / 32.0f));
+            int lookAheadChunkZ = static_cast<int>(std::floor(lookAheadPos.z / 32.0f));
+
+            // Queue chunks around the look-ahead position (but don't spam)
+            static int lastLookAheadX = INT_MAX, lastLookAheadZ = INT_MAX;
+            if (lookAheadChunkX != lastLookAheadX || lookAheadChunkZ != lastLookAheadZ) {
+                lastLookAheadX = lookAheadChunkX;
+                lastLookAheadZ = lookAheadChunkZ;
+
+                // Queue a small radius around the look-ahead point
+                const int LOOK_AHEAD_RADIUS = 2;  // Small radius (5x5 chunks)
+                for (int dz = -LOOK_AHEAD_RADIUS; dz <= LOOK_AHEAD_RADIUS; dz++) {
+                    for (int dx = -LOOK_AHEAD_RADIUS; dx <= LOOK_AHEAD_RADIUS; dx++) {
+                        for (int chunkY = 1; chunkY <= 3; chunkY++) {
+                            int chunkX = lookAheadChunkX + dx;
+                            int chunkZ = lookAheadChunkZ + dz;
+
+                            ChunkCoord coord{chunkX, chunkY, chunkZ};
+                            if (loadedChunks.find(coord) == loadedChunks.end()) {
+                                std::lock_guard<std::mutex> lock(m_loadQueueMutex);
+                                if (m_chunksInFlight.find(coord) == m_chunksInFlight.end()) {
+                                    m_chunksInFlight.insert(coord);
+
+                                    ChunkLoadRequest request;
+                                    request.chunkX = chunkX;
+                                    request.chunkY = chunkY;
+                                    request.chunkZ = chunkZ;
+                                    request.priority = 50.0f;  // High priority for look-ahead
+                                    request.lod = ChunkLOD::FULL;
+
+                                    m_loadQueue.push(request);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                m_loadQueueCV.notify_all();
+            }
+        }
+    }
+
     // Process chunk unloads (already identified in single iteration above)
     // PERFORMANCE FIX: Unload logic now inlined - eliminates second forEachChunkCoord() call
 #if USE_INDIRECT_DRAWING
@@ -469,8 +527,28 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame, float maxMill
     {
         std::lock_guard<std::mutex> lock(m_readyForUploadMutex);
 
-        // GPU upload bottleneck - keep at 1 chunk to prevent command queue overflow
-        while (!m_chunksReadyForUpload.empty() && chunksToUpload.size() < 1) {
+        // ============================================================================
+        // GPU BACKLOG-AWARE UPLOAD (2025-11-25)
+        // ============================================================================
+        // Instead of fixed "1 chunk per frame", adapt to GPU state:
+        // - Check GPU backlog before uploading
+        // - Use recommended count based on pending uploads
+        // - Skip entirely if severely backlogged (prevents 1000ms+ stalls)
+        // ============================================================================
+        size_t maxUploads = m_renderer ? m_renderer->getRecommendedUploadCount() : 1;
+
+        // Log backlog state periodically for debugging
+        static int backlogLogCounter = 0;
+        if (m_renderer && ++backlogLogCounter % 300 == 0) {  // Every 5 sec at 60fps
+            size_t pending = m_renderer->getPendingUploadCount();
+            if (pending > 5) {
+                Logger::debug() << "GPU upload backlog: " << pending
+                               << " pending, recommended: " << maxUploads << " uploads/frame";
+            }
+        }
+
+        // Collect chunks respecting GPU backlog limit
+        while (!m_chunksReadyForUpload.empty() && chunksToUpload.size() < maxUploads) {
             // Check time budget before adding more chunks
             if (maxMilliseconds > 0.0f) {
                 auto now = std::chrono::high_resolution_clock::now();
@@ -482,6 +560,29 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame, float maxMill
 
             chunksToUpload.push_back(m_chunksReadyForUpload.front());
             m_chunksReadyForUpload.pop();
+        }
+
+        // ============================================================================
+        // PRIORITY SORT: Upload visible/close chunks first
+        // ============================================================================
+        if (chunksToUpload.size() > 1) {
+            glm::vec3 playerPos = m_lastPlayerPos;
+            std::sort(chunksToUpload.begin(), chunksToUpload.end(),
+                [&playerPos](const auto& a, const auto& b) {
+                    // Calculate distance to player for each chunk
+                    auto [ax, ay, az] = a;
+                    auto [bx, by, bz] = b;
+
+                    float distA = glm::length(glm::vec3(ax * 32, ay * 32, az * 32) - playerPos);
+                    float distB = glm::length(glm::vec3(bx * 32, by * 32, bz * 32) - playerPos);
+
+                    // Prioritize surface chunks (y >= 0) over underground
+                    bool surfaceA = ay >= 0;
+                    bool surfaceB = by >= 0;
+                    if (surfaceA != surfaceB) return surfaceA;  // Surface first
+
+                    return distA < distB;  // Then by distance
+                });
         }
     }
 
@@ -690,6 +791,26 @@ void WorldStreaming::meshWorkerThreadFunction() {
             try {
                 Chunk* chunkPtr = m_world->getChunkAt(chunkX, chunkY, chunkZ);
                 if (chunkPtr) {
+                    // ============================================================================
+                    // OCCLUSION SKIP (2025-11-25): Skip mesh generation for fully occluded chunks
+                    // ============================================================================
+                    // Underground chunks surrounded by solid blocks are invisible.
+                    // Skip expensive mesh generation entirely - saves ~1-2ms per chunk!
+                    // Check only for underground chunks (Y < 0) to avoid surface pop-in.
+                    // ============================================================================
+                    if (chunkY < 0 && chunkPtr->isFullyOccluded(m_world, false)) {
+                        Logger::debug() << "Skipping occluded underground chunk ("
+                                       << chunkX << ", " << chunkY << ", " << chunkZ << ")";
+
+                        // Remove from tracking - this chunk doesn't need meshing
+                        {
+                            std::lock_guard<std::mutex> lock(m_chunksMeshingMutex);
+                            m_chunksBeingMeshed.erase(ChunkCoord{chunkX, chunkY, chunkZ});
+                        }
+
+                        continue;  // Skip to next chunk
+                    }
+
                     // ASYNC LIGHTING (2025-11-25): Initialize lighting on worker thread
                     // This is now safe because:
                     // 1. If no emissive blocks exist (common case), this is instant
@@ -946,4 +1067,79 @@ bool WorldStreaming::isInSpawnAnchor(int chunkX, int chunkY, int chunkZ) const {
     int dz = std::abs(chunkZ - m_spawnAnchorZ);
 
     return dx <= m_spawnAnchorRadius && dy <= m_spawnAnchorRadius && dz <= m_spawnAnchorRadius;
+}
+
+// ========== Background Pre-Generation (2025-11-25) ==========
+
+void WorldStreaming::setPredictiveGeneration(bool enabled, float lookAheadDistance) {
+    m_predictiveEnabled = enabled;
+    m_lookAheadDistance = lookAheadDistance;
+
+    Logger::info() << "Predictive generation " << (enabled ? "enabled" : "disabled")
+                  << " (look-ahead: " << lookAheadDistance << " blocks)";
+}
+
+void WorldStreaming::queueBackgroundGeneration(int centerX, int centerZ, int radius) {
+    if (!m_running.load()) return;
+
+    // Convert world coordinates to chunk coordinates
+    constexpr int CHUNK_SIZE = 32;
+    int centerChunkX = centerX / CHUNK_SIZE;
+    int centerChunkZ = centerZ / CHUNK_SIZE;
+
+    // Queue chunks at surface level (Y=2 is surface, also Y=1 and Y=3 for caves/hills)
+    std::vector<ChunkLoadRequest> backgroundRequests;
+
+    for (int dz = -radius; dz <= radius; dz++) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            // Skip corners (circular pattern)
+            if (dx*dx + dz*dz > radius*radius) continue;
+
+            int chunkX = centerChunkX + dx;
+            int chunkZ = centerChunkZ + dz;
+
+            // Queue surface and near-surface chunks
+            for (int chunkY = 1; chunkY <= 3; chunkY++) {
+                // Skip if already loaded or in flight
+                if (m_world->getChunkAt(chunkX, chunkY, chunkZ) != nullptr) continue;
+
+                ChunkCoord coord{chunkX, chunkY, chunkZ};
+                {
+                    std::lock_guard<std::mutex> lock(m_loadQueueMutex);
+                    if (m_chunksInFlight.find(coord) != m_chunksInFlight.end()) continue;
+                }
+
+                // Use distance as priority (further = lower priority)
+                float distance = static_cast<float>(std::sqrt(dx*dx + dz*dz)) * CHUNK_SIZE;
+
+                ChunkLoadRequest request;
+                request.chunkX = chunkX;
+                request.chunkY = chunkY;
+                request.chunkZ = chunkZ;
+                request.priority = distance + 1000.0f;  // Add 1000 to deprioritize vs player-near chunks
+                request.lod = ChunkLOD::TERRAIN_ONLY;   // Just terrain, no mesh (low priority)
+
+                backgroundRequests.push_back(request);
+            }
+        }
+    }
+
+    // Add to load queue
+    if (!backgroundRequests.empty()) {
+        std::lock_guard<std::mutex> lock(m_loadQueueMutex);
+        for (const auto& request : backgroundRequests) {
+            ChunkCoord coord{request.chunkX, request.chunkY, request.chunkZ};
+            if (m_chunksInFlight.find(coord) == m_chunksInFlight.end()) {
+                m_chunksInFlight.insert(coord);
+                m_loadQueue.push(request);
+            }
+        }
+
+        if (!m_loadQueue.empty()) {
+            m_loadQueueCV.notify_all();
+        }
+
+        Logger::debug() << "Queued " << backgroundRequests.size()
+                       << " chunks for background pre-generation";
+    }
 }

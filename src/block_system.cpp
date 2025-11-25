@@ -104,7 +104,7 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
     namespace fs = std::filesystem;
     fs::path dirPath(directory);
     if (!fs::exists(dirPath) || !fs::is_directory(dirPath)) {
-        std::cerr << "BlockRegistry: Directory not found: " << directory << std::endl;
+        std::cerr << "BlockRegistry: Directory not found: " << directory << '\n';
         return false;
     }
 
@@ -127,7 +127,7 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
     std::vector<PendingBlock> pendingBlocks;
     int highestExplicitID = 0;
 
-    std::cout << "Loading blocks (Pass 1: Explicit IDs)..." << std::endl;
+    std::cout << "Loading blocks (Pass 1: Explicit IDs)..." << '\n';
 
     // PASS 1: Load all blocks with explicit IDs
     for (const auto& path : yamlFiles) {
@@ -136,17 +136,17 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         try {
             doc = YAML::LoadFile(path.string());
         } catch (const std::exception& e) {
-            std::cerr << "Error parsing YAML file " << path << ": " << e.what() << std::endl;
+            std::cerr << "Error parsing YAML file " << path << ": " << e.what() << '\n';
             continue;
         }
         if (!doc["name"]) {
-            std::cerr << "YAML missing 'name' in " << path << std::endl;
+            std::cerr << "YAML missing 'name' in " << path << '\n';
             continue;
         }
         std::string name = doc["name"].as<std::string>();
         // Skip if name already exists
         if (m_nameToID.count(name)) {
-            std::cerr << "Duplicate block name '" << name << "' in " << path << "; skipping." << std::endl;
+            std::cerr << "Duplicate block name '" << name << "' in " << path << "; skipping." << '\n';
             continue;
         }
 
@@ -253,7 +253,7 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
                     def.hasColor = true;
                     def.color = glm::vec3(1.0f, 0.0f, 0.0f);
                     def.transparency = 0.5f;
-                    std::cerr << "ERROR: Invalid color code for " << name << " - using error block" << std::endl;
+                    std::cerr << "ERROR: Invalid color code for " << name << " - using error block" << '\n';
                 }
             }
         }
@@ -269,23 +269,23 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
             if (gap > 10) {
                 std::cerr << "  WARNING: Block '" << def.name << "' uses sparse ID " << def.id
                           << " (creates " << gap << " empty slots from " << oldSize << " to " << def.id << ")"
-                          << std::endl;
+                          << '\n';
                 std::cerr << "  Consider using sequential IDs (1, 2, 3, ...) or omitting 'id' for auto-assignment"
-                          << std::endl;
+                          << '\n';
             }
         }
 
         // Add to registry at the specified ID position
         m_defs[def.id] = def;
         m_nameToID[def.name] = def.id;
-        std::cout << "  Loaded block: " << def.name << " (ID " << def.id << ")" << std::endl;
+        std::cout << "  Loaded block: " << def.name << " (ID " << def.id << ")" << '\n';
     }
 
     // PASS 2: Load blocks without explicit IDs (auto-assign starting from highestExplicitID + 1)
     if (!pendingBlocks.empty()) {
-        std::cout << "\nLoading blocks (Pass 2: Auto-assigned IDs)..." << std::endl;
-        std::cout << "  Highest explicit ID: " << highestExplicitID << std::endl;
-        std::cout << "  Auto-assigning " << pendingBlocks.size() << " blocks starting from ID " << (highestExplicitID + 1) << std::endl;
+        std::cout << "\nLoading blocks (Pass 2: Auto-assigned IDs)..." << '\n';
+        std::cout << "  Highest explicit ID: " << highestExplicitID << '\n';
+        std::cout << "  Auto-assigning " << pendingBlocks.size() << " blocks starting from ID " << (highestExplicitID + 1) << '\n';
 
         int nextAutoID = highestExplicitID + 1;
 
@@ -382,7 +382,7 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
                         def.hasColor = true;
                         def.color = glm::vec3(1.0f, 0.0f, 0.0f);
                         def.transparency = 0.5f;
-                        std::cerr << "ERROR: Invalid color code for " << def.name << " - using error block" << std::endl;
+                        std::cerr << "ERROR: Invalid color code for " << def.name << " - using error block" << '\n';
                     }
                 }
             }
@@ -395,7 +395,7 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
             // Add to registry
             m_defs[def.id] = def;
             m_nameToID[def.name] = def.id;
-            std::cout << "  Loaded block: " << def.name << " (ID " << def.id << ", auto-assigned)" << std::endl;
+            std::cout << "  Loaded block: " << def.name << " (ID " << def.id << ", auto-assigned)" << '\n';
         }
     }
 
@@ -414,17 +414,17 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         }
     }
     if (m_emissiveBlockIDs.empty()) {
-        std::cout << "  No emissive blocks found - lighting scan will be skipped!" << std::endl;
+        std::cout << "  No emissive blocks found - lighting scan will be skipped!" << '\n';
     } else {
-        std::cout << "  Found " << m_emissiveBlockIDs.size() << " emissive block types for lighting" << std::endl;
+        std::cout << "  Found " << m_emissiveBlockIDs.size() << " emissive block types for lighting" << '\n';
     }
 
     // Debug: Print final block registry state
-    std::cout << "\nBlock Registry Summary:" << std::endl;
+    std::cout << "\nBlock Registry Summary:" << '\n';
     for (size_t i = 0; i < m_defs.size(); i++) {
         const BlockDefinition& def = m_defs[i];
         if (def.name.empty()) {
-            std::cout << "  ID " << i << ": [empty slot]" << std::endl;
+            std::cout << "  ID " << i << ": [empty slot]" << '\n';
         } else {
             std::cout << "  ID " << i << ": " << def.name;
             if (def.useCubeMap) {
@@ -437,7 +437,7 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
             if (def.isEmissive) {
                 std::cout << " (EMISSIVE L" << (int)def.lightLevel << ")";
             }
-            std::cout << std::endl;
+            std::cout << '\n';
         }
     }
 
@@ -445,7 +445,7 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
 }
 
 void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
-    std::cout << "Building texture atlas with cube map support..." << std::endl;
+    std::cout << "Building texture atlas with cube map support..." << '\n';
 
     // Map texture names to atlas indices to avoid duplicates
     std::unordered_map<std::string, int> textureNameToAtlasIndex;
@@ -466,7 +466,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
         LoadedTexture tex = loadAndResizeTexture(texturePath, blockName + ":" + textureName);
 
         if (!tex.pixels) {
-            std::cerr << "  Failed to load texture: " << textureName << std::endl;
+            std::cerr << "  Failed to load texture: " << textureName << '\n';
             return -1;
         }
 
@@ -476,7 +476,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
         if (animatedTiles > 1) {
             int totalSlots = animatedTiles * animatedTiles;  // 2x2 = 4 slots, 3x3 = 9 slots
             std::cout << "  Loaded texture: " << textureName << " (atlas index " << atlasIndex
-                      << ", " << animatedTiles << "x" << animatedTiles << " = " << totalSlots << " slots)" << std::endl;
+                      << ", " << animatedTiles << "x" << animatedTiles << " = " << totalSlots << " slots)" << '\n';
 
             // Add the same texture multiple times to reserve slots
             for (int i = 0; i < totalSlots; i++) {
@@ -495,7 +495,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
             }
         } else {
             textures.push_back(std::move(tex));  // Move unique_ptr ownership
-            std::cout << "  Loaded texture: " << textureName << " (atlas index " << atlasIndex << ")" << std::endl;
+            std::cout << "  Loaded texture: " << textureName << " (atlas index " << atlasIndex << ")" << '\n';
         }
 
         textureNameToAtlasIndex[textureName] = atlasIndex;
@@ -513,7 +513,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
 
         // Re-parse YAML to get texture information using stored source file
         if (def.sourceFile.empty()) {
-            std::cerr << "Error: No source file stored for " << def.name << std::endl;
+            std::cerr << "Error: No source file stored for " << def.name << '\n';
             continue;
         }
 
@@ -521,7 +521,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
         try {
             doc = YAML::LoadFile(def.sourceFile);
         } catch (const std::exception& e) {
-            std::cerr << "Error re-parsing YAML for " << def.name << " from " << def.sourceFile << ": " << e.what() << std::endl;
+            std::cerr << "Error re-parsing YAML for " << def.name << " from " << def.sourceFile << ": " << e.what() << '\n';
             continue;
         }
 
@@ -548,7 +548,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
                         float variation = std::stof(variationStr);
                         return {filename, variation};
                     } catch (...) {
-                        std::cerr << "Warning: Invalid variation value '" << variationStr << "', using 1.0" << std::endl;
+                        std::cerr << "Warning: Invalid variation value '" << variationStr << "', using 1.0" << '\n';
                         return {filename, 1.0f};
                     }
                 }
@@ -573,7 +573,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
             if (definedTextures.size() == 1) {
                 defaultTexture = definedTextures[0];
                 auto [filename, variation] = parseTexture(defaultTexture);
-                std::cout << "  Single texture detected for " << def.name << ", using '" << filename << "' (variation=" << variation << ") for all faces" << std::endl;
+                std::cout << "  Single texture detected for " << def.name << ", using '" << filename << "' (variation=" << variation << ") for all faces" << '\n';
             }
 
             // Helper to load a face texture with smart fallback logic
@@ -619,7 +619,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
             loadFace("left", def.left);
             loadFace("right", def.right);
 
-            std::cout << "  Loaded cube map for " << def.name << std::endl;
+            std::cout << "  Loaded cube map for " << def.name << '\n';
         } else if (doc["texture"]) {
             // Simple texture mode (backwards compatibility)
             std::string texString = doc["texture"].as<std::string>();
@@ -640,7 +640,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
                 try {
                     variation = std::stof(variationStr);
                 } catch (...) {
-                    std::cerr << "Warning: Invalid variation value '" << variationStr << "', using 1.0" << std::endl;
+                    std::cerr << "Warning: Invalid variation value '" << variationStr << "', using 1.0" << '\n';
                 }
             }
 
@@ -656,7 +656,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
         } else {
             // No texture or cube_map defined - try to load {blockname}.png automatically
             std::string defaultTexName = lowerName + ".png";
-            std::cout << "  No texture defined for " << def.name << ", attempting to load " << defaultTexName << std::endl;
+            std::cout << "  No texture defined for " << def.name << ", attempting to load " << defaultTexName << '\n';
 
             int atlasIndex = addTextureToAtlas(defaultTexName, def.name, def.animatedTiles);
             if (atlasIndex >= 0) {
@@ -665,13 +665,13 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
                 def.all.atlasX = atlasIndex;
                 def.all.atlasY = 0;
                 def.all.variation = 1.0f;  // No variation by default
-                std::cout << "  Auto-loaded default texture for " << def.name << std::endl;
+                std::cout << "  Auto-loaded default texture for " << def.name << '\n';
             }
         }
     }
 
     if (textures.empty()) {
-        std::cout << "No textures loaded, skipping atlas creation" << std::endl;
+        std::cout << "No textures loaded, skipping atlas creation" << '\n';
         return;
     }
 
@@ -683,14 +683,15 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
     }
 
     int atlasSize = m_atlasGridSize * 64;  // Each slot is 64x64
-    std::cout << "Atlas grid: " << m_atlasGridSize << "x" << m_atlasGridSize << " (" << atlasSize << "x" << atlasSize << " pixels, " << numTextures << " textures)" << std::endl;
+    std::cout << "Atlas grid: " << m_atlasGridSize << "x" << m_atlasGridSize << " (" << atlasSize << "x" << atlasSize << " pixels, " << numTextures << " textures)" << '\n';
 
     // Create atlas pixel data (RGBA)
     size_t atlasDataSize = atlasSize * atlasSize * 4;
     unsigned char* atlasPixels = (unsigned char*)calloc(atlasDataSize, 1);  // Initialize to zeros
 
     // Copy textures into atlas
-    for (int atlasIndex = 0; atlasIndex < (int)textures.size(); atlasIndex++) {
+    const int textureCount = static_cast<int>(textures.size());
+    for (int atlasIndex = 0; atlasIndex < textureCount; atlasIndex++) {
         LoadedTexture& tex = textures[atlasIndex];
 
         int atlasX = atlasIndex % m_atlasGridSize;
@@ -782,7 +783,7 @@ void BlockRegistry::buildTextureAtlas(VulkanRenderer* renderer) {
     m_atlasImageView = renderer->createImageView(m_atlasImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
     m_atlasSampler = renderer->createTextureSampler();
 
-    std::cout << "Texture atlas created successfully!" << std::endl;
+    std::cout << "Texture atlas created successfully!" << '\n';
 }
 
 const BlockDefinition& BlockRegistry::get(int id) const {
@@ -1151,15 +1152,16 @@ void StructureIconRenderer::drawStructureMini(ImDrawList* drawList, const ImVec2
     }
 
     // Draw blocks in back-to-front order for proper occlusion
-    for (int y = 0; y < (int)variation.structure.size(); y += sampleInterval) {
+    const int structHeight = static_cast<int>(variation.structure.size());
+    for (int y = 0; y < structHeight; y += sampleInterval) {
         const auto& layer = variation.structure[y];
+        const int layerSize = static_cast<int>(layer.size());
 
-        for (int z = (int)layer.size() - 1; z >= 0; z -= sampleInterval) {
-            if (z >= (int)layer.size()) continue;
+        for (int z = layerSize - 1; z >= 0; z -= sampleInterval) {
             const auto& row = layer[z];
+            const int rowSize = static_cast<int>(row.size());
 
-            for (int x = 0; x < (int)row.size(); x += sampleInterval) {
-                if (x >= (int)row.size()) continue;
+            for (int x = 0; x < rowSize; x += sampleInterval) {
                 int blockID = row[x];
 
                 // Skip air blocks

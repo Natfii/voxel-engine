@@ -27,6 +27,121 @@
 #include <cstring>
 #include <chrono>
 
+// ========== StagingBufferPool Implementation (2025-11-25) ==========
+
+void StagingBufferPool::initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize bufferSize, size_t count) {
+    std::lock_guard<std::mutex> lock(m_poolMutex);
+
+    // Helper to find memory type
+    auto findMemoryType = [physicalDevice](uint32_t typeFilter, VkMemoryPropertyFlags properties) -> uint32_t {
+        VkPhysicalDeviceMemoryProperties memProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+        throw std::runtime_error("failed to find suitable memory type for staging buffer pool!");
+    };
+
+    for (size_t i = 0; i < count; i++) {
+        StagingBuffer sb;
+        sb.size = bufferSize;
+        sb.inUse = false;
+
+        // Create buffer
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = bufferSize;
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (vkCreateBuffer(device, &bufferInfo, nullptr, &sb.buffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create staging buffer in pool!");
+        }
+
+        // Get memory requirements
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(device, sb.buffer, &memRequirements);
+
+        // Allocate memory
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &sb.memory) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate staging buffer memory in pool!");
+        }
+
+        vkBindBufferMemory(device, sb.buffer, sb.memory, 0);
+
+        // Map memory ONCE - never unmap (persistent mapping)
+        vkMapMemory(device, sb.memory, 0, bufferSize, 0, &sb.mappedPtr);
+
+        m_pool.push_back(sb);
+    }
+
+    std::cout << "[StagingBufferPool] Initialized " << count << " buffers ("
+              << (bufferSize * count / (1024 * 1024)) << " MB total)" << '\n';
+}
+
+void StagingBufferPool::cleanup(VkDevice device) {
+    std::lock_guard<std::mutex> lock(m_poolMutex);
+
+    for (auto& sb : m_pool) {
+        if (sb.mappedPtr != nullptr) {
+            vkUnmapMemory(device, sb.memory);
+        }
+        vkDestroyBuffer(device, sb.buffer, nullptr);
+        vkFreeMemory(device, sb.memory, nullptr);
+    }
+    m_pool.clear();
+}
+
+StagingBuffer* StagingBufferPool::acquire() {
+    std::lock_guard<std::mutex> lock(m_poolMutex);
+
+    for (auto& sb : m_pool) {
+        if (!sb.inUse) {
+            sb.inUse = true;
+            return &sb;
+        }
+    }
+    return nullptr;  // All buffers in use
+}
+
+StagingBuffer* StagingBufferPool::acquireWithSize(VkDeviceSize minSize) {
+    std::lock_guard<std::mutex> lock(m_poolMutex);
+
+    for (auto& sb : m_pool) {
+        if (!sb.inUse && sb.size >= minSize) {
+            sb.inUse = true;
+            return &sb;
+        }
+    }
+    return nullptr;  // No suitable buffer available
+}
+
+void StagingBufferPool::release(StagingBuffer* buffer) {
+    if (buffer) {
+        std::lock_guard<std::mutex> lock(m_poolMutex);
+        buffer->inUse = false;
+    }
+}
+
+size_t StagingBufferPool::getInUseCount() const {
+    // Note: Not locking for quick reads (acceptable race)
+    size_t count = 0;
+    for (const auto& sb : m_pool) {
+        if (sb.inUse) count++;
+    }
+    return count;
+}
+
+// ========== End StagingBufferPool Implementation ==========
+
 // Debug callback
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -34,7 +149,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData) {
 
-    std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+    std::cerr << "validation layer: " << pCallbackData->pMessage << '\n';
     return VK_FALSE;
 }
 
@@ -106,14 +221,17 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : m_window(window) {
     createCommandBuffers();
     createSyncObjects();
     initializeMegaBuffers();  // GPU optimization: indirect drawing mega-buffers
+
+    // PERF (2025-11-25): Initialize staging buffer pool for efficient GPU uploads
+    m_stagingBufferPool.initialize(m_device, m_physicalDevice, STAGING_BUFFER_SIZE, STAGING_BUFFER_COUNT);
 }
 
 // Destructor
 VulkanRenderer::~VulkanRenderer() {
-    std::cout << "  Destroying VulkanRenderer..." << std::endl;
+    std::cout << "  Destroying VulkanRenderer..." << '\n';
     std::cout.flush();
     cleanup();
-    std::cout << "  VulkanRenderer destroyed" << std::endl;
+    std::cout << "  VulkanRenderer destroyed" << '\n';
     std::cout.flush();
 }
 
@@ -245,6 +363,10 @@ void VulkanRenderer::createLogicalDevice() {
     vkGetDeviceQueue(m_device, indices.presentFamily.value(), 0, &m_presentQueue);
     // PERF (2025-11-24): Get transfer queue for async GPU uploads
     vkGetDeviceQueue(m_device, indices.transferFamily.value(), 0, &m_transferQueue);
+
+    // PERF (2025-11-25): Store queue family indices for queue ownership transfer barriers
+    m_graphicsQueueFamily = indices.graphicsFamily.value();
+    m_transferQueueFamily = indices.transferFamily.value();
 }
 
 // Create swapchain
@@ -1302,19 +1424,22 @@ void VulkanRenderer::createUniformBuffers() {
 void VulkanRenderer::createDescriptorPool() {
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
 
+    // Extra sets for custom textures (loading sphere, ImGui, etc.)
+    const uint32_t EXTRA_SETS = 10;
+
     // UBO pool size
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT + EXTRA_SETS);
 
-    // Combined image sampler pool size (for texture atlas + day cube map + night cube map)
+    // Combined image sampler pool size (for texture atlas + day cube map + night cube map + extras)
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 3);  // 3 samplers per frame
+    poolSizes[1].descriptorCount = static_cast<uint32_t>((MAX_FRAMES_IN_FLIGHT + EXTRA_SETS) * 3);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT + EXTRA_SETS);
 
     if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor pool!");
@@ -1403,6 +1528,89 @@ void VulkanRenderer::createDescriptorSets() {
     }
 }
 
+// Create a descriptor set for a custom texture (e.g., map preview on loading sphere)
+VkDescriptorSet VulkanRenderer::createCustomTextureDescriptorSet(VkImageView imageView, VkSampler sampler) {
+    VkDescriptorSet descriptorSet;
+
+    // Allocate descriptor set
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &m_descriptorSetLayout;
+
+    if (vkAllocateDescriptorSets(m_device, &allocInfo, &descriptorSet) != VK_SUCCESS) {
+        std::cerr << "Failed to allocate custom texture descriptor set!" << '\n';
+        return VK_NULL_HANDLE;
+    }
+
+    // UBO descriptor (use current frame's UBO)
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = m_uniformBuffers[m_currentFrame];
+    bufferInfo.offset = 0;
+    bufferInfo.range = sizeof(UniformBufferObject);
+
+    // Custom texture descriptor
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfo.imageView = imageView;
+    imageInfo.sampler = sampler;
+
+    // Cube map descriptors (reuse existing skybox)
+    VkDescriptorImageInfo cubeMapInfo{};
+    cubeMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    cubeMapInfo.imageView = m_skyboxView;
+    cubeMapInfo.sampler = m_skyboxSampler;
+
+    VkDescriptorImageInfo nightCubeMapInfo{};
+    nightCubeMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    nightCubeMapInfo.imageView = m_nightSkyboxView;
+    nightCubeMapInfo.sampler = m_skyboxSampler;
+
+    std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
+
+    // Write UBO (binding 0)
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = descriptorSet;
+    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].dstArrayElement = 0;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[0].descriptorCount = 1;
+    descriptorWrites[0].pBufferInfo = &bufferInfo;
+
+    // Write custom texture (binding 1)
+    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[1].dstSet = descriptorSet;
+    descriptorWrites[1].dstBinding = 1;
+    descriptorWrites[1].dstArrayElement = 0;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[1].descriptorCount = 1;
+    descriptorWrites[1].pImageInfo = &imageInfo;
+
+    // Write day cube map (binding 2)
+    descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[2].dstSet = descriptorSet;
+    descriptorWrites[2].dstBinding = 2;
+    descriptorWrites[2].dstArrayElement = 0;
+    descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[2].descriptorCount = 1;
+    descriptorWrites[2].pImageInfo = &cubeMapInfo;
+
+    // Write night cube map (binding 3)
+    descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[3].dstSet = descriptorSet;
+    descriptorWrites[3].dstBinding = 3;
+    descriptorWrites[3].dstArrayElement = 0;
+    descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[3].descriptorCount = 1;
+    descriptorWrites[3].pImageInfo = &nightCubeMapInfo;
+
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(descriptorWrites.size()),
+                          descriptorWrites.data(), 0, nullptr);
+
+    return descriptorSet;
+}
+
 // Create command buffers
 void VulkanRenderer::createCommandBuffers() {
     m_commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
@@ -1468,7 +1676,7 @@ bool VulkanRenderer::beginFrame() {
             // GPU severely overloaded - only skip if taking > 100ms per frame
             static int skipCounter = 0;
             if (++skipCounter % 10 == 0) {  // Log every 10th skip
-                std::cerr << "[GPU OVERLOAD] Skipping frame (GPU busy after 100ms timeout)" << std::endl;
+                std::cerr << "[GPU OVERLOAD] Skipping frame (GPU busy after 100ms timeout)" << '\n';
             }
             return false;  // Skip frame
         }
@@ -1489,17 +1697,23 @@ bool VulkanRenderer::beginFrame() {
             pendingCount = m_pendingUploads.size();
         }
 
-        if (++slowFenceCounter % 10 == 0) {  // Log every 10th slow fence
-            size_t deletionQueueSize = 0;
-            {
-                std::lock_guard<std::mutex> deletionLock(m_deletionQueueMutex);
-                deletionQueueSize = m_deletionQueue.size();
-            }
+        size_t deletionQueueSize = 0;
+        {
+            std::lock_guard<std::mutex> deletionLock(m_deletionQueueMutex);
+            deletionQueueSize = m_deletionQueue.size();
+        }
 
+        // ALWAYS log very slow stalls (>100ms) for debugging
+        if (fenceWaitMs > 100) {
+            std::cerr << "[GPU STALL] " << fenceWaitMs << "ms fence wait"
+                     << " | Pending uploads: " << pendingCount
+                     << " | Deletion queue: " << deletionQueueSize
+                     << '\n';
+        } else if (++slowFenceCounter % 10 == 0) {  // Log every 10th slow fence
             std::cerr << "[GPU FENCE STALL] " << fenceWaitMs << "ms wait"
                      << " | Pending async uploads: " << pendingCount
                      << " | Deletion queue: " << deletionQueueSize
-                     << std::endl;
+                     << '\n';
         }
     }
 
@@ -1521,6 +1735,31 @@ bool VulkanRenderer::beginFrame() {
 
     if (vkBeginCommandBuffer(m_commandBuffers[m_currentFrame], &beginInfo) != VK_SUCCESS) {
         throw std::runtime_error("failed to begin recording command buffer!");
+    }
+
+    // ========================================================================
+    // PERF (2025-11-25): Memory barrier for async transfer synchronization
+    // ========================================================================
+    // When using dedicated transfer queue, ensure any completed async transfers
+    // are visible to the graphics queue before rendering. This barrier ensures
+    // transfer writes to mega-buffers are visible for vertex/index reads.
+    // Only needed when we have a dedicated transfer queue (concurrent sharing).
+    // ========================================================================
+    if (hasDedicatedTransferQueue()) {
+        VkMemoryBarrier memoryBarrier{};
+        memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        memoryBarrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
+
+        vkCmdPipelineBarrier(
+            m_commandBuffers[m_currentFrame],
+            VK_PIPELINE_STAGE_TRANSFER_BIT,       // Wait for transfers to complete
+            VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,   // Before vertex input reads
+            0,                                     // No dependency flags
+            1, &memoryBarrier,                    // Memory barrier
+            0, nullptr,                           // No buffer barriers
+            0, nullptr                            // No image barriers
+        );
     }
 
     VkRenderPassBeginInfo renderPassInfo{};
@@ -1763,12 +2002,12 @@ QueueFamilyIndices VulkanRenderer::findQueueFamilies(VkPhysicalDevice device) {
     if (!indices.transferFamily.has_value() && indices.graphicsFamily.has_value()) {
         indices.transferFamily = indices.graphicsFamily.value();
         if (!loggedTransferQueueStatus) {
-            std::cout << "[INFO] No dedicated transfer queue found, using graphics queue for transfers" << std::endl;
+            std::cout << "[INFO] No dedicated transfer queue found, using graphics queue for transfers" << '\n';
             loggedTransferQueueStatus = true;
         }
     } else if (indices.hasDedicatedTransferQueue() && !loggedTransferQueueStatus) {
         std::cout << "[INFO] Dedicated transfer queue found (family " << indices.transferFamily.value()
-                  << ") - async GPU uploads enabled!" << std::endl;
+                  << ") - async GPU uploads enabled!" << '\n';
         loggedTransferQueueStatus = true;
     }
 
@@ -2071,7 +2310,7 @@ void VulkanRenderer::createDefaultTexture() {
     m_defaultTextureView = createImageView(m_defaultTextureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
     m_defaultTextureSampler = createTextureSampler();
 
-    std::cout << "Created default 1x1 white texture for fallback rendering" << std::endl;
+    std::cout << "Created default 1x1 white texture for fallback rendering" << '\n';
 }
 
 // Create cube map image (6 faces)
@@ -2280,11 +2519,20 @@ void VulkanRenderer::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDevice
 }
 
 void VulkanRenderer::beginBufferCopyBatch() {
+    // ============================================================================
+    // TRANSFER QUEUE OPTIMIZATION (2025-11-25)
+    // ============================================================================
+    // Use dedicated transfer command pool for async uploads.
+    // This allows uploads to run on separate GPU queue, parallel with rendering!
+    // Falls back to graphics pool if transfer queue not available.
+    // ============================================================================
+
     // Allocate command buffer for batch
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = m_commandPool;
+    // Use transfer pool for async, graphics pool for sync
+    allocInfo.commandPool = (m_transferCommandPool != VK_NULL_HANDLE) ? m_transferCommandPool : m_commandPool;
     allocInfo.commandBufferCount = 1;
 
     vkAllocateCommandBuffers(m_device, &allocInfo, &m_batchCommandBuffer);
@@ -2330,8 +2578,16 @@ void VulkanRenderer::submitBufferCopyBatch(bool async) {
     VkFence fence;
     vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
 
-    // Submit batch
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence);
+    // ============================================================================
+    // TRANSFER QUEUE OPTIMIZATION (2025-11-25)
+    // ============================================================================
+    // Submit async uploads to transfer queue (runs parallel with graphics!)
+    // Falls back to graphics queue if dedicated transfer queue not available.
+    // This prevents chunk uploads from stalling the render pipeline.
+    // ============================================================================
+    VkQueue targetQueue = (isAsync && m_transferQueue != VK_NULL_HANDLE)
+                         ? m_transferQueue : m_graphicsQueue;
+    vkQueueSubmit(targetQueue, 1, &submitInfo, fence);
 
     if (isAsync) {
         // ASYNC MODE: Don't wait, store for later cleanup
@@ -2352,9 +2608,11 @@ void VulkanRenderer::submitBufferCopyBatch(bool async) {
         // SYNC MODE: Wait for completion (original behavior)
         vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
 
-        // Cleanup immediately
+        // Cleanup immediately - use correct pool based on what was allocated
         vkDestroyFence(m_device, fence, nullptr);
-        vkFreeCommandBuffers(m_device, m_commandPool, 1, &m_batchCommandBuffer);
+        VkCommandPool cleanupPool = (m_transferCommandPool != VK_NULL_HANDLE)
+                                   ? m_transferCommandPool : m_commandPool;
+        vkFreeCommandBuffers(m_device, cleanupPool, 1, &m_batchCommandBuffer);
         m_batchCommandBuffer = VK_NULL_HANDLE;
     }
 }
@@ -2484,7 +2742,10 @@ void VulkanRenderer::processAsyncUploads() {
         if (result == VK_SUCCESS) {
             // Upload complete - clean up resources
             vkDestroyFence(m_device, it->fence, nullptr);
-            vkFreeCommandBuffers(m_device, m_commandPool, 1, &it->commandBuffer);
+            // Use transfer pool for async uploads (command was allocated from there)
+            VkCommandPool cleanupPool = (m_transferCommandPool != VK_NULL_HANDLE)
+                                       ? m_transferCommandPool : m_commandPool;
+            vkFreeCommandBuffers(m_device, cleanupPool, 1, &it->commandBuffer);
 
             // Destroy all staging buffers
             for (auto& stagingBuffer : it->stagingBuffers) {
@@ -2506,6 +2767,38 @@ void VulkanRenderer::processAsyncUploads() {
     }
 }
 
+// ========== GPU Backlog Monitoring (2025-11-25) ==========
+
+size_t VulkanRenderer::getPendingUploadCount() const {
+    std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
+    return m_pendingUploads.size();
+}
+
+bool VulkanRenderer::isUploadBacklogged(size_t threshold) const {
+    std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
+    return m_pendingUploads.size() >= threshold;
+}
+
+size_t VulkanRenderer::getRecommendedUploadCount() const {
+    std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
+    size_t pending = m_pendingUploads.size();
+
+    // ADAPTIVE UPLOAD RATE based on GPU backlog:
+    // - Severely backlogged (>30): Stop uploading entirely to let GPU catch up
+    // - Backlogged (20-30): Upload 1 chunk max
+    // - Moderate (10-20): Upload 2 chunks
+    // - Light (<10): Upload up to 4 chunks for fast streaming
+    if (pending >= 30) {
+        return 0;  // GPU severely overloaded - defer all uploads
+    } else if (pending >= 20) {
+        return 1;  // Backlogged - trickle uploads
+    } else if (pending >= 10) {
+        return 2;  // Moderate load
+    } else {
+        return 4;  // GPU keeping up - stream faster
+    }
+}
+
 // ========== Deferred Deletion (Fence-Based Resource Cleanup) ==========
 
 void VulkanRenderer::queueBufferDeletion(VkBuffer buffer, VkDeviceMemory memory) {
@@ -2520,22 +2813,38 @@ void VulkanRenderer::flushDeletionQueue() {
     // Thread-safe flush operation
     std::lock_guard<std::mutex> lock(m_deletionQueueMutex);
 
-    // CRITICAL FIX: Limit deletions per frame to prevent massive stalls
-    // GPU memory cleanup is EXPENSIVE - even 10 buffers causes 1682ms vkWaitForFences stall
-    // The comment "~1ms each" was CPU time, but GPU memory release is much slower
-    // REDUCED: 10 -> 2 buffers per frame to prevent multi-second stalls
-    const int MAX_DELETIONS_PER_FRAME = 2;  // Ultra-conservative to prevent GPU stalls
+    // ============================================================================
+    // ADAPTIVE DELETION RATE (2025-11-25)
+    // ============================================================================
+    // Problem: Fixed 2 buffers/frame can't keep up with chunk unloading
+    // Solution: Adaptive rate based on queue size
+    // - Small queue (<50): 2 buffers/frame (gentle)
+    // - Medium queue (50-200): 5 buffers/frame
+    // - Large queue (>200): 10 buffers/frame (aggressive catch-up)
+    // ============================================================================
+    size_t queueSize = m_deletionQueue.size();
+    int maxDeletionsPerFrame;
+
+    if (queueSize > 200) {
+        maxDeletionsPerFrame = 10;  // Large backlog - aggressive cleanup
+    } else if (queueSize > 50) {
+        maxDeletionsPerFrame = 5;   // Medium backlog
+    } else {
+        maxDeletionsPerFrame = 2;   // Normal operation
+    }
+
     int deletionsThisFrame = 0;
 
     // Log queue size periodically for debugging
     static int frameCounter = 0;
     if (++frameCounter % 300 == 0 && !m_deletionQueue.empty()) {  // Every 5 seconds at 60 FPS
-        Logger::debug() << "GPU deletion queue size: " << m_deletionQueue.size() << " buffers pending";
+        Logger::debug() << "GPU deletion queue: " << queueSize << " buffers pending"
+                       << " (processing " << maxDeletionsPerFrame << "/frame)";
     }
 
     // Delete resources from frames that are at least MAX_FRAMES_IN_FLIGHT old
     // This ensures the GPU is done using them (fence-based approach)
-    while (!m_deletionQueue.empty() && deletionsThisFrame < MAX_DELETIONS_PER_FRAME) {
+    while (!m_deletionQueue.empty() && deletionsThisFrame < maxDeletionsPerFrame) {
         const auto& deletion = m_deletionQueue.front();
 
         // Check if enough frames have passed (GPU is done with this resource)
@@ -2883,7 +3192,7 @@ void VulkanRenderer::createProceduralCubeMap() {
     vkFreeMemory(m_device, stagingBufferMemory, nullptr);
 
     // NOTE: View and sampler creation moved to createSkybox() after batched transition
-    std::cout << "Created procedural cube map skybox (256x256 per face)" << std::endl;
+    std::cout << "Created procedural cube map skybox (256x256 per face)" << '\n';
 }
 
 // Generate dark night cube map
@@ -3038,7 +3347,7 @@ void VulkanRenderer::createNightCubeMap() {
     vkFreeMemory(m_device, stagingBufferMemory, nullptr);
 
     // NOTE: View creation moved to createSkybox() after batched transition
-    std::cout << "Created night cube map skybox (256x256 per face)" << std::endl;
+    std::cout << "Created night cube map skybox (256x256 per face)" << '\n';
 }
 
 // Create skybox geometry and resources
@@ -3051,7 +3360,7 @@ void VulkanRenderer::createSkybox() {
     // Batch the final transition for both cube maps into a single vkCmdPipelineBarrier call
     // Old: 2 separate transitions = 2 command buffer submissions
     // New: 1 batched transition = 1 command buffer submission (50% reduction!)
-    std::cout << "Batching cube map transitions for performance..." << std::endl;
+    std::cout << "Batching cube map transitions for performance..." << '\n';
     batchTransitionImageLayouts(
         {m_skyboxImage, m_nightSkyboxImage},                    // Images to transition
         {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB},    // Formats
@@ -3155,7 +3464,7 @@ void VulkanRenderer::createSkybox() {
     vkDestroyBuffer(m_device, stagingBuffer, nullptr);
     vkFreeMemory(m_device, stagingBufferMemory, nullptr);
 
-    std::cout << "Created skybox geometry" << std::endl;
+    std::cout << "Created skybox geometry" << '\n';
 }
 
 // Set time of day for sky rendering
@@ -3185,17 +3494,17 @@ void VulkanRenderer::renderSkybox() {
 }
 
 void VulkanRenderer::cleanup() {
-    std::cout << "    Cleaning up swapchain..." << std::endl;
+    std::cout << "    Cleaning up swapchain..." << '\n';
     cleanupSwapChain();
 
-    std::cout << "    Cleaning up textures..." << std::endl;
+    std::cout << "    Cleaning up textures..." << '\n';
     // Cleanup default texture
     vkDestroySampler(m_device, m_defaultTextureSampler, nullptr);
     vkDestroyImageView(m_device, m_defaultTextureView, nullptr);
     vkDestroyImage(m_device, m_defaultTextureImage, nullptr);
     vkFreeMemory(m_device, m_defaultTextureMemory, nullptr);
 
-    std::cout << "    Cleaning up skybox..." << std::endl;
+    std::cout << "    Cleaning up skybox..." << '\n';
     // Cleanup skybox
     vkDestroyBuffer(m_device, m_skyboxVertexBuffer, nullptr);
     vkFreeMemory(m_device, m_skyboxVertexBufferMemory, nullptr);
@@ -3209,31 +3518,31 @@ void VulkanRenderer::cleanup() {
     vkDestroyImage(m_device, m_nightSkyboxImage, nullptr);
     vkFreeMemory(m_device, m_nightSkyboxMemory, nullptr);
 
-    std::cout << "    Cleaning up uniform buffers..." << std::endl;
+    std::cout << "    Cleaning up uniform buffers..." << '\n';
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroyBuffer(m_device, m_uniformBuffers[i], nullptr);
         vkFreeMemory(m_device, m_uniformBuffersMemory[i], nullptr);
     }
 
-    std::cout << "    Cleaning up descriptor pool..." << std::endl;
+    std::cout << "    Cleaning up descriptor pool..." << '\n';
     vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
 
-    std::cout << "    Cleaning up pipeline layout..." << std::endl;
+    std::cout << "    Cleaning up pipeline layout..." << '\n';
     // Pipelines are already destroyed in cleanupSwapChain()
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyPipelineLayout(m_device, m_meshPipelineLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_meshDescriptorSetLayout, nullptr);
     vkDestroyRenderPass(m_device, m_renderPass, nullptr);
 
-    std::cout << "    Cleaning up sync objects..." << std::endl;
+    std::cout << "    Cleaning up sync objects..." << '\n';
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
         vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
         vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
     }
 
-    std::cout << "    Cleaning up mega-buffers..." << std::endl;
+    std::cout << "    Cleaning up mega-buffers..." << '\n';
     // Cleanup indirect drawing mega-buffers
     if (m_megaVertexBuffer != VK_NULL_HANDLE) {
         vkDestroyBuffer(m_device, m_megaVertexBuffer, nullptr);
@@ -3260,7 +3569,7 @@ void VulkanRenderer::cleanup() {
         vkFreeMemory(m_device, m_indirectDrawTransparentBufferMemory, nullptr);
     }
 
-    std::cout << "    Waiting for pending async uploads..." << std::endl;
+    std::cout << "    Waiting for pending async uploads..." << '\n';
     // Wait for all pending uploads and clean them up
     for (auto& upload : m_pendingUploads) {
         vkWaitForFences(m_device, 1, &upload.fence, VK_TRUE, UINT64_MAX);
@@ -3273,25 +3582,29 @@ void VulkanRenderer::cleanup() {
     }
     m_pendingUploads.clear();
 
-    std::cout << "    Cleaning up command pools..." << std::endl;
+    // PERF (2025-11-25): Cleanup staging buffer pool
+    std::cout << "    Cleaning up staging buffer pool..." << '\n';
+    m_stagingBufferPool.cleanup(m_device);
+
+    std::cout << "    Cleaning up command pools..." << '\n';
     vkDestroyCommandPool(m_device, m_commandPool, nullptr);
     vkDestroyCommandPool(m_device, m_transferCommandPool, nullptr);  // PERF (2025-11-24): Transfer command pool
 
-    std::cout << "    Destroying device..." << std::endl;
+    std::cout << "    Destroying device..." << '\n';
     vkDestroyDevice(m_device, nullptr);
 
-    std::cout << "    Cleaning up debug messenger..." << std::endl;
+    std::cout << "    Cleaning up debug messenger..." << '\n';
     if (m_enableValidationLayers) {
         DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
     }
 
-    std::cout << "    Destroying surface..." << std::endl;
+    std::cout << "    Destroying surface..." << '\n';
     vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
 
-    std::cout << "    Destroying instance..." << std::endl;
+    std::cout << "    Destroying instance..." << '\n';
     vkDestroyInstance(m_instance, nullptr);
 
-    std::cout << "    Vulkan cleanup complete" << std::endl;
+    std::cout << "    Vulkan cleanup complete" << '\n';
 }
 
 // ========================================================================
@@ -3299,40 +3612,87 @@ void VulkanRenderer::cleanup() {
 // ========================================================================
 
 void VulkanRenderer::initializeMegaBuffers() {
-    std::cout << "Initializing mega-buffers for indirect drawing..." << std::endl;
+    std::cout << "Initializing mega-buffers for indirect drawing..." << '\n';
+
+    // ========================================================================
+    // PERF (2025-11-25): Use VK_SHARING_MODE_CONCURRENT for mega-buffers
+    // ========================================================================
+    // When using a dedicated transfer queue, mega-buffers are accessed by both:
+    //   - Transfer queue: writes data from staging buffers
+    //   - Graphics queue: reads for rendering
+    // Using concurrent sharing avoids explicit queue ownership transfer barriers.
+    // ========================================================================
+    const bool useConcurrentSharing = hasDedicatedTransferQueue();
+    std::vector<uint32_t> queueFamilyIndices;
+    if (useConcurrentSharing) {
+        queueFamilyIndices = {m_graphicsQueueFamily, m_transferQueueFamily};
+        std::cout << "  Using VK_SHARING_MODE_CONCURRENT (dedicated transfer queue)" << '\n';
+    } else {
+        std::cout << "  Using VK_SHARING_MODE_EXCLUSIVE (shared queue)" << '\n';
+    }
+
+    // Helper lambda to create a mega-buffer with proper sharing mode
+    auto createMegaBuffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VkDeviceMemory& memory) {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = size;
+        bufferInfo.usage = usage;
+
+        if (useConcurrentSharing) {
+            bufferInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+            bufferInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndices.size());
+            bufferInfo.pQueueFamilyIndices = queueFamilyIndices.data();
+        } else {
+            bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        }
+
+        if (vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create mega-buffer!");
+        }
+
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(m_device, buffer, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        if (vkAllocateMemory(m_device, &allocInfo, nullptr, &memory) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate mega-buffer memory!");
+        }
+
+        vkBindBufferMemory(m_device, buffer, memory, 0);
+    };
 
     // Create opaque vertex mega-buffer
-    createBuffer(
+    createMegaBuffer(
         MEGA_BUFFER_VERTEX_SIZE,
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_megaVertexBuffer,
         m_megaVertexBufferMemory
     );
 
     // Create opaque index mega-buffer
-    createBuffer(
+    createMegaBuffer(
         MEGA_BUFFER_INDEX_SIZE,
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_megaIndexBuffer,
         m_megaIndexBufferMemory
     );
 
     // Create transparent vertex mega-buffer
-    createBuffer(
+    createMegaBuffer(
         MEGA_BUFFER_VERTEX_SIZE,
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_megaTransparentVertexBuffer,
         m_megaTransparentVertexBufferMemory
     );
 
     // Create transparent index mega-buffer
-    createBuffer(
+    createMegaBuffer(
         MEGA_BUFFER_INDEX_SIZE,
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_megaTransparentIndexBuffer,
         m_megaTransparentIndexBufferMemory
     );
@@ -3356,9 +3716,9 @@ void VulkanRenderer::initializeMegaBuffers() {
         m_indirectDrawTransparentBufferMemory
     );
 
-    std::cout << "Mega-buffers initialized successfully!" << std::endl;
-    std::cout << "  Vertex buffer: " << (MEGA_BUFFER_VERTEX_SIZE / 1024 / 1024) << " MB" << std::endl;
-    std::cout << "  Index buffer: " << (MEGA_BUFFER_INDEX_SIZE / 1024 / 1024) << " MB" << std::endl;
+    std::cout << "Mega-buffers initialized successfully!" << '\n';
+    std::cout << "  Vertex buffer: " << (MEGA_BUFFER_VERTEX_SIZE / 1024 / 1024) << " MB" << '\n';
+    std::cout << "  Index buffer: " << (MEGA_BUFFER_INDEX_SIZE / 1024 / 1024) << " MB" << '\n';
 }
 
 bool VulkanRenderer::allocateMegaBufferSpace(VkDeviceSize vertexSize, VkDeviceSize indexSize,
@@ -3370,7 +3730,7 @@ bool VulkanRenderer::allocateMegaBufferSpace(VkDeviceSize vertexSize, VkDeviceSi
         // Check if there's enough space in transparent mega-buffers
         if (m_megaTransparentVertexOffset + vertexSize > MEGA_BUFFER_VERTEX_SIZE ||
             m_megaTransparentIndexOffset + indexSize > MEGA_BUFFER_INDEX_SIZE) {
-            std::cerr << "Warning: Transparent mega-buffer full!" << std::endl;
+            std::cerr << "Warning: Transparent mega-buffer full!" << '\n';
             return false;
         }
 
@@ -3383,7 +3743,7 @@ bool VulkanRenderer::allocateMegaBufferSpace(VkDeviceSize vertexSize, VkDeviceSi
         // Check if there's enough space in opaque mega-buffers
         if (m_megaVertexOffset + vertexSize > MEGA_BUFFER_VERTEX_SIZE ||
             m_megaIndexOffset + indexSize > MEGA_BUFFER_INDEX_SIZE) {
-            std::cerr << "Warning: Opaque mega-buffer full!" << std::endl;
+            std::cerr << "Warning: Opaque mega-buffer full!" << '\n';
             return false;
         }
 
@@ -3479,7 +3839,7 @@ void VulkanRenderer::batchCopyToMegaBuffer(VkBuffer srcVertexBuffer, VkBuffer sr
                                            VkDeviceSize vertexOffset, VkDeviceSize indexOffset,
                                            bool transparent) {
     if (m_batchCommandBuffer == VK_NULL_HANDLE) {
-        std::cerr << "Error: No batch command buffer active. Call beginBufferCopyBatch() first." << std::endl;
+        std::cerr << "Error: No batch command buffer active. Call beginBufferCopyBatch() first." << '\n';
         return;
     }
 

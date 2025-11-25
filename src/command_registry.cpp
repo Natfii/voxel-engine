@@ -1,7 +1,7 @@
 #include "command_registry.h"
+#include "logger.h"
 #include <algorithm>
 #include <sstream>
-#include <iostream>
 
 CommandRegistry& CommandRegistry::instance() {
     static CommandRegistry instance;
@@ -38,7 +38,7 @@ bool CommandRegistry::executeCommand(const std::string& commandLine) {
     std::string commandName = args[0];
     auto it = m_commands.find(commandName);
     if (it == m_commands.end()) {
-        std::cerr << "Unknown command: " << commandName << std::endl;
+        Logger::error() << "Unknown command: " << commandName;
         return false;
     }
 
@@ -47,7 +47,7 @@ bool CommandRegistry::executeCommand(const std::string& commandLine) {
         it->second.handler(args);
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "Command error: " << e.what() << std::endl;
+        Logger::error() << "Command error: " << e.what();
         return false;
     }
 }

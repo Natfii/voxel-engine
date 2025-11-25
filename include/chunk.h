@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <mutex>
+#include <atomic>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include "voxelmath.h"
@@ -18,6 +19,60 @@
 
 // Forward declaration
 class VulkanRenderer;
+
+/**
+ * @brief Chunk lifecycle state machine for explicit state tracking
+ *
+ * ARCHITECTURE IMPROVEMENT (2025-11-25): Replaces scattered boolean flags
+ * with explicit state machine for clearer debugging and state validation.
+ *
+ * State transitions:
+ *   UNLOADED -> LOADING (worker thread picks up chunk)
+ *   LOADING -> GENERATED (terrain complete, awaiting decoration)
+ *   GENERATED -> DECORATING (decoration in progress)
+ *   DECORATING -> AWAITING_MESH (decoration complete)
+ *   AWAITING_MESH -> MESHING (mesh worker picks up chunk)
+ *   MESHING -> AWAITING_UPLOAD (mesh complete)
+ *   AWAITING_UPLOAD -> UPLOADING (GPU upload started)
+ *   UPLOADING -> ACTIVE (fully renderable)
+ *   ACTIVE -> UNLOADING (chunk being removed)
+ *   UNLOADING -> UNLOADED (returned to pool)
+ *
+ * @note Use atomic operations for thread-safe state transitions
+ */
+enum class ChunkState : uint8_t {
+    UNLOADED,           ///< Not in memory (in pool or not created)
+    LOADING,            ///< Terrain generation in progress (worker thread)
+    GENERATED,          ///< Terrain generated, awaiting decoration
+    DECORATING,         ///< Tree/structure decoration in progress
+    AWAITING_MESH,      ///< Ready for mesh generation
+    MESHING,            ///< Mesh generation in progress
+    AWAITING_UPLOAD,    ///< Mesh ready, waiting for GPU upload
+    UPLOADING,          ///< GPU upload in progress
+    ACTIVE,             ///< Fully loaded and renderable
+    UNLOADING           ///< Being unloaded (saving, cleanup)
+};
+
+/**
+ * @brief Converts ChunkState to human-readable string for debugging
+ * @param state The chunk state
+ * @return String representation
+ */
+inline const char* chunkStateToString(ChunkState state) {
+    switch (state) {
+        case ChunkState::UNLOADED:        return "UNLOADED";
+        case ChunkState::LOADING:         return "LOADING";
+        case ChunkState::GENERATED:       return "GENERATED";
+        case ChunkState::DECORATING:      return "DECORATING";
+        case ChunkState::AWAITING_MESH:   return "AWAITING_MESH";
+        case ChunkState::MESHING:         return "MESHING";
+        case ChunkState::AWAITING_UPLOAD: return "AWAITING_UPLOAD";
+        case ChunkState::UPLOADING:       return "UPLOADING";
+        case ChunkState::ACTIVE:          return "ACTIVE";
+        case ChunkState::UNLOADING:       return "UNLOADING";
+        default:                          return "UNKNOWN";
+    }
+}
 
 /**
  * @brief Vertex structure for voxel rendering with position, color, and texture
@@ -687,7 +742,65 @@ public:
      */
     void deallocateInterpolatedLighting();
 
+    // ========== Chunk State Machine ==========
+
+    /**
+     * @brief Gets the current chunk state
+     * @return Current state (thread-safe atomic read)
+     */
+    ChunkState getState() const { return m_state.load(std::memory_order_acquire); }
+
+    /**
+     * @brief Sets the chunk state directly (use transitionTo for validation)
+     * @param state New state
+     */
+    void setState(ChunkState state) { m_state.store(state, std::memory_order_release); }
+
+    /**
+     * @brief Attempts to transition to a new state with validation
+     *
+     * Validates that the transition is legal according to the state machine.
+     * Invalid transitions are logged and rejected.
+     *
+     * @param newState Target state
+     * @return True if transition succeeded, false if invalid
+     */
+    bool transitionTo(ChunkState newState);
+
+    /**
+     * @brief Attempts atomic compare-and-swap state transition
+     *
+     * Thread-safe transition that only succeeds if current state matches expected.
+     * Useful for worker threads competing to claim chunks.
+     *
+     * @param expectedState Expected current state
+     * @param newState Target state
+     * @return True if transition succeeded (state was expectedState and is now newState)
+     */
+    bool tryTransition(ChunkState expectedState, ChunkState newState);
+
+    /**
+     * @brief Checks if chunk is in a renderable state
+     * @return True if state is ACTIVE
+     */
+    bool isRenderable() const { return getState() == ChunkState::ACTIVE; }
+
+    /**
+     * @brief Checks if chunk needs mesh generation
+     * @return True if state is AWAITING_MESH
+     */
+    bool needsMesh() const { return getState() == ChunkState::AWAITING_MESH; }
+
+    /**
+     * @brief Checks if chunk needs GPU upload
+     * @return True if state is AWAITING_UPLOAD
+     */
+    bool needsUpload() const { return getState() == ChunkState::AWAITING_UPLOAD; }
+
 private:
+    // ========== State Machine ==========
+    std::atomic<ChunkState> m_state{ChunkState::UNLOADED}; ///< Current chunk lifecycle state (thread-safe)
+
     // ========== Position and Storage ==========
     int m_x, m_y, m_z;                      ///< Chunk coordinates in chunk space
     int m_blocks[WIDTH][HEIGHT][DEPTH];    ///< Block ID storage (32 KB)

@@ -1,7 +1,7 @@
 #include "config.h"
+#include "logger.h"
 #include <fstream>
 #include <sstream>
-#include <iostream>
 #include <algorithm>
 
 Config& Config::instance() {
@@ -12,7 +12,7 @@ Config& Config::instance() {
 bool Config::loadFromFile(const std::string& filepath) {
     std::ifstream file(filepath);
     if (!file.is_open()) {
-        std::cerr << "Failed to open config file: " << filepath << std::endl;
+        Logger::error() << "Failed to open config file: " << filepath;
         return false;
     }
 
@@ -68,7 +68,7 @@ int Config::getInt(const std::string& section, const std::string& key, int defau
             try {
                 return std::stoi(keyIt->second);
             } catch (...) {
-                std::cerr << "Failed to parse int for [" << section << "]:" << key << std::endl;
+                Logger::warning() << "Failed to parse int for [" << section << "]:" << key;
             }
         }
     }
@@ -83,7 +83,7 @@ float Config::getFloat(const std::string& section, const std::string& key, float
             try {
                 return std::stof(keyIt->second);
             } catch (...) {
-                std::cerr << "Failed to parse float for [" << section << "]:" << key << std::endl;
+                Logger::warning() << "Failed to parse float for [" << section << "]:" << key;
             }
         }
     }
@@ -113,7 +113,7 @@ std::string Config::trim(const std::string& str) const {
 bool Config::saveToFile(const std::string& filepath) const {
     std::ofstream file(filepath);
     if (!file.is_open()) {
-        std::cerr << "Failed to open config file for writing: " << filepath << std::endl;
+        Logger::error() << "Failed to open config file for writing: " << filepath;
         return false;
     }
 

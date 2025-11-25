@@ -173,9 +173,9 @@ void Console::addMessage(const std::string& message, ConsoleMessageType type) {
 
     // Also print to stdout for debugging
     if (type == ConsoleMessageType::ERROR) {
-        std::cerr << message << std::endl;
+        std::cerr << message << '\n';
     } else {
-        std::cout << message << std::endl;
+        std::cout << message << '\n';
     }
 }
 

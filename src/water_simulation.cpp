@@ -113,59 +113,45 @@ void WaterSimulation::update(float deltaTime, World* world, const glm::vec3& pla
 }
 
 void WaterSimulation::updateWaterCell(const glm::ivec3& pos, WaterCell& cell, World* world, float deltaTime) {
+    // ============================================================================
+    // MINECRAFT-STYLE WATER UPDATE (2025-11-25)
+    // ============================================================================
+    // Simple discrete water physics:
+    // 1. Source blocks (level 255) spread indefinitely
+    // 2. Flowing water (level < 255) spreads at lower levels
+    // 3. Water falls down and becomes source blocks
+    // 4. No evaporation (Minecraft water is permanent)
+    // ============================================================================
+
     if (cell.level == 0) return;
 
-    // FIXED (2025-11-23): Don't update water source blocks - they should maintain their level
-    // Source blocks only spread water, they don't lose it to gravity/evaporation
-    // Their level is maintained by updateWaterSources()
+    // Source blocks spread water but maintain their level
     if (hasWaterSource(pos)) {
-        // Source blocks spread water but don't lose water themselves
+        cell.level = 255;  // Ensure source is always full
         spreadHorizontally(pos, cell, world);
         return;
     }
 
-    // Track original level for particle spawning
-    uint8_t originalLevel = cell.level;
-
-    // Step 1: Evaporation
-    if (m_enableEvaporation && cell.level < m_evaporationThreshold) {
-        cell.level = std::max(0, (int)cell.level - 1);
-        if (cell.level == 0) {
-            cell.fluidType = 0;
-            return;
-        }
-    }
-
-    // Step 2: Apply gravity (water falls down)
+    // Step 1: Apply gravity (water falls down, becomes source below)
     applyGravity(pos, cell, world);
 
-    // Step 3: Spread horizontally if water remains
+    // Step 2: Spread horizontally at decreasing levels
     if (cell.level > 0) {
         spreadHorizontally(pos, cell, world);
     }
 
-    // Step 4: Update shore counter for foam effects
-    // PERFORMANCE FIX (2025-11-24): Skip shore counter - particles disabled
-    // updateShoreCounter() does 6 block queries per water cell (30,000/sec at 5Hz with 1000 cells)
-    // shoreCounter is only used for particle spawning which is disabled (see Step 5)
-    // Re-enable if particles are ever activated
-    // updateShoreCounter(pos, cell, world);
-
-    // Step 5: Spawn splash particles if water level increased significantly (optional)
-    // Note: Disabled by default as particle system is not used in main loop
-    // Uncomment to enable water splash effects:
-    // if (cell.level > originalLevel + 50 && cell.shoreCounter > 0) {
-    //     world->getParticleSystem()->spawnWaterSplash(
-    //         glm::vec3(pos.x + 0.5f, pos.y + 0.5f, pos.z + 0.5f),
-    //         (cell.level - originalLevel) / 50.0f
-    //     );
-    // }
-
-    // Step 6: Reset flow vector (will be set by neighbors spreading to this cell)
-    cell.flowVector = glm::vec2(0.0f, 0.0f);
+    // Step 3: Sync current level to chunk for rendering
+    syncWaterLevelToChunk(pos, cell.level, world);
 }
 
 void WaterSimulation::applyGravity(const glm::ivec3& pos, WaterCell& cell, World* world) {
+    // ============================================================================
+    // MINECRAFT-STYLE WATER GRAVITY (2025-11-25)
+    // ============================================================================
+    // Water falling down becomes a source block (level 255).
+    // This creates infinite waterfalls like Minecraft.
+    // ============================================================================
+
     glm::ivec3 below = pos - glm::ivec3(0, 1, 0);
 
     // Check if block below is solid
@@ -182,27 +168,43 @@ void WaterSimulation::applyGravity(const glm::ivec3& pos, WaterCell& cell, World
         }
     }
 
-    int spaceBelow = belowCellPtr ? (255 - belowCellPtr->level) : 255;
-    int amountToMove = std::min((int)cell.level, spaceBelow);
-
-    if (amountToMove > 0) {
-        cell.level -= amountToMove;
-
+    // If there's no water below or it's not full, fill it
+    if (!belowCellPtr || belowCellPtr->level < 255) {
         if (!belowCellPtr) {
             belowCellPtr = &m_waterCells[below];
+            belowCellPtr->fluidType = cell.fluidType;
         }
 
-        belowCellPtr->level += amountToMove;
-        belowCellPtr->fluidType = cell.fluidType;
+        // Falling water creates full water below (like Minecraft waterfalls)
+        belowCellPtr->level = 255;
         belowCellPtr->flowVector = glm::vec2(0.0f, -1.0f);
 
         markDirty(below);
+        syncWaterLevelToChunk(below, 255, world);
     }
 }
 
 void WaterSimulation::spreadHorizontally(const glm::ivec3& pos, WaterCell& cell, World* world) {
-    // Get flow multiplier based on fluid type
-    float flowMult = (cell.fluidType == 2) ? m_lavaFlowMultiplier : 1.0f;
+    // ============================================================================
+    // MINECRAFT-STYLE WATER SPREADING (2025-11-25)
+    // ============================================================================
+    // Water uses 8 discrete levels (like Minecraft):
+    // - Level 8 (255) = Source block (full water)
+    // - Level 7 (224) = First spread
+    // - Level 1 (32)  = Last spread (can't spread further)
+    // - Level 0       = Empty
+    //
+    // Water spreads to neighbors at (current_level - 32).
+    // If neighbor already has higher level, don't overwrite.
+    // Source blocks never lose water, only spread.
+    // ============================================================================
+
+    // Only spread if we have enough water (at least level 2 worth = 64)
+    if (cell.level < 64) return;
+
+    // Calculate spread level (one step lower than current)
+    uint8_t spreadLevel = (cell.level >= 32) ? (cell.level - 32) : 0;
+    if (spreadLevel < 32) return;  // Can't spread below minimum
 
     // Check all 4 horizontal neighbors
     glm::ivec3 neighbors[4] = {
@@ -219,74 +221,75 @@ void WaterSimulation::spreadHorizontally(const glm::ivec3& pos, WaterCell& cell,
         glm::vec2(0.0f, -1.0f)
     };
 
-    // Calculate flow weights (lower = better path)
-    int weights[4];
     for (int i = 0; i < 4; i++) {
-        weights[i] = calculateFlowWeight(pos, neighbors[i], world);
-    }
+        glm::ivec3 neighborPos = neighbors[i];
 
-    // Find minimum weight
-    int minWeight = *std::min_element(weights, weights + 4);
-
-    // Spread to neighbors with minimum weight (pathfinding toward downward paths)
-    std::vector<int> validNeighbors;
-    validNeighbors.reserve(4);  // OPTIMIZATION: Max 4 neighbors, prevents reallocation
-    for (int i = 0; i < 4; i++) {
-        if (weights[i] == minWeight && weights[i] < 1000) {
-            validNeighbors.push_back(i);
-        }
-    }
-
-    if (validNeighbors.empty()) return;
-
-    for (int idx : validNeighbors) {
-        if (cell.level <= 1) break;
-
-        glm::ivec3 neighborPos = neighbors[idx];
-
+        // Skip solid blocks
         if (isBlockSolid(neighborPos.x, neighborPos.y, neighborPos.z, world)) {
             continue;
         }
 
         auto it = m_waterCells.find(neighborPos);
         WaterCell* neighborCellPtr = nullptr;
-        int neighborLevel = 0;
+        uint8_t neighborLevel = 0;
 
         if (it != m_waterCells.end()) {
             neighborCellPtr = &it->second;
             neighborLevel = neighborCellPtr->level;
+
+            // Skip if different fluid type
             if (neighborLevel > 0 && neighborCellPtr->fluidType != cell.fluidType) {
+                continue;
+            }
+
+            // Skip if neighbor already has equal or higher water
+            if (neighborLevel >= spreadLevel) {
                 continue;
             }
         }
 
-        int levelDiff = cell.level - neighborLevel;
-        if (levelDiff <= 0) continue;
-
-        int amountToMove;
-        {
-            std::lock_guard<std::mutex> lock(m_rngMutex);
-            std::uniform_int_distribution<> dis(levelDiff / 4, levelDiff / 2);
-            amountToMove = std::min(dis(m_rng), (int)cell.level);
-        }
-        amountToMove = std::max(1, (int)(amountToMove * flowMult));
-
-        int spaceAvailable = 255 - neighborLevel;
-        amountToMove = std::min(amountToMove, spaceAvailable);
-
-        if (amountToMove > 0) {
-            cell.level -= amountToMove;
-
-            if (!neighborCellPtr) {
-                neighborCellPtr = &m_waterCells[neighborPos];
-            }
-
-            neighborCellPtr->level += amountToMove;
+        // Create or update neighbor cell with spread level
+        if (!neighborCellPtr) {
+            neighborCellPtr = &m_waterCells[neighborPos];
             neighborCellPtr->fluidType = cell.fluidType;
-            neighborCellPtr->flowVector = directions[idx];
-
-            markDirty(neighborPos);
         }
+
+        // Set neighbor to spread level (discrete, no random bobbing)
+        neighborCellPtr->level = spreadLevel;
+        neighborCellPtr->flowVector = directions[i];
+
+        markDirty(neighborPos);
+
+        // Sync to chunk for visual rendering
+        syncWaterLevelToChunk(neighborPos, spreadLevel, world);
+    }
+}
+
+// ============================================================================
+// SYNC WATER LEVEL TO CHUNK (2025-11-25)
+// Updates chunk metadata so water height is visible in the mesh
+// ============================================================================
+void WaterSimulation::syncWaterLevelToChunk(const glm::ivec3& pos, uint8_t level, World* world) {
+    if (!world) return;
+
+    Chunk* chunk = world->getChunkAtWorldPos(
+        static_cast<float>(pos.x),
+        static_cast<float>(pos.y),
+        static_cast<float>(pos.z)
+    );
+
+    if (chunk) {
+        // Convert world position to local chunk position
+        int localX = pos.x & 31;  // pos.x % 32
+        int localY = pos.y & 31;
+        int localZ = pos.z & 31;
+
+        // Convert 0-255 level to 0-7 visual level (3 bits in metadata)
+        // 255 = full water = visual level 0 (no offset)
+        // 0 = empty = visual level 7 (max offset)
+        uint8_t visualLevel = (level >= 224) ? 0 : (7 - (level >> 5));
+
+        chunk->setBlockMetadata(localX, localY, localZ, visualLevel);
     }
 }
 

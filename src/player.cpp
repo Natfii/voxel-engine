@@ -285,73 +285,7 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     // *** Check ground state BEFORE movement ***
     // This ensures m_onGround represents the state at the START of the frame
     // so jumping works correctly even when moving off edges
-    m_onGround = false;
-
-    // Check if standing on ground - check 4 bottom corners of AABB
-    // This is the standard approach in voxel games like Minecraft
-    glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
-    float halfWidth = PLAYER_WIDTH / 2.0f;
-
-    // Check slightly below feet to detect ground
-    bool groundDetected = false;
-    using namespace PhysicsConstants;
-    const float checkDistance = GROUND_CHECK_DISTANCE;
-
-    // Check for ground even if feet are slightly inside a block
-    // This prevents bobbing when player is snapped to grid boundaries
-    // We'll check if the block BELOW is solid (not the block at feet level)
-    {
-        // Check center first as fallback for edge cases
-        int centerBelow = world->getBlockAt(feetPos.x, feetPos.y - checkDistance, feetPos.z);
-        if (centerBelow > 0) {
-            const auto& blockDef = BlockRegistry::instance().get(centerBelow);
-            if (!blockDef.isLiquid) groundDetected = true;  // Only solid blocks count as ground
-        }
-
-        // Also check 4 corners - if ANY corner has solid block below, player is grounded
-        // This allows jumping while walking off ledges (as long as one corner is still over ground)
-        if (!groundDetected) {
-            // Check back-left corner
-            int bl = world->getBlockAt(feetPos.x - halfWidth, feetPos.y - checkDistance, feetPos.z - halfWidth);
-            if (bl > 0) {
-                const auto& blockDef = BlockRegistry::instance().get(bl);
-                if (!blockDef.isLiquid) groundDetected = true;
-            }
-        }
-
-        if (!groundDetected) {
-            // Check back-right corner
-            int br = world->getBlockAt(feetPos.x + halfWidth, feetPos.y - checkDistance, feetPos.z - halfWidth);
-            if (br > 0) {
-                const auto& blockDef = BlockRegistry::instance().get(br);
-                if (!blockDef.isLiquid) groundDetected = true;
-            }
-        }
-
-        if (!groundDetected) {
-            // Check front-left corner
-            int fl = world->getBlockAt(feetPos.x - halfWidth, feetPos.y - checkDistance, feetPos.z + halfWidth);
-            if (fl > 0) {
-                const auto& blockDef = BlockRegistry::instance().get(fl);
-                if (!blockDef.isLiquid) groundDetected = true;
-            }
-        }
-
-        if (!groundDetected) {
-            // Check front-right corner
-            int fr = world->getBlockAt(feetPos.x + halfWidth, feetPos.y - checkDistance, feetPos.z + halfWidth);
-            if (fr > 0) {
-                const auto& blockDef = BlockRegistry::instance().get(fr);
-                if (!blockDef.isLiquid) groundDetected = true;
-            }
-        }
-    }
-
-    if (groundDetected) {
-        m_onGround = true;
-        // Don't stop velocity here - let collision resolution handle it
-        // This prevents teleporting/floating when detecting ground early
-    }
+    m_onGround = checkGroundAtPosition(Position, world);
 
     // Apply water drag to reduce velocity when in water
     if (m_inLiquid) {
@@ -381,40 +315,13 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     if (Position.y < VOID_BOUNDARY) {
         Position.y = 100.0f;  // Teleport to safe Y coordinate
         m_velocity.y = 0.0f;  // Reset vertical velocity
-        std::cout << "WARNING: Player fell through void, teleporting to safety" << std::endl;
+        Logger::warning() << "Player fell through void, teleporting to safety";
     }
 
     // COLLISION FIX: Re-check ground state AFTER movement to prevent bobbing
-    // The pre-movement ground check (line 288) is for jump logic only
+    // The pre-movement ground check is for jump logic only
     // We need to check AFTER movement to know if collision resolution stopped us
-    m_onGround = false;
-    glm::vec3 feetPosAfter = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
-    float halfWidthAfter = PLAYER_WIDTH / 2.0f;
-    const float checkDistanceAfter = GROUND_CHECK_DISTANCE;
-
-    // Check center + 4 corners (same as pre-movement check)
-    int centerBelow = world->getBlockAt(feetPosAfter.x, feetPosAfter.y - checkDistanceAfter, feetPosAfter.z);
-    if (centerBelow > 0) {
-        const auto& blockDef = BlockRegistry::instance().get(centerBelow);
-        if (!blockDef.isLiquid) m_onGround = true;
-    }
-
-    if (!m_onGround) {
-        int bl = world->getBlockAt(feetPosAfter.x - halfWidthAfter, feetPosAfter.y - checkDistanceAfter, feetPosAfter.z - halfWidthAfter);
-        if (bl > 0 && !BlockRegistry::instance().get(bl).isLiquid) m_onGround = true;
-    }
-    if (!m_onGround) {
-        int br = world->getBlockAt(feetPosAfter.x + halfWidthAfter, feetPosAfter.y - checkDistanceAfter, feetPosAfter.z - halfWidthAfter);
-        if (br > 0 && !BlockRegistry::instance().get(br).isLiquid) m_onGround = true;
-    }
-    if (!m_onGround) {
-        int fl = world->getBlockAt(feetPosAfter.x - halfWidthAfter, feetPosAfter.y - checkDistanceAfter, feetPosAfter.z + halfWidthAfter);
-        if (fl > 0 && !BlockRegistry::instance().get(fl).isLiquid) m_onGround = true;
-    }
-    if (!m_onGround) {
-        int fr = world->getBlockAt(feetPosAfter.x + halfWidthAfter, feetPosAfter.y - checkDistanceAfter, feetPosAfter.z + halfWidthAfter);
-        if (fr > 0 && !BlockRegistry::instance().get(fr).isLiquid) m_onGround = true;
-    }
+    m_onGround = checkGroundAtPosition(Position, world);
 
     // After movement, stabilize velocity based on ACTUAL ground state (not pre-movement state)
     if (m_onGround) {
@@ -609,6 +516,41 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
         }
     }
 
+}
+
+bool Player::checkGroundAtPosition(const glm::vec3& position, World* world) {
+    using namespace PhysicsConstants;
+
+    glm::vec3 feetPos = position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+    float halfWidth = PLAYER_WIDTH / 2.0f;
+    const float checkDistance = GROUND_CHECK_DISTANCE;
+
+    // Check center
+    int centerBelow = world->getBlockAt(feetPos.x, feetPos.y - checkDistance, feetPos.z);
+    if (centerBelow > 0 && !BlockRegistry::instance().get(centerBelow).isLiquid) {
+        return true;
+    }
+
+    // Check 4 corners
+    const glm::vec2 corners[4] = {
+        {-halfWidth, -halfWidth},  // back-left
+        { halfWidth, -halfWidth},  // back-right
+        {-halfWidth,  halfWidth},  // front-left
+        { halfWidth,  halfWidth}   // front-right
+    };
+
+    for (const auto& corner : corners) {
+        int block = world->getBlockAt(
+            feetPos.x + corner.x,
+            feetPos.y - checkDistance,
+            feetPos.z + corner.y
+        );
+        if (block > 0 && !BlockRegistry::instance().get(block).isLiquid) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**

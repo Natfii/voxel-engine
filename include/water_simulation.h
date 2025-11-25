@@ -161,6 +161,7 @@ private:
     void updateWaterBodies();
     void updateActiveChunks();
     void markDirty(const glm::ivec3& pos);  // Mark a cell as dirty (needs update)
+    void syncWaterLevelToChunk(const glm::ivec3& pos, uint8_t level, World* world);  // Sync level to chunk metadata
 
     // Helper methods
     bool isBlockSolid(int x, int y, int z, World* world) const;

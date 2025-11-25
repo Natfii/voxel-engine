@@ -44,7 +44,10 @@
       "Bash(cmd /c \"cmake --build build --config Release --target voxel-engine 2>&1 | findstr /C:\"\"error\"\" /C:\"\"warning C\"\" /C:\"\"Building\"\" /C:\"\"Linking\"\" /C:\"\"up-to-date\"\"\")",
       "Bash(timeout 8 ./voxel-engine.exe:*)",
       "Bash(md5sum:*)",
-      "Bash(timeout 15 ./voxel-engine.exe:*)"
+      "Bash(timeout 15 ./voxel-engine.exe:*)",
+      "Bash(echo:*)",
+      "Bash(timeout:*)",
+      "WebFetch(domain:rtarun9.github.io)"
     ],
     "deny": [],
     "ask": []

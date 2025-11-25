@@ -1,9 +1,9 @@
 #include "biome_map.h"
 #include "terrain_constants.h"
+#include "logger.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <iostream>
 
 BiomeMap::BiomeMap(int seed, float tempBias, float moistBias, float ageBias,
                    int minTemp, int maxTemp, int minMoisture, int maxMoisture)
@@ -436,7 +436,7 @@ const Biome* BiomeMap::selectBiome(float temperature, float moisture) {
     auto& biomeRegistry = BiomeRegistry::getInstance();
 
     if (biomeRegistry.getBiomeCount() == 0) {
-        std::cerr << "No biomes loaded!" << std::endl;
+        Logger::error() << "No biomes loaded!";
         return nullptr;
     }
 
