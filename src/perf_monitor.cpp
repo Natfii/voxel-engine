@@ -66,13 +66,16 @@ void PerformanceMonitor::recordQueueSize(const std::string& label, size_t size) 
 void PerformanceMonitor::recordPlayerPosition(const glm::vec3& position, const glm::vec3& spawnPosition) {
     if (!m_enabled) return;
 
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_currentFrame.playerPosition = position;
-    m_spawnPosition = spawnPosition;
-
-    // Calculate distance from spawn
+    // Calculate distance from spawn BEFORE taking lock (sqrt is expensive)
     glm::vec3 delta = position - spawnPosition;
-    m_currentFrame.distanceFromSpawn = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+    float distance = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_currentFrame.playerPosition = position;
+        m_spawnPosition = spawnPosition;
+        m_currentFrame.distanceFromSpawn = distance;
+    }
 }
 
 void PerformanceMonitor::beginFrame() {
@@ -136,51 +139,63 @@ void PerformanceMonitor::endFrame() {
 void PerformanceMonitor::printReport() {
     if (!m_enabled) return;
 
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    if (m_frameHistory.empty()) {
-        std::cout << "\n=== Performance Report ===\n";
-        std::cout << "No data collected yet.\n";
-        std::cout << "========================\n\n";
-        return;
-    }
-
-    // Calculate averages
+    // Local variables to hold data while lock is released
     float avgFrameTime = 0.0f;
     float avgInputTime = 0.0f;
     float avgStreamingTime = 0.0f;
     float avgDecorationTime = 0.0f;
     float avgChunkProcessTime = 0.0f;
     float avgRenderTime = 0.0f;
-
     size_t avgPendingDecorations = 0;
     size_t avgDecorationsInProgress = 0;
     size_t avgPendingLoads = 0;
     size_t avgCompletedChunks = 0;
     size_t avgMeshQueue = 0;
-
     float maxFrameTime = 0.0f;
     float minFrameTime = std::numeric_limits<float>::max();
+    size_t numFrames = 0;
+    PerfFrameData current;  // Copy of current frame data
 
-    for (const auto& frame : m_frameHistory) {
-        avgFrameTime += frame.frameTime;
-        avgInputTime += frame.inputTime;
-        avgStreamingTime += frame.streamingTime;
-        avgDecorationTime += frame.decorationTime;
-        avgChunkProcessTime += frame.chunkProcessTime;
-        avgRenderTime += frame.renderTime;
+    // LOCK SCOPE: Copy all needed data, then release lock before printing
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
 
-        avgPendingDecorations += frame.pendingDecorations;
-        avgDecorationsInProgress += frame.decorationsInProgress;
-        avgPendingLoads += frame.pendingLoads;
-        avgCompletedChunks += frame.completedChunks;
-        avgMeshQueue += frame.meshQueueSize;
+        if (m_frameHistory.empty()) {
+            // Early return still needs to print - do it outside lock
+            numFrames = 0;
+        } else {
+            numFrames = m_frameHistory.size();
+            current = m_currentFrame;  // Copy current frame
 
-        maxFrameTime = std::max(maxFrameTime, frame.frameTime);
-        minFrameTime = std::min(minFrameTime, frame.frameTime);
+            for (const auto& frame : m_frameHistory) {
+                avgFrameTime += frame.frameTime;
+                avgInputTime += frame.inputTime;
+                avgStreamingTime += frame.streamingTime;
+                avgDecorationTime += frame.decorationTime;
+                avgChunkProcessTime += frame.chunkProcessTime;
+                avgRenderTime += frame.renderTime;
+
+                avgPendingDecorations += frame.pendingDecorations;
+                avgDecorationsInProgress += frame.decorationsInProgress;
+                avgPendingLoads += frame.pendingLoads;
+                avgCompletedChunks += frame.completedChunks;
+                avgMeshQueue += frame.meshQueueSize;
+
+                maxFrameTime = std::max(maxFrameTime, frame.frameTime);
+                minFrameTime = std::min(minFrameTime, frame.frameTime);
+            }
+        }
+    }  // Lock released here - BEFORE any console output
+
+    // Handle empty case
+    if (numFrames == 0) {
+        std::cout << "\n=== Performance Report ===\n";
+        std::cout << "No data collected yet.\n";
+        std::cout << "========================\n\n";
+        return;
     }
 
-    size_t numFrames = m_frameHistory.size();
+    // Calculate averages (outside lock)
     avgFrameTime /= numFrames;
     avgInputTime /= numFrames;
     avgStreamingTime /= numFrames;
@@ -196,9 +211,7 @@ void PerformanceMonitor::printReport() {
 
     float avgFPS = (avgFrameTime > 0.0f) ? 1000.0f / avgFrameTime : 0.0f;
 
-    // Get current frame data
-    const PerfFrameData& current = m_currentFrame;
-
+    // All console output happens OUTSIDE the lock
     std::cout << "\n============================== Performance Report ==============================\n";
     std::cout << std::fixed << std::setprecision(2);
 

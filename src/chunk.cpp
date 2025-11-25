@@ -169,6 +169,9 @@ void Chunk::reset(int x, int y, int z) {
     m_terrainReady = false;  // MULTI-STAGE GENERATION: Reset to false for fresh generation
     m_isEmpty = true;        // PERFORMANCE: Reset isEmpty cache
     m_isEmptyValid = true;   // Cache is valid initially
+
+    // Reset state machine to UNLOADED (ready for fresh generation)
+    m_state.store(ChunkState::UNLOADED, std::memory_order_release);
 }
 
 /**
@@ -203,6 +206,122 @@ done:
     m_isEmpty = empty;
     m_isEmptyValid = true;
     return empty;
+}
+
+// =============================================================================
+// CHUNK STATE MACHINE (2025-11-25)
+// =============================================================================
+
+/**
+ * @brief Validates and performs a state transition
+ *
+ * STATE MACHINE IMPLEMENTATION:
+ * Validates that the requested transition is legal according to the chunk lifecycle.
+ * Invalid transitions are logged for debugging but do not crash the engine.
+ *
+ * Valid transitions:
+ *   UNLOADED -> LOADING (worker picks up chunk)
+ *   LOADING -> GENERATED (terrain complete)
+ *   GENERATED -> DECORATING (decoration starts)
+ *   DECORATING -> AWAITING_MESH (decoration complete)
+ *   AWAITING_MESH -> MESHING (mesh worker picks up)
+ *   MESHING -> AWAITING_UPLOAD (mesh complete)
+ *   AWAITING_UPLOAD -> UPLOADING (GPU upload starts)
+ *   UPLOADING -> ACTIVE (upload complete)
+ *   ACTIVE -> UNLOADING (chunk being removed)
+ *   UNLOADING -> UNLOADED (cleanup complete)
+ *
+ * Also allows:
+ *   ACTIVE -> AWAITING_MESH (block change triggers remesh)
+ *   Any -> UNLOADED (forced reset/pool return)
+ *
+ * @param newState Target state to transition to
+ * @return True if transition was valid and performed, false otherwise
+ */
+bool Chunk::transitionTo(ChunkState newState) {
+    ChunkState current = m_state.load(std::memory_order_acquire);
+
+    // Validate transition is legal
+    bool valid = false;
+
+    switch (current) {
+        case ChunkState::UNLOADED:
+            valid = (newState == ChunkState::LOADING);
+            break;
+        case ChunkState::LOADING:
+            valid = (newState == ChunkState::GENERATED);
+            break;
+        case ChunkState::GENERATED:
+            valid = (newState == ChunkState::DECORATING);
+            break;
+        case ChunkState::DECORATING:
+            valid = (newState == ChunkState::AWAITING_MESH);
+            break;
+        case ChunkState::AWAITING_MESH:
+            valid = (newState == ChunkState::MESHING);
+            break;
+        case ChunkState::MESHING:
+            valid = (newState == ChunkState::AWAITING_UPLOAD);
+            break;
+        case ChunkState::AWAITING_UPLOAD:
+            valid = (newState == ChunkState::UPLOADING);
+            break;
+        case ChunkState::UPLOADING:
+            valid = (newState == ChunkState::ACTIVE);
+            break;
+        case ChunkState::ACTIVE:
+            // ACTIVE can go to UNLOADING (removal) or AWAITING_MESH (block change)
+            valid = (newState == ChunkState::UNLOADING ||
+                     newState == ChunkState::AWAITING_MESH);
+            break;
+        case ChunkState::UNLOADING:
+            valid = (newState == ChunkState::UNLOADED);
+            break;
+    }
+
+    // Also allow forced reset to UNLOADED from any state (pool return)
+    if (newState == ChunkState::UNLOADED) {
+        valid = true;
+    }
+
+    if (valid) {
+        m_state.store(newState, std::memory_order_release);
+        return true;
+    }
+
+    // Log invalid transition for debugging
+    Logger::warning() << "Invalid chunk state transition: "
+                     << chunkStateToString(current) << " -> "
+                     << chunkStateToString(newState)
+                     << " at chunk (" << m_x << ", " << m_y << ", " << m_z << ")";
+    return false;
+}
+
+/**
+ * @brief Attempts atomic compare-and-swap state transition
+ *
+ * THREAD-SAFE TRANSITION:
+ * Uses compare_exchange_strong for lock-free state claiming.
+ * Only succeeds if current state exactly matches expectedState.
+ * Perfect for worker threads competing to claim chunks from queues.
+ *
+ * Example usage (mesh worker):
+ *   if (chunk->tryTransition(ChunkState::AWAITING_MESH, ChunkState::MESHING)) {
+ *       // This worker claimed the chunk, generate mesh
+ *   } else {
+ *       // Another worker got it, move on
+ *   }
+ *
+ * @param expectedState State the chunk must be in for transition to succeed
+ * @param newState State to transition to if successful
+ * @return True if transition succeeded, false if state didn't match expected
+ */
+bool Chunk::tryTransition(ChunkState expectedState, ChunkState newState) {
+    return m_state.compare_exchange_strong(
+        expectedState, newState,
+        std::memory_order_acq_rel,
+        std::memory_order_acquire
+    );
 }
 
 /**
@@ -259,7 +378,7 @@ void Chunk::generate(BiomeMap* biomeMap) {
     using namespace TerrainGeneration;
 
     if (!biomeMap) {
-        std::cerr << "ERROR: BiomeMap is null in Chunk::generate()" << std::endl;
+        Logger::error() << "BiomeMap is null in Chunk::generate()";
         return;
     }
 
@@ -326,22 +445,32 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 if (worldY < terrainHeight) {
                     // Below surface
 
-                    // OCEAN BIOME LOGIC (hardcoded, not YAML)
-                    if (isOcean) {
-                        // Ocean floor - no caves in ocean areas for clean underwater terrain
+                    // ============================================================================
+                    // WATER FLOOR LOGIC (2025-11-25): Sand at bottom of ALL water bodies
+                    // ============================================================================
+                    // Check if this block is under water (terrain below water level)
+                    // This applies to oceans, rivers, lakes, and ponds
+                    // ============================================================================
+                    bool isUnderwater = (terrainHeight < WATER_LEVEL);
+
+                    if (isUnderwater) {
+                        // Underwater terrain - place sand at the bottom
                         int depthFromSurface = terrainHeight - worldY;
 
                         if (depthFromSurface <= 3) {
-                            // Ocean floor top layers - sand
+                            // Water floor top layers - sand (covers river/lake/ocean bottoms)
                             m_blocks[x][y][z] = BLOCK_SAND;
-                        } else {
-                            // Deep ocean floor - stone
+                        } else if (isOcean) {
+                            // Deep ocean floor - stone (only for deep oceans)
                             m_blocks[x][y][z] = BLOCK_STONE;
+                        } else {
+                            // Shallow water bodies - use biome's stone/dirt
+                            m_blocks[x][y][z] = (depthFromSurface <= 6) ? BLOCK_DIRT : biome->primary_stone_block;
                         }
                         continue;
                     }
 
-                    // LAND BIOME LOGIC
+                    // LAND BIOME LOGIC (terrain above water level)
                     // If in cave, create air pocket
                     // Cave generation handles surface entrances intelligently via noise
                     // Only prevent caves in the very top layer (3 blocks) to avoid ugly surface pockmarks
@@ -768,21 +897,38 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
     };
 
     // =================================================================================================
-    // GREEDY MESHING OPTIMIZATION (2025-11-24): Merge adjacent identical block faces
+    // BINARY GREEDY MESHING OPTIMIZATION (2025-11-25): Fast bitmask-based face tracking
     // =================================================================================================
-    // Track which blocks have been processed for horizontal merging
-    // Using bitset for memory efficiency (32x32x32 = 32768 bits = 4KB per direction)
-    std::vector<bool> processedPosX(WIDTH * HEIGHT * DEPTH, false);
-    std::vector<bool> processedNegX(WIDTH * HEIGHT * DEPTH, false);
-    std::vector<bool> processedPosY(WIDTH * HEIGHT * DEPTH, false);
-    std::vector<bool> processedNegY(WIDTH * HEIGHT * DEPTH, false);
-    std::vector<bool> processedPosZ(WIDTH * HEIGHT * DEPTH, false);
-    std::vector<bool> processedNegZ(WIDTH * HEIGHT * DEPTH, false);
+    // PERFORMANCE FIX: Replace std::vector<bool> with uint32_t bitmasks
+    // - std::vector<bool> uses proxy objects with ~10x overhead per access
+    // - uint32_t arrays allow direct bit manipulation (single AND/OR instruction)
+    // - 32-bit width matches chunk WIDTH (32) for efficient slice processing
+    //
+    // Memory layout: processed[Y][Z] contains 32 bits for X=0..31
+    // Access: processed[y][z] & (1u << x) to check, |= (1u << x) to set
+    // Total: 32x32 = 1024 uint32_t = 4KB per direction (same as vector<bool>)
+    // =================================================================================================
+    uint32_t processedPosX[HEIGHT][DEPTH] = {};  // X-facing: bits represent X positions
+    uint32_t processedNegX[HEIGHT][DEPTH] = {};
+    uint32_t processedPosY[WIDTH][DEPTH] = {};   // Y-facing: bits represent Y positions
+    uint32_t processedNegY[WIDTH][DEPTH] = {};
+    uint32_t processedPosZ[WIDTH][HEIGHT] = {};  // Z-facing: bits represent Z positions
+    uint32_t processedNegZ[WIDTH][HEIGHT] = {};
 
-    // Helper: Convert 3D coordinates to 1D index
-    auto coordToIndex = [](int x, int y, int z) -> int {
-        return x + y * WIDTH + z * WIDTH * HEIGHT;
-    };
+    // Helper macros for fast bit operations (avoid function call overhead)
+    #define IS_PROCESSED_POSX(x, y, z) (processedPosX[y][z] & (1u << (x)))
+    #define IS_PROCESSED_NEGX(x, y, z) (processedNegX[y][z] & (1u << (x)))
+    #define IS_PROCESSED_POSY(x, y, z) (processedPosY[x][z] & (1u << (y)))
+    #define IS_PROCESSED_NEGY(x, y, z) (processedNegY[x][z] & (1u << (y)))
+    #define IS_PROCESSED_POSZ(x, y, z) (processedPosZ[x][y] & (1u << (z)))
+    #define IS_PROCESSED_NEGZ(x, y, z) (processedNegZ[x][y] & (1u << (z)))
+
+    #define SET_PROCESSED_POSX(x, y, z) (processedPosX[y][z] |= (1u << (x)))
+    #define SET_PROCESSED_NEGX(x, y, z) (processedNegX[y][z] |= (1u << (x)))
+    #define SET_PROCESSED_POSY(x, y, z) (processedPosY[x][z] |= (1u << (y)))
+    #define SET_PROCESSED_NEGY(x, y, z) (processedNegY[x][z] |= (1u << (y)))
+    #define SET_PROCESSED_POSZ(x, y, z) (processedPosZ[x][y] |= (1u << (z)))
+    #define SET_PROCESSED_NEGZ(x, y, z) (processedNegZ[x][y] |= (1u << (z)))
 
     // Iterate over every block in the chunk (optimized order for cache locality)
     for(int X = 0; X < WIDTH;  X++) {
@@ -1042,10 +1188,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                 bool isCurrentLiquid = def.isLiquid;
                 bool isCurrentTransparent = (def.transparency > 0.0f);  // Has any transparency
 
-                // Front face (z=0, facing -Z direction) - WITH GREEDY MESHING
+                // Front face (z=0, facing -Z direction) - WITH BINARY GREEDY MESHING
                 {
-                    int idx = coordToIndex(X, Y, Z);
-                    if (!processedNegZ[idx]) {
+                    if (!IS_PROCESSED_NEGZ(X, Y, Z)) {
                         int neighborBlockID = getBlockID(X, Y, Z - 1);
                         bool neighborIsLiquid = isLiquid(X, Y, Z - 1);
                         bool neighborIsSolid = isSolid(X, Y, Z - 1);
@@ -1076,8 +1221,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                             if (!isCurrentLiquid && !isCurrentTransparent) {
                                 // Extend in +X direction (limited by maxQuadSize for UV tiling)
                                 while (X + width < WIDTH && width < maxQuadSize) {
-                                    int nextIdx = coordToIndex(X + width, Y, Z);
-                                    if (processedNegZ[nextIdx]) break;
+                                    if (IS_PROCESSED_NEGZ(X + width, Y, Z)) break;
                                     if (m_blocks[X + width][Y][Z] != id) break;
                                     if (isSolid(X + width, Y, Z - 1)) break;
                                     width++;
@@ -1087,37 +1231,34 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                                 bool canExtendY = true;
                                 while (Y + height < HEIGHT && height < maxQuadSize && canExtendY) {
                                     for (int dx = 0; dx < width; dx++) {
-                                        int nextIdx = coordToIndex(X + dx, Y + height, Z);
-                                        if (processedNegZ[nextIdx]) { canExtendY = false; break; }
+                                        if (IS_PROCESSED_NEGZ(X + dx, Y + height, Z)) { canExtendY = false; break; }
                                         if (m_blocks[X + dx][Y + height][Z] != id) { canExtendY = false; break; }
                                         if (isSolid(X + dx, Y + height, Z - 1)) { canExtendY = false; break; }
                                     }
                                     if (canExtendY) height++;
                                 }
 
-                                // Mark all covered blocks as processed
+                                // Mark all covered blocks as processed (binary OR)
                                 for (int dy = 0; dy < height; dy++) {
                                     for (int dx = 0; dx < width; dx++) {
-                                        int markIdx = coordToIndex(X + dx, Y + dy, Z);
-                                        processedNegZ[markIdx] = true;
+                                        SET_PROCESSED_NEGZ(X + dx, Y + dy, Z);
                                     }
                                 }
                             } else {
-                                processedNegZ[idx] = true;
+                                SET_PROCESSED_NEGZ(X, Y, Z);
                             }
 
                             renderFace(frontTex, 0, 0, waterHeightAdjust, true, isCurrentTransparent,
                                       glm::ivec3(0, 0, -1), float(width), float(height), X, Y, Z);
                         } else {
-                            processedNegZ[idx] = true;
+                            SET_PROCESSED_NEGZ(X, Y, Z);
                         }
                     }
                 }
 
-                // Back face (z=0.5, facing +Z direction) - WITH GREEDY MESHING
+                // Back face (z=0.5, facing +Z direction) - WITH BINARY GREEDY MESHING
                 {
-                    int idx = coordToIndex(X, Y, Z);
-                    if (!processedPosZ[idx]) {
+                    if (!IS_PROCESSED_POSZ(X, Y, Z)) {
                         int neighborBlockID = getBlockID(X, Y, Z + 1);
                         bool neighborIsLiquid = isLiquid(X, Y, Z + 1);
                         bool neighborIsSolid = isSolid(X, Y, Z + 1);
@@ -1144,8 +1285,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                             if (!isCurrentLiquid && !isCurrentTransparent) {
                                 // Extend in +X direction
                                 while (X + width < WIDTH && width < maxQuadSize) {
-                                    int nextIdx = coordToIndex(X + width, Y, Z);
-                                    if (processedPosZ[nextIdx]) break;
+                                    if (IS_PROCESSED_POSZ(X + width, Y, Z)) break;
                                     if (m_blocks[X + width][Y][Z] != id) break;
                                     if (isSolid(X + width, Y, Z + 1)) break;
                                     width++;
@@ -1155,37 +1295,34 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                                 bool canExtendY = true;
                                 while (Y + height < HEIGHT && height < maxQuadSize && canExtendY) {
                                     for (int dx = 0; dx < width; dx++) {
-                                        int nextIdx = coordToIndex(X + dx, Y + height, Z);
-                                        if (processedPosZ[nextIdx]) { canExtendY = false; break; }
+                                        if (IS_PROCESSED_POSZ(X + dx, Y + height, Z)) { canExtendY = false; break; }
                                         if (m_blocks[X + dx][Y + height][Z] != id) { canExtendY = false; break; }
                                         if (isSolid(X + dx, Y + height, Z + 1)) { canExtendY = false; break; }
                                     }
                                     if (canExtendY) height++;
                                 }
 
-                                // Mark all covered blocks as processed
+                                // Mark all covered blocks as processed (binary OR)
                                 for (int dy = 0; dy < height; dy++) {
                                     for (int dx = 0; dx < width; dx++) {
-                                        int markIdx = coordToIndex(X + dx, Y + dy, Z);
-                                        processedPosZ[markIdx] = true;
+                                        SET_PROCESSED_POSZ(X + dx, Y + dy, Z);
                                     }
                                 }
                             } else {
-                                processedPosZ[idx] = true;
+                                SET_PROCESSED_POSZ(X, Y, Z);
                             }
 
                             renderFace(backTex, 12, 8, waterHeightAdjust, true, isCurrentTransparent,
                                       glm::ivec3(0, 0, 1), float(width), float(height), X, Y, Z);
                         } else {
-                            processedPosZ[idx] = true;
+                            SET_PROCESSED_POSZ(X, Y, Z);
                         }
                     }
                 }
 
-                // Left face (x=0, facing -X direction) - WITH GREEDY MESHING
+                // Left face (x=0, facing -X direction) - WITH BINARY GREEDY MESHING
                 {
-                    int idx = coordToIndex(X, Y, Z);
-                    if (!processedNegX[idx]) {
+                    if (!IS_PROCESSED_NEGX(X, Y, Z)) {
                         int neighborBlockID = getBlockID(X - 1, Y, Z);
                         bool neighborIsLiquid = isLiquid(X - 1, Y, Z);
                         bool neighborIsSolid = isSolid(X - 1, Y, Z);
@@ -1212,8 +1349,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                             if (!isCurrentLiquid && !isCurrentTransparent) {
                                 // Extend in +Z direction (limited by maxQuadSize for UV tiling)
                                 while (Z + width < DEPTH && width < maxQuadSize) {
-                                    int nextIdx = coordToIndex(X, Y, Z + width);
-                                    if (processedNegX[nextIdx]) break;
+                                    if (IS_PROCESSED_NEGX(X, Y, Z + width)) break;
                                     if (m_blocks[X][Y][Z + width] != id) break;
                                     if (isSolid(X - 1, Y, Z + width)) break;
                                     width++;
@@ -1223,37 +1359,34 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                                 bool canExtendY = true;
                                 while (Y + height < HEIGHT && height < maxQuadSize && canExtendY) {
                                     for (int dz = 0; dz < width; dz++) {
-                                        int nextIdx = coordToIndex(X, Y + height, Z + dz);
-                                        if (processedNegX[nextIdx]) { canExtendY = false; break; }
+                                        if (IS_PROCESSED_NEGX(X, Y + height, Z + dz)) { canExtendY = false; break; }
                                         if (m_blocks[X][Y + height][Z + dz] != id) { canExtendY = false; break; }
                                         if (isSolid(X - 1, Y + height, Z + dz)) { canExtendY = false; break; }
                                     }
                                     if (canExtendY) height++;
                                 }
 
-                                // Mark all covered blocks as processed
+                                // Mark all covered blocks as processed (binary OR)
                                 for (int dy = 0; dy < height; dy++) {
                                     for (int dz = 0; dz < width; dz++) {
-                                        int markIdx = coordToIndex(X, Y + dy, Z + dz);
-                                        processedNegX[markIdx] = true;
+                                        SET_PROCESSED_NEGX(X, Y + dy, Z + dz);
                                     }
                                 }
                             } else {
-                                processedNegX[idx] = true;
+                                SET_PROCESSED_NEGX(X, Y, Z);
                             }
 
                             renderFace(leftTex, 24, 16, waterHeightAdjust, true, isCurrentTransparent,
                                       glm::ivec3(-1, 0, 0), float(width), float(height), X, Y, Z);
                         } else {
-                            processedNegX[idx] = true;
+                            SET_PROCESSED_NEGX(X, Y, Z);
                         }
                     }
                 }
 
-                // Right face (x=0.5, facing +X direction) - WITH GREEDY MESHING
+                // Right face (x=0.5, facing +X direction) - WITH BINARY GREEDY MESHING
                 {
-                    int idx = coordToIndex(X, Y, Z);
-                    if (!processedPosX[idx]) {
+                    if (!IS_PROCESSED_POSX(X, Y, Z)) {
                         int neighborBlockID = getBlockID(X + 1, Y, Z);
                         bool neighborIsLiquid = isLiquid(X + 1, Y, Z);
                         bool neighborIsSolid = isSolid(X + 1, Y, Z);
@@ -1280,8 +1413,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                             if (!isCurrentLiquid && !isCurrentTransparent) {
                                 // Extend in +Z direction (limited by maxQuadSize for UV tiling)
                                 while (Z + width < DEPTH && width < maxQuadSize) {
-                                    int nextIdx = coordToIndex(X, Y, Z + width);
-                                    if (processedPosX[nextIdx]) break;
+                                    if (IS_PROCESSED_POSX(X, Y, Z + width)) break;
                                     if (m_blocks[X][Y][Z + width] != id) break;
                                     if (isSolid(X + 1, Y, Z + width)) break;
                                     width++;
@@ -1291,37 +1423,34 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                                 bool canExtendY = true;
                                 while (Y + height < HEIGHT && height < maxQuadSize && canExtendY) {
                                     for (int dz = 0; dz < width; dz++) {
-                                        int nextIdx = coordToIndex(X, Y + height, Z + dz);
-                                        if (processedPosX[nextIdx]) { canExtendY = false; break; }
+                                        if (IS_PROCESSED_POSX(X, Y + height, Z + dz)) { canExtendY = false; break; }
                                         if (m_blocks[X][Y + height][Z + dz] != id) { canExtendY = false; break; }
                                         if (isSolid(X + 1, Y + height, Z + dz)) { canExtendY = false; break; }
                                     }
                                     if (canExtendY) height++;
                                 }
 
-                                // Mark all covered blocks as processed
+                                // Mark all covered blocks as processed (binary OR)
                                 for (int dy = 0; dy < height; dy++) {
                                     for (int dz = 0; dz < width; dz++) {
-                                        int markIdx = coordToIndex(X, Y + dy, Z + dz);
-                                        processedPosX[markIdx] = true;
+                                        SET_PROCESSED_POSX(X, Y + dy, Z + dz);
                                     }
                                 }
                             } else {
-                                processedPosX[idx] = true;
+                                SET_PROCESSED_POSX(X, Y, Z);
                             }
 
                             renderFace(rightTex, 36, 24, waterHeightAdjust, true, isCurrentTransparent,
                                       glm::ivec3(1, 0, 0), float(width), float(height), X, Y, Z);
                         } else {
-                            processedPosX[idx] = true;
+                            SET_PROCESSED_POSX(X, Y, Z);
                         }
                     }
                 }
 
                 // Top face (y=0.5, facing +Y direction) - WITH GREEDY MESHING
                 {
-                    int idx = coordToIndex(X, Y, Z);
-                    if (!processedPosY[idx]) {
+                    if (!IS_PROCESSED_POSY(X, Y, Z)) {
                         int neighborBlockID = getBlockID(X, Y + 1, Z);
                         bool neighborIsLiquid = isLiquid(X, Y + 1, Z);
                         bool neighborIsSolid = isSolid(X, Y + 1, Z);
@@ -1343,10 +1472,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                             if (!isCurrentLiquid && !isCurrentTransparent) {
                                 // Extend in +X direction (limited by maxQuadSize for UV tiling)
                                 while (X + width < WIDTH && width < maxQuadSize) {
-                                    int nextIdx = coordToIndex(X + width, Y, Z);
-                                    if (processedPosY[nextIdx]) break;
+                                    if (IS_PROCESSED_POSY(X + width, Y, Z)) break;
                                     if (m_blocks[X + width][Y][Z] != id) break;
-                                    int nextNeighbor = getBlockID(X + width, Y + 1, Z);
                                     if (isSolid(X + width, Y + 1, Z)) break; // Neighbor is solid
                                     width++;
                                 }
@@ -1356,39 +1483,36 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                                 while (Z + height < DEPTH && height < maxQuadSize && canExtendZ) {
                                     // Check if entire row can be extended
                                     for (int dx = 0; dx < width; dx++) {
-                                        int nextIdx = coordToIndex(X + dx, Y, Z + height);
-                                        if (processedPosY[nextIdx]) { canExtendZ = false; break; }
+                                        if (IS_PROCESSED_POSY(X + dx, Y, Z + height)) { canExtendZ = false; break; }
                                         if (m_blocks[X + dx][Y][Z + height] != id) { canExtendZ = false; break; }
                                         if (isSolid(X + dx, Y + 1, Z + height)) { canExtendZ = false; break; }
                                     }
                                     if (canExtendZ) height++;
                                 }
 
-                                // Mark all covered blocks as processed
+                                // Mark all covered blocks as processed (binary OR)
                                 for (int dz = 0; dz < height; dz++) {
                                     for (int dx = 0; dx < width; dx++) {
-                                        int markIdx = coordToIndex(X + dx, Y, Z + dz);
-                                        processedPosY[markIdx] = true;
+                                        SET_PROCESSED_POSY(X + dx, Y, Z + dz);
                                     }
                                 }
                             } else {
                                 // Transparent/liquid blocks: don't merge, just mark as processed
-                                processedPosY[idx] = true;
+                                SET_PROCESSED_POSY(X, Y, Z);
                             }
 
                             // Render the merged quad
                             renderFace(topTex, 48, 32, waterHeightAdjust, false, isCurrentTransparent,
                                       glm::ivec3(0, 1, 0), float(width), float(height), X, Y, Z);
                         } else {
-                            processedPosY[idx] = true; // Mark as processed even if not rendered
+                            SET_PROCESSED_POSY(X, Y, Z); // Mark as processed even if not rendered
                         }
                     }
                 }
 
                 // Bottom face (y=0, facing -Y direction) - WITH GREEDY MESHING
                 {
-                    int idx = coordToIndex(X, Y, Z);
-                    if (!processedNegY[idx]) {
+                    if (!IS_PROCESSED_NEGY(X, Y, Z)) {
                         int neighborBlockID = getBlockID(X, Y - 1, Z);
                         bool neighborIsLiquid = isLiquid(X, Y - 1, Z);
                         bool neighborIsSolid = isSolid(X, Y - 1, Z);
@@ -1412,8 +1536,7 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                             if (!isCurrentLiquid && !isCurrentTransparent) {
                                 // Extend in +X direction (limited by maxQuadSize for UV tiling)
                                 while (X + width < WIDTH && width < maxQuadSize) {
-                                    int nextIdx = coordToIndex(X + width, Y, Z);
-                                    if (processedNegY[nextIdx]) break;
+                                    if (IS_PROCESSED_NEGY(X + width, Y, Z)) break;
                                     if (m_blocks[X + width][Y][Z] != id) break;
                                     if (isSolid(X + width, Y - 1, Z)) break;
                                     width++;
@@ -1423,29 +1546,27 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                                 bool canExtendZ = true;
                                 while (Z + height < DEPTH && height < maxQuadSize && canExtendZ) {
                                     for (int dx = 0; dx < width; dx++) {
-                                        int nextIdx = coordToIndex(X + dx, Y, Z + height);
-                                        if (processedNegY[nextIdx]) { canExtendZ = false; break; }
+                                        if (IS_PROCESSED_NEGY(X + dx, Y, Z + height)) { canExtendZ = false; break; }
                                         if (m_blocks[X + dx][Y][Z + height] != id) { canExtendZ = false; break; }
                                         if (isSolid(X + dx, Y - 1, Z + height)) { canExtendZ = false; break; }
                                     }
                                     if (canExtendZ) height++;
                                 }
 
-                                // Mark all covered blocks as processed
+                                // Mark all covered blocks as processed (binary OR)
                                 for (int dz = 0; dz < height; dz++) {
                                     for (int dx = 0; dx < width; dx++) {
-                                        int markIdx = coordToIndex(X + dx, Y, Z + dz);
-                                        processedNegY[markIdx] = true;
+                                        SET_PROCESSED_NEGY(X + dx, Y, Z + dz);
                                     }
                                 }
                             } else {
-                                processedNegY[idx] = true;
+                                SET_PROCESSED_NEGY(X, Y, Z);
                             }
 
                             renderFace(bottomTex, 60, 40, 0.0f, false, isCurrentTransparent,
                                       glm::ivec3(0, -1, 0), float(width), float(height), X, Y, Z);
                         } else {
-                            processedNegY[idx] = true;
+                            SET_PROCESSED_NEGY(X, Y, Z);
                         }
                     }
                 }
@@ -1748,8 +1869,8 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
             // Allocate space in mega-buffer
             if (!renderer->allocateMegaBufferSpace(vertexBufferSize, indexBufferSize, false,
                                                     m_megaBufferVertexOffset, m_megaBufferIndexOffset)) {
-                std::cerr << "ERROR: Failed to allocate mega-buffer space for chunk at ("
-                         << m_x << ", " << m_z << ")" << std::endl;
+                Logger::error() << "Failed to allocate mega-buffer space for chunk at ("
+                               << m_x << ", " << m_z << ")";
                 return;
             }
 
@@ -1801,8 +1922,8 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
             if (!renderer->allocateMegaBufferSpace(vertexBufferSize, indexBufferSize, true,
                                                     m_megaBufferTransparentVertexOffset,
                                                     m_megaBufferTransparentIndexOffset)) {
-                std::cerr << "ERROR: Failed to allocate transparent mega-buffer space for chunk at ("
-                         << m_x << ", " << m_z << ")" << std::endl;
+                Logger::error() << "Failed to allocate transparent mega-buffer space for chunk at ("
+                               << m_x << ", " << m_z << ")";
                 return;
             }
 

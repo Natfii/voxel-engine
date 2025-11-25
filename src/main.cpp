@@ -54,6 +54,7 @@
 #include "frustum.h"
 #include "mesh/mesh_renderer.h"
 #include "mesh/mesh_loader.h"
+#include "map_preview.h"
 // BlockIconRenderer is now part of block_system.h
 
 // Game state
@@ -84,7 +85,7 @@ float lastFrame = 0.0f;
 // ImGui Vulkan init helper
 static void check_vk_result(VkResult err) {
     if (err == 0) return;
-    std::cerr << "[vulkan] Error: VkResult = " << err << std::endl;
+    std::cerr << "[vulkan] Error: VkResult = " << err << '\n';
     if (err < 0)
         abort();
 }
@@ -94,7 +95,7 @@ int main() {
         // Load configuration first
         Config& config = Config::instance();
         if (!config.loadFromFile("config.ini")) {
-            std::cerr << "Warning: Failed to load config.ini, using default values" << std::endl;
+            std::cerr << "Warning: Failed to load config.ini, using default values" << '\n';
         }
 
         glfwInit();
@@ -116,7 +117,7 @@ int main() {
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
         // Initialize Vulkan renderer
-        std::cout << "Initializing Vulkan renderer..." << std::endl;
+        std::cout << "Initializing Vulkan renderer..." << '\n';
         VulkanRenderer renderer(window);
         g_renderer = &renderer;
 
@@ -179,6 +180,9 @@ int main() {
         bool loadingComplete = false;
         int dotAnimationFrame = 0;
 
+        // Map preview for loading screen (shows terrain as it generates)
+        MapPreview* mapPreview = nullptr;
+
         auto renderLoadingScreen = [&]() {
             if (loadingComplete) return;
 
@@ -188,6 +192,11 @@ int main() {
             const char* dotPatterns[] = {".", "..", "...", ".", "..", "..."};
             std::string animatedMessage = loadingMessage + dotPatterns[dotAnimationFrame % 6];
             dotAnimationFrame++;
+
+            // Update map preview texture if available
+            if (mapPreview && mapPreview->isReady()) {
+                mapPreview->updateTexture();
+            }
 
             // Start ImGui frame
             ImGui_ImplVulkan_NewFrame();
@@ -228,6 +237,26 @@ int main() {
             ImGui::Text("%.0f%%", loadingProgress * 100.0f);
             ImGui::PopStyleColor();
 
+            // ========== MAP PREVIEW (below progress bar) ==========
+            if (mapPreview && mapPreview->isReady()) {
+                const float mapSize = 180.0f;  // Display size
+                ImGui::SetCursorPos(ImVec2(centerX - mapSize/2, centerY + 70));
+                ImGui::Image((ImTextureID)mapPreview->getImGuiTexture(),
+                            ImVec2(mapSize, mapSize));
+
+                // Border around map
+                ImVec2 mapPos = ImGui::GetItemRectMin();
+                ImVec2 mapEnd = ImGui::GetItemRectMax();
+                ImGui::GetWindowDrawList()->AddRect(mapPos, mapEnd,
+                    IM_COL32(100, 100, 100, 255), 0.0f, 0, 2.0f);
+
+                // Label below map
+                ImGui::SetCursorPos(ImVec2(centerX - 50, centerY + 70 + mapSize + 5));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+                ImGui::Text("Generating world...");
+                ImGui::PopStyleColor();
+            }
+
             ImGui::End();
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor();
@@ -243,7 +272,7 @@ int main() {
         // ========== MAIN GAME LOOP ==========
         // Outer loop allows cycling: Main Menu -> Game -> Main Menu -> Game -> ...
         // Only exits when player selects Quit or closes window
-        std::cout << "Entering main game loop..." << std::endl;
+        std::cout << "Entering main game loop..." << '\n';
         MainMenu mainMenu(window);
         GameState gameState = GameState::MAIN_MENU;
         int seed = config.getInt("World", "seed", 1124345);  // Default seed
@@ -253,7 +282,7 @@ int main() {
         while (!shouldQuit && !glfwWindowShouldClose(window)) {
             if (gameState == GameState::MAIN_MENU) {
                 // ========== MAIN MENU ==========
-                std::cout << "Showing main menu..." << std::endl;
+                std::cout << "Showing main menu..." << '\n';
 
                 // Enable cursor for menu
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -278,14 +307,14 @@ int main() {
                     if (menuResult.action == MenuAction::NEW_GAME) {
                         seed = menuResult.seed;
                         gameState = GameState::IN_GAME;
-                        std::cout << "Starting new game with seed: " << seed << std::endl;
+                        std::cout << "Starting new game with seed: " << seed << '\n';
                     } else if (menuResult.action == MenuAction::LOAD_GAME) {
                         if (!menuResult.worldPath.empty()) {
                             // Set flag to load world instead of generating new one
                             gameState = GameState::IN_GAME;
-                            std::cout << "Loading world from: " << menuResult.worldPath << std::endl;
+                            std::cout << "Loading world from: " << menuResult.worldPath << '\n';
                         } else {
-                            std::cout << "Error: No world path provided" << std::endl;
+                            std::cout << "Error: No world path provided" << '\n';
                         }
                     } else if (menuResult.action == MenuAction::QUIT) {
                         shouldQuit = true;
@@ -301,7 +330,7 @@ int main() {
 
                 // If player quit from menu, break outer loop to shutdown
                 if (shouldQuit || glfwWindowShouldClose(window)) {
-                    std::cout << "Player quit from main menu" << std::endl;
+                    std::cout << "Player quit from main menu" << '\n';
                     break;
                 }
             }
@@ -315,7 +344,7 @@ int main() {
             if (gameState == GameState::IN_GAME) {
                 // ========== GAME INITIALIZATION ==========
                 // Only runs when starting a new game or loading a world
-                std::cout << "Initializing game..." << std::endl;
+                std::cout << "Initializing game..." << '\n';
 
             // CRITICAL FIX: Reset loading screen flag for subsequent world loads
             // Without this, the loading screen won't show on second+ world generation
@@ -340,45 +369,45 @@ int main() {
         loadingProgress = 0.05f;
         loadingMessage = "Loading assets";
         renderLoadingScreen();
-        std::cout << "Loading all registries in parallel..." << std::endl;
+        std::cout << "Loading all registries in parallel..." << '\n';
 
         // Launch parallel loading tasks
         auto blockLoadFuture = std::async(std::launch::async, [&renderer]() {
-            std::cout << "  [Thread] Loading block registry..." << std::endl;
+            std::cout << "  [Thread] Loading block registry..." << '\n';
             BlockRegistry::instance().loadBlocks("assets/blocks", &renderer);
-            std::cout << "  [Thread] Block registry loaded!" << std::endl;
+            std::cout << "  [Thread] Block registry loaded!" << '\n';
         });
 
         auto structureLoadFuture = std::async(std::launch::async, []() {
-            std::cout << "  [Thread] Loading structure registry..." << std::endl;
+            std::cout << "  [Thread] Loading structure registry..." << '\n';
             StructureRegistry::instance().loadStructures("assets/structures");
-            std::cout << "  [Thread] Structure registry loaded!" << std::endl;
+            std::cout << "  [Thread] Structure registry loaded!" << '\n';
         });
 
         auto biomeLoadFuture = std::async(std::launch::async, []() {
-            std::cout << "  [Thread] Loading biome registry..." << std::endl;
+            std::cout << "  [Thread] Loading biome registry..." << '\n';
             BiomeRegistry::getInstance().loadBiomes("assets/biomes");
-            std::cout << "  [Thread] Biome registry loaded!" << std::endl;
+            std::cout << "  [Thread] Biome registry loaded!" << '\n';
         });
 
         // Wait for all registries to load (blocks takes longest ~500ms)
         blockLoadFuture.get();
         structureLoadFuture.get();
         biomeLoadFuture.get();
-        std::cout << "All registries loaded successfully!" << std::endl;
+        std::cout << "All registries loaded successfully!" << '\n';
 
         // Loading stage 4: Bind textures (25%)
         loadingProgress = 0.25f;
         loadingMessage = "Setting up renderer";
         renderLoadingScreen();
-        std::cout << "Binding texture atlas..." << std::endl;
+        std::cout << "Binding texture atlas..." << '\n';
         renderer.bindAtlasTexture(
             BlockRegistry::instance().getAtlasImageView(),
             BlockRegistry::instance().getAtlasSampler()
         );
 
         // Create ImGui descriptor set for the texture atlas (for inventory icons)
-        std::cout << "Creating ImGui atlas descriptor..." << std::endl;
+        std::cout << "Creating ImGui atlas descriptor..." << '\n';
         VkDescriptorSet atlasImGuiDescriptor = ImGui_ImplVulkan_AddTexture(
             BlockRegistry::instance().getAtlasSampler(),
             BlockRegistry::instance().getAtlasImageView(),
@@ -395,7 +424,7 @@ int main() {
                     menuResult.temperatureBias, menuResult.moistureBias, menuResult.ageBias);
 
         if (loadingExistingWorld) {
-            std::cout << "Loading world from: " << worldPath << std::endl;
+            std::cout << "Loading world from: " << worldPath << '\n';
             Chunk::initNoise(seed);  // Init with placeholder, will be overwritten by loaded seed
 
             loadingProgress = 0.35f;
@@ -403,7 +432,7 @@ int main() {
             renderLoadingScreen();
 
             if (!world.loadWorld(worldPath)) {
-                std::cerr << "Failed to load world, falling back to new world generation" << std::endl;
+                std::cerr << "Failed to load world, falling back to new world generation" << '\n';
                 loadingExistingWorld = false;
             } else {
                 // Update seed from loaded world
@@ -411,7 +440,7 @@ int main() {
                 Chunk::initNoise(seed);  // Re-init with correct seed
 
                 auto& chunks = world.getChunks();
-                std::cout << "Loaded " << chunks.size() << " chunks from disk" << std::endl;
+                std::cout << "Loaded " << chunks.size() << " chunks from disk" << '\n';
 
                 // PERFORMANCE FIX: Initialize lighting BEFORE generating meshes
                 // This eliminates wasted mesh generation with incorrect/zero lighting
@@ -421,7 +450,7 @@ int main() {
                 loadingProgress = 0.50f;
                 loadingMessage = "Initializing lighting";
                 renderLoadingScreen();
-                std::cout << "Initializing lighting for loaded chunks..." << std::endl;
+                std::cout << "Initializing lighting for loaded chunks..." << '\n';
 
                 // Initialize chunk lighting (vertical sunlight pass)
                 for (Chunk* chunk : chunks) {
@@ -432,7 +461,7 @@ int main() {
                 loadingProgress = 0.60f;
                 loadingMessage = "Initializing lighting";
                 renderLoadingScreen();
-                std::cout << "Initializing block lights (torches, lava)..." << std::endl;
+                std::cout << "Initializing block lights (torches, lava)..." << '\n';
 
                 // PERFORMANCE: Skip sky light initialization - we use heightmaps instead!
                 // Old system: BFS propagation through 100M+ air blocks (3-5 seconds wasted)
@@ -450,13 +479,13 @@ int main() {
                 //     renderLoadingScreen();
                 // });
 
-                std::cout << "Lighting initialization skipped (using heightmap system)" << std::endl;
+                std::cout << "Lighting initialization skipped (using heightmap system)" << '\n';
 
                 // NOW generate meshes WITH correct lighting (single pass)
                 loadingProgress = 0.70f;
                 loadingMessage = "Building chunk meshes";
                 renderLoadingScreen();
-                std::cout << "Generating meshes with lighting for " << chunks.size() << " chunks..." << std::endl;
+                std::cout << "Generating meshes with lighting for " << chunks.size() << " chunks..." << '\n';
 
                 // Parallel mesh generation for better performance
                 unsigned int numThreads = std::thread::hardware_concurrency();
@@ -484,18 +513,32 @@ int main() {
                     thread.join();
                 }
 
-                std::cout << "Generated " << chunks.size() << " chunk meshes with correct lighting!" << std::endl;
+                std::cout << "Generated " << chunks.size() << " chunk meshes with correct lighting!" << '\n';
             }
         }
 
         if (!loadingExistingWorld) {
-            std::cout << "Initializing world generation..." << std::endl;
+            std::cout << "Initializing world generation..." << '\n';
             Chunk::initNoise(seed);
 
             // Set world path for new worlds (enables save-on-unload for chunk streaming)
             std::string newWorldPath = "worlds/world_" + std::to_string(seed);
             world.saveWorld(newWorldPath);  // Creates directory and saves initial metadata
-            std::cout << "World path set to: " << newWorldPath << std::endl;
+            std::cout << "World path set to: " << newWorldPath << '\n';
+
+            // ============================================================================
+            // LIVE MAP PREVIEW (2025-11-25): Initialize preview before chunk generation
+            // ============================================================================
+            loadingProgress = 0.33f;
+            loadingMessage = "Creating map preview";
+            renderLoadingScreen();
+
+            mapPreview = new MapPreview();
+            if (mapPreview->initialize(world.getBiomeMap(), &renderer, 0, 0)) {
+                std::cout << "Generating map preview..." << '\n';
+                mapPreview->generateFullPreview();
+                mapPreview->updateTexture();
+            }
 
             // Loading stage 6: Generate spawn area only (much faster than full world)
             // With 320 chunk height, generating all 46,080 chunks takes forever
@@ -503,7 +546,7 @@ int main() {
             loadingProgress = 0.35f;
             loadingMessage = "Generating spawn area";
             renderLoadingScreen();
-            std::cout << "Generating spawn chunks (streaming will handle the rest)..." << std::endl;
+            std::cout << "Generating spawn chunks (streaming will handle the rest)..." << '\n';
 
             // We'll determine spawn chunk coordinates and generate them before finding exact spawn point
             // Assume spawn will be somewhere near (0, 64, 0) in world space
@@ -521,19 +564,19 @@ int main() {
 
             std::cout << "Generating " << spawnRadius << " chunk radius ("
                      << ((2*spawnRadius+1)*(2*spawnRadius+1)*(2*spawnRadius+1))
-                     << " chunks) to fully cover load sphere..." << std::endl;
+                     << " chunks) to fully cover load sphere..." << '\n';
 
             world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
 
             // Decorate world with trees and features
             // Only decorates spawn chunks for faster startup
-            std::cout << "Placing trees and features..." << std::endl;
+            std::cout << "Placing trees and features..." << '\n';
             world.decorateWorld();
 
             // PERFORMANCE FIX (2025-11-23): Skip bulk water registration at startup
             // Water is already registered incrementally in addStreamedChunk() (world.cpp:1144)
             // Bulk scanning all chunks at startup causes freeze on large worlds
-            // std::cout << "Initializing water physics..." << std::endl;
+            // std::cout << "Initializing water physics..." << '\n';
             // world.registerWaterBlocks();
 
             // PERFORMANCE: Skip lighting initialization - using heightmap system
@@ -541,7 +584,7 @@ int main() {
             loadingProgress = 0.75f;
             loadingMessage = "Preparing lighting";
             renderLoadingScreen();
-            std::cout << "Lighting ready (heightmap-based)" << std::endl;
+            std::cout << "Lighting ready (heightmap-based)" << '\n';
 
             // DISABLED: BFS lighting initialization (wasted with heightmap system)
             // world.getLightingSystem()->initializeWorldLighting([&](float progress) {
@@ -554,25 +597,25 @@ int main() {
             loadingProgress = 0.77f;
             loadingMessage = "Updating lighting on meshes";
             renderLoadingScreen();
-            std::cout << "Regenerating meshes with final lighting..." << std::endl;
+            std::cout << "Regenerating meshes with final lighting..." << '\n';
             world.getLightingSystem()->regenerateAllDirtyChunks(10000, nullptr);  // Mesh only, no GPU upload yet
-            std::cout << "Mesh regeneration complete!" << std::endl;
+            std::cout << "Mesh regeneration complete!" << '\n';
         }
 
         // Loading stage 8: Create GPU buffers (85%)
         loadingProgress = 0.80f;
         loadingMessage = "Creating GPU buffers";
         renderLoadingScreen();
-        std::cout << "Creating GPU buffers..." << std::endl;
+        std::cout << "Creating GPU buffers..." << '\n';
         world.createBuffers(&renderer);
 
         // Loading stage 8.5: GPU warm-up - wait for all uploads to finish (87%)
         loadingProgress = 0.87f;
         loadingMessage = "Warming up GPU (this ensures smooth 60 FPS)";
         renderLoadingScreen();
-        std::cout << "Warming up GPU - waiting for all chunk uploads to complete..." << std::endl;
+        std::cout << "Warming up GPU - waiting for all chunk uploads to complete..." << '\n';
         renderer.waitForGPUIdle();
-        std::cout << "GPU warm-up complete - ready for 60 FPS gameplay!" << std::endl;
+        std::cout << "GPU warm-up complete - ready for 60 FPS gameplay!" << '\n';
 
         // Loading stage 9: Finding spawn location (90%)
         loadingProgress = 0.88f;
@@ -584,7 +627,7 @@ int main() {
         float spawnZ = 0.0f;
         int spawnGroundY = -1;
 
-        std::cout << "Finding safe spawn location..." << std::endl;
+        std::cout << "Finding safe spawn location..." << '\n';
 
         // World is centered around Y=0 with both positive and negative chunks
         // Search for spawn on surface
@@ -593,24 +636,54 @@ int main() {
         const int SEARCH_RADIUS = 32;  // Search in 32 block radius
         const int MIN_SOLID_DEPTH = 5;  // Require at least 5 blocks of solid ground below
 
-        std::cout << "Searching for spawn from Y=" << MAX_TERRAIN_HEIGHT << " down to Y=" << MIN_SEARCH_Y << std::endl;
+        std::cout << "Searching for spawn from Y=" << MAX_TERRAIN_HEIGHT << " down to Y=" << MIN_SEARCH_Y << '\n';
 
         // Helper to check if a location is safe to spawn
+        // SPAWN SAFETY CHECKS (2025-11-25):
+        // 1. Not in/under water
+        // 2. Not in a cave (no large air pockets below)
+        // 3. Not on ice (slippery)
+        // 4. Clear headroom above
         auto isSafeSpawn = [&world, MIN_SOLID_DEPTH, MAX_TERRAIN_HEIGHT](float x, float z, int groundY) -> bool {
             // Bounds check
             if (groundY < MIN_SOLID_DEPTH || groundY >= MAX_TERRAIN_HEIGHT - 4) {
                 return false;  // Too extreme for spawn
             }
 
+            // Check the standing block - must be solid, not water/ice
+            int standingBlock = world.getBlockAt(x, static_cast<float>(groundY), z);
+            if (standingBlock == 0 || standingBlock == TerrainGeneration::BLOCK_WATER ||
+                standingBlock == TerrainGeneration::BLOCK_ICE) {
+                return false;  // Can't spawn on water, ice, or air
+            }
+
             // Check if there's solid ground below (no caves)
             for (int dy = 0; dy < MIN_SOLID_DEPTH; dy++) {
                 int blockID = world.getBlockAt(x, static_cast<float>(groundY - dy), z);
                 // Must be solid (not air=0, not water=5)
-                if (blockID == 0 || blockID == 5) {
+                if (blockID == 0 || blockID == TerrainGeneration::BLOCK_WATER) {
                     return false;  // Cave or water underneath
                 }
             }
-            // Check if there's clear space above for player (2 blocks tall)
+
+            // Check for high cave ceilings (reject if there's a cave ceiling far above)
+            // This prevents spawning in caves with tall ceilings that feel underground
+            int airBlocksAbove = 0;
+            for (int dy = 1; dy <= 20; dy++) {
+                int blockID = world.getBlockAt(x, static_cast<float>(groundY + dy), z);
+                if (blockID == 0) {
+                    airBlocksAbove++;
+                } else {
+                    // Found a solid block above - this might be a cave ceiling
+                    // If it's very high (10+ blocks), we're probably in a big cave
+                    if (airBlocksAbove >= 10 && dy <= 15) {
+                        return false;  // Cave with high ceiling
+                    }
+                    break;  // Found ceiling, stop checking
+                }
+            }
+
+            // Check if there's clear space above for player (2 blocks tall minimum)
             // Player feet will be at groundY+1, head at groundY+3 (1.8 blocks tall rounded up to 2)
             for (int dy = 1; dy <= 4; dy++) {
                 int blockID = world.getBlockAt(x, static_cast<float>(groundY + dy), z);
@@ -648,7 +721,7 @@ int main() {
                                 spawnGroundY = y;
                                 foundSafeSpawn = true;
                                 std::cout << "Found safe spawn at (" << testX << ", " << y << ", " << testZ
-                                          << ") with solid ground below (block ID: " << currentBlock << ")" << std::endl;
+                                          << ") with solid ground below (block ID: " << currentBlock << ")" << '\n';
                                 break;
                             }
                         }
@@ -659,7 +732,7 @@ int main() {
 
         // Emergency fallback if no safe spawn found
         if (spawnGroundY < 0) {
-            std::cout << "WARNING: No safe spawn found in initial search, validating fallback at (0, 0, 64)" << std::endl;
+            std::cout << "WARNING: No safe spawn found in initial search, validating fallback at (0, 0, 64)" << '\n';
 
             // Try to find ground at (0,0) by searching downward from MAX_TERRAIN_HEIGHT
             bool foundFallback = false;
@@ -673,7 +746,7 @@ int main() {
                         spawnZ = 0.0f;
                         spawnGroundY = y;
                         foundFallback = true;
-                        std::cout << "Fallback spawn validated at (0, " << y << ", 0)" << std::endl;
+                        std::cout << "Fallback spawn validated at (0, " << y << ", 0)" << '\n';
                         break;
                     }
                 }
@@ -681,7 +754,7 @@ int main() {
 
             // If fallback at (0,0) also failed, do expanding radius search with relaxed constraints
             if (!foundFallback) {
-                std::cout << "WARNING: Fallback at (0,0) failed, searching in expanding radius..." << std::endl;
+                std::cout << "WARNING: Fallback at (0,0) failed, searching in expanding radius..." << '\n';
                 for (int radius = 1; radius <= 64 && !foundFallback; radius += 4) {
                     for (int dx = -radius; dx <= radius && !foundFallback; dx += 4) {
                         for (int dz = -radius; dz <= radius && !foundFallback; dz += 4) {
@@ -697,7 +770,7 @@ int main() {
                                         spawnZ = testZ;
                                         spawnGroundY = y;
                                         foundFallback = true;
-                                        std::cout << "Emergency spawn found at (" << testX << ", " << y << ", " << testZ << ")" << std::endl;
+                                        std::cout << "Emergency spawn found at (" << testX << ", " << y << ", " << testZ << ")" << '\n';
                                         break;
                                     }
                                 }
@@ -710,7 +783,7 @@ int main() {
                 if (!foundFallback) {
                     int emergencyY = (MAX_TERRAIN_HEIGHT + MIN_SEARCH_Y) / 2;  // Midpoint of search range
                     std::cout << "CRITICAL WARNING: No safe spawn found anywhere, using unvalidated Y="
-                              << emergencyY << " at (0, 0)" << std::endl;
+                              << emergencyY << " at (0, 0)" << '\n';
                     spawnX = 0.0f;
                     spawnZ = 0.0f;
                     spawnGroundY = emergencyY;
@@ -725,7 +798,7 @@ int main() {
         float spawnY = static_cast<float>(spawnGroundY) + 2.7f;
 
         // Debug: Check blocks around spawn (extended range to detect caves)
-        std::cout << "Blocks at spawn location:" << std::endl;
+        std::cout << "Blocks at spawn location:" << '\n';
         for (int dy = -10; dy <= 5; dy++) {
             int blockY = spawnGroundY + dy;
             int blockID = world.getBlockAt(spawnX, static_cast<float>(blockY), spawnZ);
@@ -741,34 +814,34 @@ int main() {
             else if (blockID == 3) std::cout << " (DIRT)";
             else if (blockID == 5) std::cout << " (WATER)";
             else if (blockID == 12) std::cout << " (BEDROCK)";
-            std::cout << marker << std::endl;
+            std::cout << marker << '\n';
         }
 
         std::cout << "Spawn at (" << spawnX << ", " << spawnY << ", " << spawnZ
-                  << ") - surface Y=" << spawnGroundY << std::endl;
+                  << ") - surface Y=" << spawnGroundY << '\n';
 
         // CRITICAL DEBUG: Verify blocks exist where we think they do
-        std::cout << "\n=== SPAWN VERIFICATION ===" << std::endl;
+        std::cout << "\n=== SPAWN VERIFICATION ===" << '\n';
         float feetY = spawnY - 1.6f;
-        std::cout << "Player feet will be at Y=" << feetY << " (in block " << static_cast<int>(std::floor(feetY)) << ")" << std::endl;
+        std::cout << "Player feet will be at Y=" << feetY << " (in block " << static_cast<int>(std::floor(feetY)) << ")" << '\n';
         int groundBlock = world.getBlockAt(spawnX, static_cast<float>(spawnGroundY), spawnZ);
         int feetBlock = world.getBlockAt(spawnX, feetY, spawnZ);
-        std::cout << "Block at ground Y=" << spawnGroundY << ": blockID=" << groundBlock << (groundBlock != 0 ? " ✓ SOLID" : " ✗ AIR!") << std::endl;
-        std::cout << "Block at feet Y=" << static_cast<int>(std::floor(feetY)) << ": blockID=" << feetBlock << (feetBlock == 0 ? " ✓ AIR" : " ✗ SOLID!") << std::endl;
+        std::cout << "Block at ground Y=" << spawnGroundY << ": blockID=" << groundBlock << (groundBlock != 0 ? " ✓ SOLID" : " ✗ AIR!") << '\n';
+        std::cout << "Block at feet Y=" << static_cast<int>(std::floor(feetY)) << ": blockID=" << feetBlock << (feetBlock == 0 ? " ✓ AIR" : " ✗ SOLID!") << '\n';
 
         bool spawnValid = (groundBlock != 0) && (feetBlock == 0);
         if (!spawnValid) {
-            std::cout << "ERROR: Spawn validation FAILED!" << std::endl;
+            std::cout << "ERROR: Spawn validation FAILED!" << '\n';
             if (groundBlock == 0) {
-                std::cout << "  - Ground block is AIR (expected SOLID)" << std::endl;
+                std::cout << "  - Ground block is AIR (expected SOLID)" << '\n';
             }
             if (feetBlock != 0) {
-                std::cout << "  - Feet position is SOLID (expected AIR)" << std::endl;
+                std::cout << "  - Feet position is SOLID (expected AIR)" << '\n';
             }
         } else {
-            std::cout << "Spawn validation PASSED ✓" << std::endl;
+            std::cout << "Spawn validation PASSED ✓" << '\n';
         }
-        std::cout << "===========================\n" << std::endl;
+        std::cout << "===========================\n" << '\n';
 
         // Loading stage 10: Spawning player (95%)
         loadingProgress = 0.95f;
@@ -812,8 +885,15 @@ int main() {
         // Hide loading screen - game is ready!
         loadingComplete = true;
 
+        // Cleanup map preview (no longer needed after loading)
+        if (mapPreview) {
+            mapPreview->cleanup();
+            delete mapPreview;
+            mapPreview = nullptr;
+        }
+
         // Initialize world streaming for infinite world generation
-        std::cout << "Starting world streaming system..." << std::endl;
+        std::cout << "Starting world streaming system..." << '\n';
         WorldStreaming worldStreaming(&world, world.getBiomeMap(), &renderer);
 
         // SPAWN ANCHOR (2025-11-25): Keep spawn chunks permanently loaded (like Minecraft)
@@ -823,11 +903,11 @@ int main() {
         worldStreaming.start();  // Starts worker threads (default: CPU cores - 1)
 
         // Initialize mesh rendering system
-        std::cout << "Initializing mesh rendering system..." << std::endl;
+        std::cout << "Initializing mesh rendering system..." << '\n';
         MeshRenderer meshRenderer(&renderer);
 
         // Create test meshes near spawn
-        std::cout << "Creating test meshes..." << std::endl;
+        std::cout << "Creating test meshes..." << '\n';
 
         // Test 1: Red cube near spawn
         Mesh cube1 = MeshLoader::createCube(2.0f);
@@ -876,7 +956,7 @@ int main() {
         meshRenderer.createInstance(cylinderMeshId, cylinderTransform);
 
         std::cout << "Mesh system ready: " << meshRenderer.getMeshCount() << " meshes, "
-                 << meshRenderer.getInstanceCount() << " instances" << std::endl;
+                 << meshRenderer.getInstanceCount() << " instances" << '\n';
 
         bool isPaused = false;
         bool escPressed = false;
@@ -891,7 +971,7 @@ int main() {
         // Viewport-based dynamic lighting system
         SunTracker sunTracker;
 
-        std::cout << "Entering main loop..." << std::endl;
+        std::cout << "Entering main loop..." << '\n';
 
         while (!glfwWindowShouldClose(window) && gameState == GameState::IN_GAME) {
             auto frameStart = std::chrono::high_resolution_clock::now();
@@ -920,7 +1000,7 @@ int main() {
                 autosaveTimer = 0.0f;
                 int savedChunks = world.saveModifiedChunks();
                 if (savedChunks > 0) {
-                    std::cout << "Autosave: saved " << savedChunks << " modified chunks" << std::endl;
+                    std::cout << "Autosave: saved " << savedChunks << " modified chunks" << '\n';
                 }
             }
 
@@ -1063,9 +1143,6 @@ int main() {
                 PerformanceMonitor::instance().recordQueueSize("pending_decorations", world.getPendingDecorationCount());
                 PerformanceMonitor::instance().recordQueueSize("decorations_in_progress", world.getDecorationsInProgressCount());
             }
-
-            // Particles disabled for performance
-            // world.getParticleSystem()->update(deltaTime);
 
             // DISABLED: Liquid physics causes catastrophic lag (scans 14 million blocks)
             // TODO: Implement dirty list of changed water blocks instead of full world scan
@@ -1334,19 +1411,19 @@ int main() {
                     requestMouseReset = true;
                 } else if (pauseAction == PauseMenuAction::EXIT_TO_MENU) {
                     // Save and exit to main menu
-                    std::cout << "Exiting to main menu..." << std::endl;
+                    std::cout << "Exiting to main menu..." << '\n';
 
                     // Save world, player, and inventory
                     std::string exitSaveWorldPath = "worlds/world_" + std::to_string(seed);
-                    std::cout << "Saving world to " << exitSaveWorldPath << "..." << std::endl;
+                    std::cout << "Saving world to " << exitSaveWorldPath << "..." << '\n';
                     if (world.saveWorld(exitSaveWorldPath)) {
-                        std::cout << "World saved successfully" << std::endl;
+                        std::cout << "World saved successfully" << '\n';
                     }
                     if (player.savePlayerState(exitSaveWorldPath)) {
-                        std::cout << "Player state saved successfully" << std::endl;
+                        std::cout << "Player state saved successfully" << '\n';
                     }
                     if (inventory.save(exitSaveWorldPath)) {
-                        std::cout << "Inventory saved successfully" << std::endl;
+                        std::cout << "Inventory saved successfully" << '\n';
                     }
 
                     // Return to main menu by breaking game loop
@@ -1354,17 +1431,17 @@ int main() {
                     isPaused = false;
                 } else if (pauseAction == PauseMenuAction::QUIT) {
                     // Save before quitting
-                    std::cout << "Quitting to desktop..." << std::endl;
+                    std::cout << "Quitting to desktop..." << '\n';
                     std::string quitSaveWorldPath = "worlds/world_" + std::to_string(seed);
-                    std::cout << "Saving world to " << quitSaveWorldPath << "..." << std::endl;
+                    std::cout << "Saving world to " << quitSaveWorldPath << "..." << '\n';
                     if (world.saveWorld(quitSaveWorldPath)) {
-                        std::cout << "World saved successfully" << std::endl;
+                        std::cout << "World saved successfully" << '\n';
                     }
                     if (player.savePlayerState(quitSaveWorldPath)) {
-                        std::cout << "Player state saved successfully" << std::endl;
+                        std::cout << "Player state saved successfully" << '\n';
                     }
                     if (inventory.save(quitSaveWorldPath)) {
-                        std::cout << "Inventory saved successfully" << std::endl;
+                        std::cout << "Inventory saved successfully" << '\n';
                     }
                     glfwSetWindowShouldClose(window, GLFW_TRUE);
                 }
@@ -1489,7 +1566,7 @@ int main() {
                          << "worldRender=" << worldRenderMs << " | "
                          << "imguiStart=" << imguiStartMs << " | "
                          << "imguiEnd=" << imguiEndMs << " | "
-                         << "present=" << presentMs << "ms" << std::endl;
+                         << "present=" << presentMs << "ms" << '\n';
             }
         }
 
@@ -1497,38 +1574,38 @@ int main() {
 
                 // If window was closed (user clicked X), save first
                 if (glfwWindowShouldClose(window) && gameState == GameState::IN_GAME) {
-                    std::cout << "Window closed during gameplay - saving..." << std::endl;
+                    std::cout << "Window closed during gameplay - saving..." << '\n';
                     std::string closeSaveWorldPath = "worlds/world_" + std::to_string(seed);
                     if (world.saveWorld(closeSaveWorldPath)) {
-                        std::cout << "World saved successfully" << std::endl;
+                        std::cout << "World saved successfully" << '\n';
                     }
                     if (player.savePlayerState(closeSaveWorldPath)) {
-                        std::cout << "Player state saved successfully" << std::endl;
+                        std::cout << "Player state saved successfully" << '\n';
                     }
                     if (inventory.save(closeSaveWorldPath)) {
-                        std::cout << "Inventory saved successfully" << std::endl;
+                        std::cout << "Inventory saved successfully" << '\n';
                     }
                 }
 
                 // Check if we're returning to menu or shutting down
                 if (gameState == GameState::MAIN_MENU) {
                     // Return to main menu - cleanup game resources but keep ImGui/Vulkan alive
-                    std::cout << "Returning to main menu..." << std::endl;
+                    std::cout << "Returning to main menu..." << '\n';
 
                     // Stop world streaming
-                    std::cout << "  Stopping world streaming..." << std::endl;
+                    std::cout << "  Stopping world streaming..." << '\n';
                     worldStreaming.stop();
 
                     // Wait for GPU to finish before cleanup
-                    std::cout << "  Waiting for GPU to finish..." << std::endl;
+                    std::cout << "  Waiting for GPU to finish..." << '\n';
                     vkDeviceWaitIdle(renderer.getDevice());
 
                     // Cleanup world chunk buffers
-                    std::cout << "  Cleaning up world resources..." << std::endl;
+                    std::cout << "  Cleaning up world resources..." << '\n';
                     world.cleanup(&renderer);
 
                     // Note: Save was already done when EXIT_TO_MENU was pressed
-                    std::cout << "Ready to show main menu" << std::endl;
+                    std::cout << "Ready to show main menu" << '\n';
 
                     // Continue outer loop - will show main menu again
                     continue;
@@ -1541,47 +1618,47 @@ int main() {
     // ========== FULL SHUTDOWN ==========
     // Only reached when player quits
     // Note: Game is already saved if it was running (via QUIT or EXIT_TO_MENU handlers)
-    std::cout << "Shutting down..." << std::endl;
+    std::cout << "Shutting down..." << '\n';
 
         // Wait for device to finish before cleanup
-        std::cout << "  Waiting for GPU to finish..." << std::endl;
+        std::cout << "  Waiting for GPU to finish..." << '\n';
         vkDeviceWaitIdle(renderer.getDevice());
-        std::cout << "  GPU idle" << std::endl;
+        std::cout << "  GPU idle" << '\n';
 
         // Cleanup ImGui
-        std::cout << "  Cleaning up ImGui..." << std::endl;
+        std::cout << "  Cleaning up ImGui..." << '\n';
         ImGui_ImplVulkan_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
         vkDestroyDescriptorPool(renderer.getDevice(), imguiPool, nullptr);
-        std::cout << "  ImGui cleanup complete" << std::endl;
+        std::cout << "  ImGui cleanup complete" << '\n';
 
         // Save current window size to config
-        std::cout << "  Saving config..." << std::endl;
+        std::cout << "  Saving config..." << '\n';
         int currentWidth, currentHeight;
         glfwGetWindowSize(window, &currentWidth, &currentHeight);
         config.setInt("Window", "width", currentWidth);
         config.setInt("Window", "height", currentHeight);
         config.saveToFile("config.ini");
-        std::cout << "  Config saved" << std::endl;
+        std::cout << "  Config saved" << '\n';
 
-        std::cout << "  Destroying window..." << std::endl;
+        std::cout << "  Destroying window..." << '\n';
         glfwDestroyWindow(window);
-        std::cout << "  Terminating GLFW..." << std::endl;
+        std::cout << "  Terminating GLFW..." << '\n';
         glfwTerminate();
-        std::cout << "  Cleaning up noise..." << std::endl;
+        std::cout << "  Cleaning up noise..." << '\n';
         Chunk::cleanupNoise();
 
-        std::cout << "Shutdown complete." << std::endl;
-        std::cout << "Exiting main()..." << std::endl;
+        std::cout << "Shutdown complete." << '\n';
+        std::cout << "Exiting main()..." << '\n';
         std::cout.flush();  // Force flush before destructors run
         return 0;
 
     } catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
+        std::cerr << "Fatal error: " << e.what() << '\n';
         return -1;
     }
 
-    std::cout << "After exception handling" << std::endl;
+    std::cout << "After exception handling" << '\n';
     std::cout.flush();
 }

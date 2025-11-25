@@ -569,11 +569,44 @@ spawnstructure house  # Spawn a structure
 The world is divided into **32×32×32 voxel chunks**. Each chunk contains:
 - **192 KB block data** (128 KB blocks + 32 KB metadata + 32 KB lighting)
 - **Mesh buffers** for GPU rendering
-- **State flags** (active, render-ready, dirty, etc.)
+- **State machine** for lifecycle tracking
 
 **Chunk Coordinates:**
 - World position (x, y, z) → Chunk coordinate (x/32, y/32, z/32)
 - Block index within chunk: `blockID = blocks[x][y][z]`
+
+**Chunk State Machine (2025-11-25):**
+Chunks track their lifecycle via `ChunkState` enum for thread-safe coordination:
+
+```
+UNLOADED → LOADING → GENERATED → DECORATING → AWAITING_MESH
+                                                    ↓
+           ACTIVE ← UPLOADING ← AWAITING_UPLOAD ← MESHING
+             ↓
+         UNLOADING → UNLOADED (returned to pool)
+```
+
+States:
+- `UNLOADED` - In pool or not created
+- `LOADING` - Terrain generation (worker thread)
+- `GENERATED` - Terrain complete, awaiting decoration
+- `DECORATING` - Tree/structure placement
+- `AWAITING_MESH` - Ready for mesh generation
+- `MESHING` - Mesh worker processing
+- `AWAITING_UPLOAD` - Mesh ready for GPU
+- `UPLOADING` - GPU transfer in progress
+- `ACTIVE` - Fully renderable
+- `UNLOADING` - Being saved/cleaned up
+
+**Thread-Safe Methods:**
+- `tryTransition(expected, new)` - Atomic CAS for worker competition
+- `transitionTo(state)` - Validated transition with logging
+
+**Chunk Pooling:**
+Chunks are reused via `acquireChunk()`/`releaseChunk()` in World class:
+- ~100x faster than new/delete
+- Preserves vector capacities for mesh data
+- `reset()` clears blocks and resets state to UNLOADED
 
 ### Biome System
 
@@ -2536,12 +2569,12 @@ debug render
 
 ### Memory Optimization
 
-- [ ] Implement chunk pooling
-- [ ] Implement mesh buffer pooling
-- [ ] Compress chunks on disk
-- [ ] Unload distant chunks
+- [x] Implement chunk pooling (acquireChunk/releaseChunk in World)
+- [x] Implement mesh buffer pooling (MeshBufferPool class)
+- [x] Compress chunks on disk (RLE compression in chunk save/load)
+- [x] Unload distant chunks (WorldStreaming with unload distance)
 - [ ] Clear unused vertex data
-- [ ] Use appropriate data types (uint8_t vs int)
+- [x] Use appropriate data types (uint8_t vs int)
 - [ ] Monitor memory leaks with tools
 
 ---

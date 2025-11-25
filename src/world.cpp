@@ -108,15 +108,13 @@ World::World(int width, int height, int depth, int seed, float tempBias, float m
 }
 
 World::~World() {
-    std::cout << "  Destroying World..." << std::endl;
-    std::cout.flush();
+    Logger::info() << "Destroying World...";
 
     // unique_ptr in m_chunkMap automatically cleans up - no manual delete needed
     // m_chunks vector only contains non-owning pointers, so no cleanup needed
     // This could take time with many chunks (e.g., 128x3x128 = 49,152 chunks)
 
-    std::cout << "  World destroyed (" << m_chunks.size() << " chunks)" << std::endl;
-    std::cout.flush();
+    Logger::info() << "World destroyed (" << m_chunks.size() << " chunks)";
 }
 
 void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerChunkZ, int radius) {

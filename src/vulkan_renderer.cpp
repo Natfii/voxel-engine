@@ -34,7 +34,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData) {
 
-    std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+    std::cerr << "validation layer: " << pCallbackData->pMessage << '\n';
     return VK_FALSE;
 }
 
@@ -110,10 +110,10 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : m_window(window) {
 
 // Destructor
 VulkanRenderer::~VulkanRenderer() {
-    std::cout << "  Destroying VulkanRenderer..." << std::endl;
+    std::cout << "  Destroying VulkanRenderer..." << '\n';
     std::cout.flush();
     cleanup();
-    std::cout << "  VulkanRenderer destroyed" << std::endl;
+    std::cout << "  VulkanRenderer destroyed" << '\n';
     std::cout.flush();
 }
 
@@ -1468,7 +1468,7 @@ bool VulkanRenderer::beginFrame() {
             // GPU severely overloaded - only skip if taking > 100ms per frame
             static int skipCounter = 0;
             if (++skipCounter % 10 == 0) {  // Log every 10th skip
-                std::cerr << "[GPU OVERLOAD] Skipping frame (GPU busy after 100ms timeout)" << std::endl;
+                std::cerr << "[GPU OVERLOAD] Skipping frame (GPU busy after 100ms timeout)" << '\n';
             }
             return false;  // Skip frame
         }
@@ -1489,17 +1489,23 @@ bool VulkanRenderer::beginFrame() {
             pendingCount = m_pendingUploads.size();
         }
 
-        if (++slowFenceCounter % 10 == 0) {  // Log every 10th slow fence
-            size_t deletionQueueSize = 0;
-            {
-                std::lock_guard<std::mutex> deletionLock(m_deletionQueueMutex);
-                deletionQueueSize = m_deletionQueue.size();
-            }
+        size_t deletionQueueSize = 0;
+        {
+            std::lock_guard<std::mutex> deletionLock(m_deletionQueueMutex);
+            deletionQueueSize = m_deletionQueue.size();
+        }
 
+        // ALWAYS log very slow stalls (>100ms) for debugging
+        if (fenceWaitMs > 100) {
+            std::cerr << "[GPU STALL] " << fenceWaitMs << "ms fence wait"
+                     << " | Pending uploads: " << pendingCount
+                     << " | Deletion queue: " << deletionQueueSize
+                     << '\n';
+        } else if (++slowFenceCounter % 10 == 0) {  // Log every 10th slow fence
             std::cerr << "[GPU FENCE STALL] " << fenceWaitMs << "ms wait"
                      << " | Pending async uploads: " << pendingCount
                      << " | Deletion queue: " << deletionQueueSize
-                     << std::endl;
+                     << '\n';
         }
     }
 
@@ -1763,12 +1769,12 @@ QueueFamilyIndices VulkanRenderer::findQueueFamilies(VkPhysicalDevice device) {
     if (!indices.transferFamily.has_value() && indices.graphicsFamily.has_value()) {
         indices.transferFamily = indices.graphicsFamily.value();
         if (!loggedTransferQueueStatus) {
-            std::cout << "[INFO] No dedicated transfer queue found, using graphics queue for transfers" << std::endl;
+            std::cout << "[INFO] No dedicated transfer queue found, using graphics queue for transfers" << '\n';
             loggedTransferQueueStatus = true;
         }
     } else if (indices.hasDedicatedTransferQueue() && !loggedTransferQueueStatus) {
         std::cout << "[INFO] Dedicated transfer queue found (family " << indices.transferFamily.value()
-                  << ") - async GPU uploads enabled!" << std::endl;
+                  << ") - async GPU uploads enabled!" << '\n';
         loggedTransferQueueStatus = true;
     }
 
@@ -2071,7 +2077,7 @@ void VulkanRenderer::createDefaultTexture() {
     m_defaultTextureView = createImageView(m_defaultTextureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
     m_defaultTextureSampler = createTextureSampler();
 
-    std::cout << "Created default 1x1 white texture for fallback rendering" << std::endl;
+    std::cout << "Created default 1x1 white texture for fallback rendering" << '\n';
 }
 
 // Create cube map image (6 faces)
@@ -2280,11 +2286,20 @@ void VulkanRenderer::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDevice
 }
 
 void VulkanRenderer::beginBufferCopyBatch() {
+    // ============================================================================
+    // TRANSFER QUEUE OPTIMIZATION (2025-11-25)
+    // ============================================================================
+    // Use dedicated transfer command pool for async uploads.
+    // This allows uploads to run on separate GPU queue, parallel with rendering!
+    // Falls back to graphics pool if transfer queue not available.
+    // ============================================================================
+
     // Allocate command buffer for batch
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = m_commandPool;
+    // Use transfer pool for async, graphics pool for sync
+    allocInfo.commandPool = (m_transferCommandPool != VK_NULL_HANDLE) ? m_transferCommandPool : m_commandPool;
     allocInfo.commandBufferCount = 1;
 
     vkAllocateCommandBuffers(m_device, &allocInfo, &m_batchCommandBuffer);
@@ -2330,8 +2345,16 @@ void VulkanRenderer::submitBufferCopyBatch(bool async) {
     VkFence fence;
     vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
 
-    // Submit batch
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence);
+    // ============================================================================
+    // TRANSFER QUEUE OPTIMIZATION (2025-11-25)
+    // ============================================================================
+    // Submit async uploads to transfer queue (runs parallel with graphics!)
+    // Falls back to graphics queue if dedicated transfer queue not available.
+    // This prevents chunk uploads from stalling the render pipeline.
+    // ============================================================================
+    VkQueue targetQueue = (isAsync && m_transferQueue != VK_NULL_HANDLE)
+                         ? m_transferQueue : m_graphicsQueue;
+    vkQueueSubmit(targetQueue, 1, &submitInfo, fence);
 
     if (isAsync) {
         // ASYNC MODE: Don't wait, store for later cleanup
@@ -2352,9 +2375,11 @@ void VulkanRenderer::submitBufferCopyBatch(bool async) {
         // SYNC MODE: Wait for completion (original behavior)
         vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
 
-        // Cleanup immediately
+        // Cleanup immediately - use correct pool based on what was allocated
         vkDestroyFence(m_device, fence, nullptr);
-        vkFreeCommandBuffers(m_device, m_commandPool, 1, &m_batchCommandBuffer);
+        VkCommandPool cleanupPool = (m_transferCommandPool != VK_NULL_HANDLE)
+                                   ? m_transferCommandPool : m_commandPool;
+        vkFreeCommandBuffers(m_device, cleanupPool, 1, &m_batchCommandBuffer);
         m_batchCommandBuffer = VK_NULL_HANDLE;
     }
 }
@@ -2484,7 +2509,10 @@ void VulkanRenderer::processAsyncUploads() {
         if (result == VK_SUCCESS) {
             // Upload complete - clean up resources
             vkDestroyFence(m_device, it->fence, nullptr);
-            vkFreeCommandBuffers(m_device, m_commandPool, 1, &it->commandBuffer);
+            // Use transfer pool for async uploads (command was allocated from there)
+            VkCommandPool cleanupPool = (m_transferCommandPool != VK_NULL_HANDLE)
+                                       ? m_transferCommandPool : m_commandPool;
+            vkFreeCommandBuffers(m_device, cleanupPool, 1, &it->commandBuffer);
 
             // Destroy all staging buffers
             for (auto& stagingBuffer : it->stagingBuffers) {
@@ -2506,6 +2534,38 @@ void VulkanRenderer::processAsyncUploads() {
     }
 }
 
+// ========== GPU Backlog Monitoring (2025-11-25) ==========
+
+size_t VulkanRenderer::getPendingUploadCount() const {
+    std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
+    return m_pendingUploads.size();
+}
+
+bool VulkanRenderer::isUploadBacklogged(size_t threshold) const {
+    std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
+    return m_pendingUploads.size() >= threshold;
+}
+
+size_t VulkanRenderer::getRecommendedUploadCount() const {
+    std::lock_guard<std::mutex> lock(m_pendingUploadsMutex);
+    size_t pending = m_pendingUploads.size();
+
+    // ADAPTIVE UPLOAD RATE based on GPU backlog:
+    // - Severely backlogged (>30): Stop uploading entirely to let GPU catch up
+    // - Backlogged (20-30): Upload 1 chunk max
+    // - Moderate (10-20): Upload 2 chunks
+    // - Light (<10): Upload up to 4 chunks for fast streaming
+    if (pending >= 30) {
+        return 0;  // GPU severely overloaded - defer all uploads
+    } else if (pending >= 20) {
+        return 1;  // Backlogged - trickle uploads
+    } else if (pending >= 10) {
+        return 2;  // Moderate load
+    } else {
+        return 4;  // GPU keeping up - stream faster
+    }
+}
+
 // ========== Deferred Deletion (Fence-Based Resource Cleanup) ==========
 
 void VulkanRenderer::queueBufferDeletion(VkBuffer buffer, VkDeviceMemory memory) {
@@ -2520,22 +2580,38 @@ void VulkanRenderer::flushDeletionQueue() {
     // Thread-safe flush operation
     std::lock_guard<std::mutex> lock(m_deletionQueueMutex);
 
-    // CRITICAL FIX: Limit deletions per frame to prevent massive stalls
-    // GPU memory cleanup is EXPENSIVE - even 10 buffers causes 1682ms vkWaitForFences stall
-    // The comment "~1ms each" was CPU time, but GPU memory release is much slower
-    // REDUCED: 10 -> 2 buffers per frame to prevent multi-second stalls
-    const int MAX_DELETIONS_PER_FRAME = 2;  // Ultra-conservative to prevent GPU stalls
+    // ============================================================================
+    // ADAPTIVE DELETION RATE (2025-11-25)
+    // ============================================================================
+    // Problem: Fixed 2 buffers/frame can't keep up with chunk unloading
+    // Solution: Adaptive rate based on queue size
+    // - Small queue (<50): 2 buffers/frame (gentle)
+    // - Medium queue (50-200): 5 buffers/frame
+    // - Large queue (>200): 10 buffers/frame (aggressive catch-up)
+    // ============================================================================
+    size_t queueSize = m_deletionQueue.size();
+    int maxDeletionsPerFrame;
+
+    if (queueSize > 200) {
+        maxDeletionsPerFrame = 10;  // Large backlog - aggressive cleanup
+    } else if (queueSize > 50) {
+        maxDeletionsPerFrame = 5;   // Medium backlog
+    } else {
+        maxDeletionsPerFrame = 2;   // Normal operation
+    }
+
     int deletionsThisFrame = 0;
 
     // Log queue size periodically for debugging
     static int frameCounter = 0;
     if (++frameCounter % 300 == 0 && !m_deletionQueue.empty()) {  // Every 5 seconds at 60 FPS
-        Logger::debug() << "GPU deletion queue size: " << m_deletionQueue.size() << " buffers pending";
+        Logger::debug() << "GPU deletion queue: " << queueSize << " buffers pending"
+                       << " (processing " << maxDeletionsPerFrame << "/frame)";
     }
 
     // Delete resources from frames that are at least MAX_FRAMES_IN_FLIGHT old
     // This ensures the GPU is done using them (fence-based approach)
-    while (!m_deletionQueue.empty() && deletionsThisFrame < MAX_DELETIONS_PER_FRAME) {
+    while (!m_deletionQueue.empty() && deletionsThisFrame < maxDeletionsPerFrame) {
         const auto& deletion = m_deletionQueue.front();
 
         // Check if enough frames have passed (GPU is done with this resource)
@@ -2883,7 +2959,7 @@ void VulkanRenderer::createProceduralCubeMap() {
     vkFreeMemory(m_device, stagingBufferMemory, nullptr);
 
     // NOTE: View and sampler creation moved to createSkybox() after batched transition
-    std::cout << "Created procedural cube map skybox (256x256 per face)" << std::endl;
+    std::cout << "Created procedural cube map skybox (256x256 per face)" << '\n';
 }
 
 // Generate dark night cube map
@@ -3038,7 +3114,7 @@ void VulkanRenderer::createNightCubeMap() {
     vkFreeMemory(m_device, stagingBufferMemory, nullptr);
 
     // NOTE: View creation moved to createSkybox() after batched transition
-    std::cout << "Created night cube map skybox (256x256 per face)" << std::endl;
+    std::cout << "Created night cube map skybox (256x256 per face)" << '\n';
 }
 
 // Create skybox geometry and resources
@@ -3051,7 +3127,7 @@ void VulkanRenderer::createSkybox() {
     // Batch the final transition for both cube maps into a single vkCmdPipelineBarrier call
     // Old: 2 separate transitions = 2 command buffer submissions
     // New: 1 batched transition = 1 command buffer submission (50% reduction!)
-    std::cout << "Batching cube map transitions for performance..." << std::endl;
+    std::cout << "Batching cube map transitions for performance..." << '\n';
     batchTransitionImageLayouts(
         {m_skyboxImage, m_nightSkyboxImage},                    // Images to transition
         {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB},    // Formats
@@ -3155,7 +3231,7 @@ void VulkanRenderer::createSkybox() {
     vkDestroyBuffer(m_device, stagingBuffer, nullptr);
     vkFreeMemory(m_device, stagingBufferMemory, nullptr);
 
-    std::cout << "Created skybox geometry" << std::endl;
+    std::cout << "Created skybox geometry" << '\n';
 }
 
 // Set time of day for sky rendering
@@ -3185,17 +3261,17 @@ void VulkanRenderer::renderSkybox() {
 }
 
 void VulkanRenderer::cleanup() {
-    std::cout << "    Cleaning up swapchain..." << std::endl;
+    std::cout << "    Cleaning up swapchain..." << '\n';
     cleanupSwapChain();
 
-    std::cout << "    Cleaning up textures..." << std::endl;
+    std::cout << "    Cleaning up textures..." << '\n';
     // Cleanup default texture
     vkDestroySampler(m_device, m_defaultTextureSampler, nullptr);
     vkDestroyImageView(m_device, m_defaultTextureView, nullptr);
     vkDestroyImage(m_device, m_defaultTextureImage, nullptr);
     vkFreeMemory(m_device, m_defaultTextureMemory, nullptr);
 
-    std::cout << "    Cleaning up skybox..." << std::endl;
+    std::cout << "    Cleaning up skybox..." << '\n';
     // Cleanup skybox
     vkDestroyBuffer(m_device, m_skyboxVertexBuffer, nullptr);
     vkFreeMemory(m_device, m_skyboxVertexBufferMemory, nullptr);
@@ -3209,31 +3285,31 @@ void VulkanRenderer::cleanup() {
     vkDestroyImage(m_device, m_nightSkyboxImage, nullptr);
     vkFreeMemory(m_device, m_nightSkyboxMemory, nullptr);
 
-    std::cout << "    Cleaning up uniform buffers..." << std::endl;
+    std::cout << "    Cleaning up uniform buffers..." << '\n';
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroyBuffer(m_device, m_uniformBuffers[i], nullptr);
         vkFreeMemory(m_device, m_uniformBuffersMemory[i], nullptr);
     }
 
-    std::cout << "    Cleaning up descriptor pool..." << std::endl;
+    std::cout << "    Cleaning up descriptor pool..." << '\n';
     vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
 
-    std::cout << "    Cleaning up pipeline layout..." << std::endl;
+    std::cout << "    Cleaning up pipeline layout..." << '\n';
     // Pipelines are already destroyed in cleanupSwapChain()
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyPipelineLayout(m_device, m_meshPipelineLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_meshDescriptorSetLayout, nullptr);
     vkDestroyRenderPass(m_device, m_renderPass, nullptr);
 
-    std::cout << "    Cleaning up sync objects..." << std::endl;
+    std::cout << "    Cleaning up sync objects..." << '\n';
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
         vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
         vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
     }
 
-    std::cout << "    Cleaning up mega-buffers..." << std::endl;
+    std::cout << "    Cleaning up mega-buffers..." << '\n';
     // Cleanup indirect drawing mega-buffers
     if (m_megaVertexBuffer != VK_NULL_HANDLE) {
         vkDestroyBuffer(m_device, m_megaVertexBuffer, nullptr);
@@ -3260,7 +3336,7 @@ void VulkanRenderer::cleanup() {
         vkFreeMemory(m_device, m_indirectDrawTransparentBufferMemory, nullptr);
     }
 
-    std::cout << "    Waiting for pending async uploads..." << std::endl;
+    std::cout << "    Waiting for pending async uploads..." << '\n';
     // Wait for all pending uploads and clean them up
     for (auto& upload : m_pendingUploads) {
         vkWaitForFences(m_device, 1, &upload.fence, VK_TRUE, UINT64_MAX);
@@ -3273,25 +3349,25 @@ void VulkanRenderer::cleanup() {
     }
     m_pendingUploads.clear();
 
-    std::cout << "    Cleaning up command pools..." << std::endl;
+    std::cout << "    Cleaning up command pools..." << '\n';
     vkDestroyCommandPool(m_device, m_commandPool, nullptr);
     vkDestroyCommandPool(m_device, m_transferCommandPool, nullptr);  // PERF (2025-11-24): Transfer command pool
 
-    std::cout << "    Destroying device..." << std::endl;
+    std::cout << "    Destroying device..." << '\n';
     vkDestroyDevice(m_device, nullptr);
 
-    std::cout << "    Cleaning up debug messenger..." << std::endl;
+    std::cout << "    Cleaning up debug messenger..." << '\n';
     if (m_enableValidationLayers) {
         DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
     }
 
-    std::cout << "    Destroying surface..." << std::endl;
+    std::cout << "    Destroying surface..." << '\n';
     vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
 
-    std::cout << "    Destroying instance..." << std::endl;
+    std::cout << "    Destroying instance..." << '\n';
     vkDestroyInstance(m_instance, nullptr);
 
-    std::cout << "    Vulkan cleanup complete" << std::endl;
+    std::cout << "    Vulkan cleanup complete" << '\n';
 }
 
 // ========================================================================
@@ -3299,7 +3375,7 @@ void VulkanRenderer::cleanup() {
 // ========================================================================
 
 void VulkanRenderer::initializeMegaBuffers() {
-    std::cout << "Initializing mega-buffers for indirect drawing..." << std::endl;
+    std::cout << "Initializing mega-buffers for indirect drawing..." << '\n';
 
     // Create opaque vertex mega-buffer
     createBuffer(
@@ -3356,9 +3432,9 @@ void VulkanRenderer::initializeMegaBuffers() {
         m_indirectDrawTransparentBufferMemory
     );
 
-    std::cout << "Mega-buffers initialized successfully!" << std::endl;
-    std::cout << "  Vertex buffer: " << (MEGA_BUFFER_VERTEX_SIZE / 1024 / 1024) << " MB" << std::endl;
-    std::cout << "  Index buffer: " << (MEGA_BUFFER_INDEX_SIZE / 1024 / 1024) << " MB" << std::endl;
+    std::cout << "Mega-buffers initialized successfully!" << '\n';
+    std::cout << "  Vertex buffer: " << (MEGA_BUFFER_VERTEX_SIZE / 1024 / 1024) << " MB" << '\n';
+    std::cout << "  Index buffer: " << (MEGA_BUFFER_INDEX_SIZE / 1024 / 1024) << " MB" << '\n';
 }
 
 bool VulkanRenderer::allocateMegaBufferSpace(VkDeviceSize vertexSize, VkDeviceSize indexSize,
@@ -3370,7 +3446,7 @@ bool VulkanRenderer::allocateMegaBufferSpace(VkDeviceSize vertexSize, VkDeviceSi
         // Check if there's enough space in transparent mega-buffers
         if (m_megaTransparentVertexOffset + vertexSize > MEGA_BUFFER_VERTEX_SIZE ||
             m_megaTransparentIndexOffset + indexSize > MEGA_BUFFER_INDEX_SIZE) {
-            std::cerr << "Warning: Transparent mega-buffer full!" << std::endl;
+            std::cerr << "Warning: Transparent mega-buffer full!" << '\n';
             return false;
         }
 
@@ -3383,7 +3459,7 @@ bool VulkanRenderer::allocateMegaBufferSpace(VkDeviceSize vertexSize, VkDeviceSi
         // Check if there's enough space in opaque mega-buffers
         if (m_megaVertexOffset + vertexSize > MEGA_BUFFER_VERTEX_SIZE ||
             m_megaIndexOffset + indexSize > MEGA_BUFFER_INDEX_SIZE) {
-            std::cerr << "Warning: Opaque mega-buffer full!" << std::endl;
+            std::cerr << "Warning: Opaque mega-buffer full!" << '\n';
             return false;
         }
 
@@ -3479,7 +3555,7 @@ void VulkanRenderer::batchCopyToMegaBuffer(VkBuffer srcVertexBuffer, VkBuffer sr
                                            VkDeviceSize vertexOffset, VkDeviceSize indexOffset,
                                            bool transparent) {
     if (m_batchCommandBuffer == VK_NULL_HANDLE) {
-        std::cerr << "Error: No batch command buffer active. Call beginBufferCopyBatch() first." << std::endl;
+        std::cerr << "Error: No batch command buffer active. Call beginBufferCopyBatch() first." << '\n';
         return;
     }
 

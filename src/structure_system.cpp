@@ -14,7 +14,7 @@
 #include "world.h"
 #include "chunk.h"
 #include "vulkan_renderer.h"
-#include <iostream>
+#include "logger.h"
 #include <filesystem>
 #include <set>
 #include <yaml-cpp/yaml.h>
@@ -36,17 +36,17 @@ bool StructureRegistry::loadStructures(const std::string& directory) {
     fs::path dirPath(directory);
 
     if (!fs::exists(dirPath)) {
-        std::cout << "StructureRegistry: Creating directory: " << directory << std::endl;
+        Logger::info() << "StructureRegistry: Creating directory: " << directory;
         fs::create_directories(dirPath);
         return true;  // Not an error - just no structures yet
     }
 
     if (!fs::is_directory(dirPath)) {
-        std::cerr << "StructureRegistry: Not a directory: " << directory << std::endl;
+        Logger::error() << "StructureRegistry: Not a directory: " << directory;
         return false;
     }
 
-    std::cout << "Loading structures from " << directory << "..." << std::endl;
+    Logger::info() << "Loading structures from " << directory << "...";
 
     // Collect all YAML files
     std::vector<fs::path> yamlFiles;
@@ -59,7 +59,7 @@ bool StructureRegistry::loadStructures(const std::string& directory) {
     }
 
     if (yamlFiles.empty()) {
-        std::cout << "No structure files found in " << directory << std::endl;
+        Logger::info() << "No structure files found in " << directory;
         return true;  // Not an error
     }
 
@@ -69,7 +69,7 @@ bool StructureRegistry::loadStructures(const std::string& directory) {
             YAML::Node doc = YAML::LoadFile(path.string());
 
             if (!doc["name"]) {
-                std::cerr << "Structure missing 'name' in " << path << std::endl;
+                Logger::error() << "Structure missing 'name' in " << path.string();
                 continue;
             }
 
@@ -77,14 +77,14 @@ bool StructureRegistry::loadStructures(const std::string& directory) {
             structDef.name = doc["name"].as<std::string>();
 
             if (!doc["variations"]) {
-                std::cerr << "Structure missing 'variations' in " << path << std::endl;
+                Logger::error() << "Structure missing 'variations' in " << path.string();
                 continue;
             }
 
             // Parse all variations
             YAML::Node variations = doc["variations"];
             if (!variations.IsSequence()) {
-                std::cerr << "Structure 'variations' must be a list in " << path << std::endl;
+                Logger::error() << "Structure 'variations' must be a list in " << path.string();
                 continue;
             }
 
@@ -96,7 +96,7 @@ bool StructureRegistry::loadStructures(const std::string& directory) {
 
                 // Parse dimensions
                 if (!varNode["length"] || !varNode["width"] || !varNode["height"]) {
-                    std::cerr << "Variation " << i << " missing dimensions in " << path << std::endl;
+                    Logger::error() << "Variation " << i << " missing dimensions in " << path.string();
                     continue;
                 }
 
@@ -108,9 +108,9 @@ bool StructureRegistry::loadStructures(const std::string& directory) {
 
                 // Validate odd dimensions
                 if (var.length % 2 == 0 || var.width % 2 == 0) {
-                    std::cerr << "Variation " << i << " in " << path << " has even dimensions! "
-                              << "Length and width must be odd. Got length=" << var.length
-                              << ", width=" << var.width << std::endl;
+                    Logger::error() << "Variation " << i << " in " << path.string() << " has even dimensions! "
+                                   << "Length and width must be odd. Got length=" << var.length
+                                   << ", width=" << var.width;
                     continue;
                 }
 
@@ -118,13 +118,13 @@ bool StructureRegistry::loadStructures(const std::string& directory) {
 
                 // Parse structure data
                 if (!varNode["structure"]) {
-                    std::cerr << "Variation " << i << " missing 'structure' in " << path << std::endl;
+                    Logger::error() << "Variation " << i << " missing 'structure' in " << path.string();
                     continue;
                 }
 
                 YAML::Node structureNode = varNode["structure"];
                 if (!structureNode.IsSequence()) {
-                    std::cerr << "Variation " << i << " 'structure' must be a list of layers in " << path << std::endl;
+                    Logger::error() << "Variation " << i << " 'structure' must be a list of layers in " << path.string();
                     continue;
                 }
 
@@ -132,7 +132,7 @@ bool StructureRegistry::loadStructures(const std::string& directory) {
                 for (size_t layerIdx = 0; layerIdx < structureNode.size(); layerIdx++) {
                     YAML::Node layerNode = structureNode[layerIdx];
                     if (!layerNode.IsSequence()) {
-                        std::cerr << "Layer " << layerIdx << " must be a 2D array in " << path << std::endl;
+                        Logger::error() << "Layer " << layerIdx << " must be a 2D array in " << path.string();
                         continue;
                     }
 
@@ -142,8 +142,8 @@ bool StructureRegistry::loadStructures(const std::string& directory) {
                     for (size_t rowIdx = 0; rowIdx < layerNode.size(); rowIdx++) {
                         YAML::Node rowNode = layerNode[rowIdx];
                         if (!rowNode.IsSequence()) {
-                            std::cerr << "Row " << rowIdx << " in layer " << layerIdx
-                                      << " must be an array in " << path << std::endl;
+                            Logger::error() << "Row " << rowIdx << " in layer " << layerIdx
+                                           << " must be an array in " << path.string();
                             continue;
                         }
 
@@ -163,37 +163,37 @@ bool StructureRegistry::loadStructures(const std::string& directory) {
 
                 // Validate structure dimensions match declared dimensions
                 if ((int)var.structure.size() != var.height) {
-                    std::cerr << "Warning: Variation " << i << " in " << path
-                              << " has height=" << var.height
-                              << " but structure has " << var.structure.size() << " layers" << std::endl;
+                    Logger::warning() << "Variation " << i << " in " << path.string()
+                                     << " has height=" << var.height
+                                     << " but structure has " << var.structure.size() << " layers";
                 }
 
                 structDef.variations.push_back(var);
-                std::cout << "  Loaded variation " << i << " for '" << structDef.name
-                          << "' (" << var.length << "x" << var.width << "x" << var.height
-                          << ", chance=" << var.chance << "%)" << std::endl;
+                Logger::debug() << "  Loaded variation " << i << " for '" << structDef.name
+                               << "' (" << var.length << "x" << var.width << "x" << var.height
+                               << ", chance=" << var.chance << "%)";
             }
 
             // Validate total chance
             if (totalChance != 100) {
-                std::cerr << "Warning: Total chance for '" << structDef.name
-                          << "' is " << totalChance << "%, expected 100%" << std::endl;
+                Logger::warning() << "Total chance for '" << structDef.name
+                                 << "' is " << totalChance << "%, expected 100%";
             }
 
             // Add structure to registry
             if (!structDef.variations.empty()) {
                 m_structures[structDef.name] = structDef;
-                std::cout << "Loaded structure: " << structDef.name
-                          << " with " << structDef.variations.size() << " variation(s)" << std::endl;
+                Logger::debug() << "Loaded structure: " << structDef.name
+                               << " with " << structDef.variations.size() << " variation(s)";
             }
 
         } catch (const std::exception& e) {
-            std::cerr << "Error loading structure from " << path << ": " << e.what() << std::endl;
+            Logger::error() << "Error loading structure from " << path.string() << ": " << e.what();
             continue;
         }
     }
 
-    std::cout << "StructureRegistry: Loaded " << m_structures.size() << " structure(s)" << std::endl;
+    Logger::info() << "StructureRegistry: Loaded " << m_structures.size() << " structure(s)";
     return true;
 }
 
@@ -232,24 +232,24 @@ const StructureVariation* StructureRegistry::selectVariation(const StructureDefi
 
 bool StructureRegistry::spawnStructure(const std::string& name, World* world, const glm::ivec3& centerPos, VulkanRenderer* renderer) {
     if (!world) {
-        std::cerr << "StructureRegistry::spawnStructure: World is null" << std::endl;
+        Logger::error() << "StructureRegistry::spawnStructure: World is null";
         return false;
     }
 
     const StructureDefinition* structDef = get(name);
     if (!structDef) {
-        std::cerr << "StructureRegistry::spawnStructure: Structure '" << name << "' not found" << std::endl;
+        Logger::error() << "StructureRegistry::spawnStructure: Structure '" << name << "' not found";
         return false;
     }
 
     const StructureVariation* var = selectVariation(*structDef);
     if (!var) {
-        std::cerr << "StructureRegistry::spawnStructure: No valid variation for '" << name << "'" << std::endl;
+        Logger::error() << "StructureRegistry::spawnStructure: No valid variation for '" << name << "'";
         return false;
     }
 
-    std::cout << "Spawning structure '" << name << "' at ("
-              << centerPos.x << ", " << centerPos.y << ", " << centerPos.z << ")" << std::endl;
+    Logger::info() << "Spawning structure '" << name << "' at ("
+                  << centerPos.x << ", " << centerPos.y << ", " << centerPos.z << ")";
 
     // Calculate offsets to center the structure
     int halfLength = var->length / 2;  // Integer division (e.g., 5/2 = 2)
@@ -265,13 +265,16 @@ bool StructureRegistry::spawnStructure(const std::string& name, World* world, co
     std::set<Chunk*> affectedChunks;
 
     // Place blocks layer by layer
-    for (int y = 0; y < (int)var->structure.size(); y++) {
+    const int structureHeight = static_cast<int>(var->structure.size());
+    for (int y = 0; y < structureHeight; y++) {
         const auto& layer = var->structure[y];
+        const int layerDepth = static_cast<int>(layer.size());
 
-        for (int z = 0; z < (int)layer.size(); z++) {
+        for (int z = 0; z < layerDepth; z++) {
             const auto& row = layer[z];
+            const int rowWidth = static_cast<int>(row.size());
 
-            for (int x = 0; x < (int)row.size(); x++) {
+            for (int x = 0; x < rowWidth; x++) {
                 int blockID = row[x];
 
                 // Skip air blocks (ID 0)
@@ -300,7 +303,7 @@ bool StructureRegistry::spawnStructure(const std::string& name, World* world, co
 
     // Regenerate meshes and GPU buffers for all affected chunks
     if (renderer) {
-        std::cout << "Updating " << affectedChunks.size() << " affected chunk(s)..." << std::endl;
+        Logger::debug() << "Updating " << affectedChunks.size() << " affected chunk(s)...";
         for (Chunk* chunk : affectedChunks) {
             chunk->generateMesh(world);
 
@@ -311,7 +314,7 @@ bool StructureRegistry::spawnStructure(const std::string& name, World* world, co
         }
     }
 
-    std::cout << "Structure '" << name << "' spawned successfully!" << std::endl;
+    Logger::info() << "Structure '" << name << "' spawned successfully!";
     return true;
 }
 

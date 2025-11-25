@@ -232,6 +232,33 @@ public:
      */
     bool isInSpawnAnchor(int chunkX, int chunkY, int chunkZ) const;
 
+    // ============================================================================
+    // BACKGROUND PRE-GENERATION (2025-11-25)
+    // ============================================================================
+
+    /**
+     * @brief Enable predictive pre-generation in player's movement direction
+     *
+     * When enabled, the system will generate chunks ahead of the player
+     * based on movement velocity. This reduces pop-in when moving fast.
+     *
+     * @param enabled Enable/disable predictive generation
+     * @param lookAheadDistance How far ahead to pre-generate (default: 96 blocks)
+     */
+    void setPredictiveGeneration(bool enabled, float lookAheadDistance = 96.0f);
+
+    /**
+     * @brief Queue chunks for background pre-generation
+     *
+     * Called during idle time to pre-generate chunks beyond normal load distance.
+     * Uses a lower priority than player-proximity chunks.
+     *
+     * @param centerX Center X coordinate (world space)
+     * @param centerZ Center Z coordinate (world space)
+     * @param radius Radius in chunks to pre-generate
+     */
+    void queueBackgroundGeneration(int centerX, int centerZ, int radius);
+
 private:
     /**
      * @brief Worker thread main loop
@@ -398,4 +425,10 @@ private:
     int m_spawnAnchorZ = 0;      ///< Spawn anchor chunk Z
     int m_spawnAnchorRadius = 0; ///< Radius of spawn chunks (0 = disabled)
     bool m_spawnAnchorEnabled = false;  ///< True if spawn anchor is set
+
+    // === Predictive Pre-Generation (2025-11-25) ===
+    // Generates chunks ahead in player's movement direction
+    bool m_predictiveEnabled = true;    ///< Enable/disable predictive generation
+    float m_lookAheadDistance = 96.0f;  ///< How far ahead to pre-generate (blocks)
+    glm::vec3 m_playerMovementDir{0.0f}; ///< Normalized movement direction
 };

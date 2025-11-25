@@ -103,9 +103,9 @@ void main() {
     fogColor = mix(fogColor, nightFogColor, moonIntensity * 0.8);
 
     // Fog settings (default above water)
-    // Adjusted for better visibility at long distances
-    float fogStart = renderDistance * 0.5;   // Fog starts at 50% of render distance
-    float fogEnd = renderDistance * 0.90;    // Full fog at 90% of render distance
+    // Pushed way out for clear visibility (2025-11-25)
+    float fogStart = renderDistance * 0.85;   // Fog starts at 85% of render distance
+    float fogEnd = renderDistance * 0.98;     // Full fog at 98% of render distance
 
     // Underwater fog settings (use dynamic liquid properties from YAML)
     if (cameraUnderwater) {
@@ -178,42 +178,10 @@ void main() {
         finalColor = mix(finalColor, finalColor * ubo.liquidTint.rgb, depthFactor);
     }
 
-    // ATMOSPHERIC FOG SYSTEM - Puffy, cloud-like fog with height attenuation
-    // Three components combine for realistic atmospheric scattering:
-    // 1. Distance fog: exponential falloff (natural looking, no hard edges)
-    // 2. Height fog: thicker at low altitudes (ground haze), thinner above
-    // 3. Horizon fog: extra density at far horizontal distances (hides distant mountains)
-
-    if (cameraUnderwater) {
-        // Underwater: use simple linear fog from YAML settings
-        float underwaterFog = clamp((distance - fogStart) / (fogEnd - fogStart), 0.0, 1.0);
-        finalColor = mix(finalColor, fogColor, underwaterFog);
-    } else {
-        // Above water: atmospheric fog with height and horizon effects
-        float worldY = fragWorldPos.y;
-        float heightFogCenter = 80.0;   // Sea level fog is thickest
-        float heightFogFalloff = 0.008; // How quickly fog clears with altitude
-        float heightDiff = abs(worldY - heightFogCenter);
-        float heightFogFactor = exp(-heightDiff * heightFogFalloff);  // 1.0 at sea level, fades away
-
-        // Distance fog with exponential falloff (soft, natural edges)
-        float fogDensity = 2.5 / renderDistance;  // Scales with render distance
-        float distanceFog = 1.0 - exp(-distance * fogDensity);
-
-        // Horizon fog: extra density for distant objects near the horizon
-        // This hides mountains that peek through when looking up
-        vec3 viewDir = normalize(fragWorldPos - camPos);
-        float horizonFactor = 1.0 - abs(viewDir.y);  // 1.0 when looking horizontal, 0.0 when looking up/down
-        horizonFactor = horizonFactor * horizonFactor;  // Squared for sharper falloff
-        float horizonFog = horizonFactor * distanceFog * 0.4;  // Extra 40% fog at horizon
-
-        // Combine fog factors (multiplicative for height, additive for horizon)
-        float combinedFog = distanceFog * (0.6 + 0.4 * heightFogFactor) + horizonFog;
-        combinedFog = clamp(combinedFog, 0.0, 1.0);
-
-        // Apply fog (mix between scene color and fog color based on fog density)
-        finalColor = mix(finalColor, fogColor, combinedFog);
-    }
+    // SIMPLE LINEAR FOG (2025-11-25)
+    // Clean Minecraft-style fog: no fog until fogStart, then linear blend to fogEnd
+    float fogFactor = clamp((distance - fogStart) / (fogEnd - fogStart), 0.0, 1.0);
+    finalColor = mix(finalColor, fogColor, fogFactor);
 
     // Output with alpha from vertex color (for liquid transparency)
     outColor = vec4(finalColor, fragColor.a);

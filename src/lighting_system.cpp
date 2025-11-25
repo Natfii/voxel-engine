@@ -6,7 +6,6 @@
 #include "logger.h"
 #include "vulkan_renderer.h"
 #include <algorithm>
-#include <iostream>
 
 // ========== Constructor/Destructor ==========
 
@@ -28,12 +27,12 @@ LightingSystem::~LightingSystem() {
 // ========== Initialization ==========
 
 void LightingSystem::initializeWorldLighting(std::function<void(float)> progressCallback) {
-    std::cout << "Initializing world lighting..." << std::endl;
+    Logger::info() << "Initializing world lighting...";
 
     // Get world bounds to iterate through all chunks
     const auto& chunks = m_world->getChunks();
     if (chunks.empty()) {
-        std::cout << "No chunks to light!" << std::endl;
+        Logger::info() << "No chunks to light!";
         return;
     }
 
@@ -54,7 +53,7 @@ void LightingSystem::initializeWorldLighting(std::function<void(float)> progress
     // ==================================================================================
 
     // Scan all chunks for emissive block light sources (torches, lava, etc.)
-    std::cout << "Scanning for block light sources (torches, lava, etc.)..." << std::endl;
+    Logger::info() << "Scanning for block light sources (torches, lava, etc.)...";
     int emissiveBlockCount = 0;
 
     for (Chunk* chunk : chunks) {
@@ -91,12 +90,12 @@ void LightingSystem::initializeWorldLighting(std::function<void(float)> progress
         }
     }
 
-    std::cout << "Found " << emissiveBlockCount << " emissive blocks (torches, lava, etc.)" << std::endl;
+    Logger::info() << "Found " << emissiveBlockCount << " emissive blocks (torches, lava, etc.)";
 
     // Process all queued light propagation with batching to prevent freezing
     // PERFORMANCE FIX: Process in batches with minimal progress reporting
     // Prevents 50+ second freeze during world load
-    std::cout << "Processing " << m_lightAddQueue.size() << " block light propagation nodes..." << std::endl;
+    Logger::info() << "Processing " << m_lightAddQueue.size() << " block light propagation nodes...";
     int processedCount = 0;
     int totalNodes = static_cast<int>(m_lightAddQueue.size());
     const int BATCH_SIZE = 10000;  // Process 10K nodes per batch
@@ -116,11 +115,10 @@ void LightingSystem::initializeWorldLighting(std::function<void(float)> progress
 
         // PERFORMANCE FIX: Report progress every 100K nodes instead of every 10K
         // Reduces console spam from 30-60 outputs to 3-6 outputs
-        // Each std::cout with endl flushes buffer (kernel syscall) - expensive!
         if (!m_lightAddQueue.empty() && (processedCount % REPORT_INTERVAL == 0)) {
             float progress = (static_cast<float>(processedCount) / static_cast<float>(totalNodes + processedCount)) * 100.0f;
-            std::cout << "  Lighting progress: " << processedCount << " nodes processed ("
-                     << static_cast<int>(progress) << "%)" << std::endl;
+            Logger::debug() << "  Lighting progress: " << processedCount << " nodes processed ("
+                           << static_cast<int>(progress) << "%)";
         }
 
         // LOADING SCREEN: Update loading screen progress more frequently (every 50K nodes)
@@ -137,7 +135,7 @@ void LightingSystem::initializeWorldLighting(std::function<void(float)> progress
         progressCallback(1.0f);
     }
 
-    std::cout << "World lighting initialized! Processed " << processedCount << " nodes." << std::endl;
+    Logger::info() << "World lighting initialized! Processed " << processedCount << " nodes.";
 }
 
 // ========== Update (Incremental) ==========

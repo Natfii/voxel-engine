@@ -1,6 +1,6 @@
 #include "convar.h"
 #include "config.h"
-#include <iostream>
+#include "logger.h"
 
 ConVarBase::ConVarBase(const std::string& name, const std::string& description, int flags)
     : m_name(name), m_description(description), m_flags(flags) {
@@ -32,8 +32,8 @@ void ConVarManager::saveToConfig() {
             // Save to [Console] section in config
             // Note: We'd need to add a setValue method to Config class
             // For now, this is a placeholder
-            std::cout << "Saving convar: " << convar->getName()
-                      << " = " << convar->getValueAsString() << std::endl;
+            Logger::debug() << "Saving convar: " << convar->getName()
+                           << " = " << convar->getValueAsString();
         }
     }
 }

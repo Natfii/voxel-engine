@@ -14,7 +14,7 @@ namespace TerrainGeneration {
     // Terrain height generation
     constexpr int BASE_HEIGHT = 64;              ///< Base terrain height in blocks (Y coordinate)
     constexpr float HEIGHT_VARIATION = 12.0f;    ///< Max height variation above/below base (blocks)
-    constexpr int TOPSOIL_DEPTH = 4;             ///< Depth of dirt layer below grass (blocks)
+    constexpr int TOPSOIL_DEPTH = 5;             ///< Depth of dirt layer below grass (blocks)
 
     // Block type IDs (must match block registry YAML files)
     constexpr int BLOCK_AIR = 0;                 ///< Air block ID

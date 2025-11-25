@@ -233,4 +233,16 @@ private:
      * @param world World to query for collision
      */
     void resolveCollisions(glm::vec3& movement, World* world);
+
+    /**
+     * @brief Checks if player is standing on solid ground at given position
+     *
+     * Checks center and 4 corners of player's feet AABB for solid blocks below.
+     * Liquid blocks are not considered ground.
+     *
+     * @param position Eye position to check from
+     * @param world World to query for blocks
+     * @return True if any solid block is detected below feet
+     */
+    bool checkGroundAtPosition(const glm::vec3& position, World* world);
 };

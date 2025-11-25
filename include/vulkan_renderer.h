@@ -368,6 +368,36 @@ public:
      */
     void submitBatchedChunkUploads();
 
+    // ========== GPU Backlog Monitoring (2025-11-25) ==========
+
+    /**
+     * @brief Get number of pending async uploads waiting for GPU completion
+     * @return Number of uploads in flight
+     */
+    size_t getPendingUploadCount() const;
+
+    /**
+     * @brief Check if GPU upload queue is backlogged
+     *
+     * Returns true if pending uploads exceed threshold, indicating
+     * the GPU can't keep up with upload rate. Callers should defer
+     * new uploads when backlogged to prevent frame stalls.
+     *
+     * @param threshold Max pending uploads before considered backlogged (default: 20)
+     * @return True if pending uploads >= threshold
+     */
+    bool isUploadBacklogged(size_t threshold = 20) const;
+
+    /**
+     * @brief Get recommended number of chunks to upload this frame
+     *
+     * Returns 0 if GPU is severely backlogged, otherwise returns
+     * a value based on current backlog level for smooth streaming.
+     *
+     * @return Recommended upload count (0-4)
+     */
+    size_t getRecommendedUploadCount() const;
+
     // ========== Indirect Drawing API (GPU Optimization) ==========
 
     /**
@@ -874,7 +904,7 @@ private:
         std::vector<std::pair<VkBuffer, VkDeviceMemory>> stagingBuffers;
     };
     std::deque<PendingUpload> m_pendingUploads;
-    std::mutex m_pendingUploadsMutex;
+    mutable std::mutex m_pendingUploadsMutex;  // mutable for const getters
     static const int MAX_PENDING_UPLOADS = 50;  // Limit concurrent uploads (doubled for reduced stalls)
 
     // Deferred deletion queue (fence-based resource cleanup)
