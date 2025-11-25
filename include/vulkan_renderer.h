@@ -1012,8 +1012,8 @@ private:
     // Mega-buffers: Single large buffers containing all chunk geometry
     // This reduces draw calls from 300+ per frame to just 2 (opaque + transparent)
 
-    static constexpr VkDeviceSize MEGA_BUFFER_VERTEX_SIZE = 1024 * 1024 * 1024;  // 1 GB for vertices (increased from 256MB)
-    static constexpr VkDeviceSize MEGA_BUFFER_INDEX_SIZE = 1024 * 1024 * 1024;   // 1 GB for indices (increased from 256MB)
+    static constexpr VkDeviceSize MEGA_BUFFER_VERTEX_SIZE = 2ULL * 1024 * 1024 * 1024;  // 2 GB for vertices (terrain changes need more space)
+    static constexpr VkDeviceSize MEGA_BUFFER_INDEX_SIZE = 2ULL * 1024 * 1024 * 1024;   // 2 GB for indices (terrain changes need more space)
 
     // Opaque geometry mega-buffers
     VkBuffer m_megaVertexBuffer = VK_NULL_HANDLE;
