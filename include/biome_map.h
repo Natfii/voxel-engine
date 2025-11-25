@@ -45,6 +45,12 @@ public:
     int getTerrainHeightAt(float worldX, float worldZ);
 
     /**
+     * Get raw terrain noise value at a world position
+     * Used for snow line variation and other effects
+     */
+    float getTerrainNoise(float worldX, float worldZ);
+
+    /**
      * Get cave density at a 3D world position
      * Returns value 0.0-1.0 where higher = more solid (not cave)
      * Values < 0.45 = air (cave), >= 0.45 = solid
@@ -62,6 +68,7 @@ private:
     std::unique_ptr<FastNoiseLite> m_temperatureNoise;
     std::unique_ptr<FastNoiseLite> m_moistureNoise;
     std::unique_ptr<FastNoiseLite> m_terrainNoise;
+    std::unique_ptr<FastNoiseLite> m_mountainRangeNoise;     // Wide, gradual mountain ranges (2025-11-25)
     std::unique_ptr<FastNoiseLite> m_caveNoise;              // Chamber-style caves
     std::unique_ptr<FastNoiseLite> m_caveTunnelNoise;        // Long winding tunnels
     std::unique_ptr<FastNoiseLite> m_undergroundChamberNoise;

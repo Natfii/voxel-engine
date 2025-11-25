@@ -39,14 +39,26 @@ BiomeMap::BiomeMap(int seed, float tempBias, float moistBias, float ageBias,
     m_moistureVariation->SetFractalOctaves(2);
     m_moistureVariation->SetFrequency(0.004f);  // Very subtle local variation
 
-    // Terrain height noise - controlled by biome age
+    // Terrain height noise - SMOOTHER for gradual landscapes
+    // UPDATED (2025-11-25): Lower frequency for less valleys, more gradual terrain
     m_terrainNoise = std::make_unique<FastNoiseLite>(seed + 200);
     m_terrainNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_terrainNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
-    m_terrainNoise->SetFractalOctaves(5);
+    m_terrainNoise->SetFractalOctaves(6);       // Was 5 - more octaves = smoother blending
     m_terrainNoise->SetFractalLacunarity(2.0f);
-    m_terrainNoise->SetFractalGain(0.5f);
-    m_terrainNoise->SetFrequency(0.015f);
+    m_terrainNoise->SetFractalGain(0.45f);      // Was 0.5 - lower = less harsh detail
+    m_terrainNoise->SetFrequency(0.006f);       // Was 0.015 - MUCH lower for grand terrain
+                                                 // 0.006 = ~167-block features (gradual hills)
+
+    // Mountain range noise - creates wide, gradual mountain ranges (2025-11-25)
+    // Very low frequency = mountains span thousands of blocks for grand, sweeping peaks
+    m_mountainRangeNoise = std::make_unique<FastNoiseLite>(seed + 500);
+    m_mountainRangeNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_mountainRangeNoise->SetFractalType(FastNoiseLite::FractalType_Ridged);  // Ridged for range shapes
+    m_mountainRangeNoise->SetFractalOctaves(4);
+    m_mountainRangeNoise->SetFractalLacunarity(2.0f);
+    m_mountainRangeNoise->SetFractalGain(0.5f);
+    m_mountainRangeNoise->SetFrequency(0.0008f);  // VERY low - mountain ranges 1000+ blocks wide
 
     // Cave noise - 3D cellular noise for chamber-style caves
     m_caveNoise = std::make_unique<FastNoiseLite>(seed + 300);
@@ -200,31 +212,50 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     // FastNoiseLite is thread-safe for reads - no mutex needed
     float noise = m_terrainNoise->GetNoise(worldX, worldZ);
 
-    // Use biome's age to control terrain roughness
-    // Age 0 (young) = very rough, mountainous (high variation)
-    // Age 100 (old) = very flat, plains-like (low variation)
+    // ============================================================================
+    // TERRAIN OVERHAUL (2025-11-25): Smoother, more natural terrain
+    // ============================================================================
+    // - Reduced base height variation for flatter landscapes
+    // - Power curve to flatten valleys while keeping gentle peaks
+    // - Mountain range noise for wide, gradual mountain slopes
+    // ============================================================================
 
-    // Calculate height variation based on age
-    // ADJUSTED (2025-11-23): Reduced from 30→20 to prevent extreme mountains
-    // Young terrain (age=0): variation = 20 blocks (was 30)
-    // Old terrain (age=100): variation = 5 blocks
+    // Use biome's age to control terrain roughness
+    // Age 0 (young) = moderate variation
+    // Age 100 (old) = very flat, plains-like (minimal variation)
     float ageNormalized = biome->age / 100.0f;  // 0.0 to 1.0
 
     // Apply age bias from menu (-1.0 = flatter, +1.0 = more mountainous)
     ageNormalized = std::clamp(ageNormalized - m_ageBias, 0.0f, 1.0f);
 
-    float heightVariation = 20.0f - (ageNormalized * 15.0f);  // 20 to 5 (was 30 to 5)
+    // UPDATED: Reduced base variation for flatter terrain
+    // Young terrain (age=0): variation = 12 blocks (was 20)
+    // Old terrain (age=100): variation = 2 blocks (was 5)
+    float heightVariation = 12.0f - (ageNormalized * 10.0f);  // Range: 12 to 2
 
     // Apply biome's height multiplier for special terrain (mountains, etc.)
     float baseHeightMultiplier = biome->height_multiplier;
 
-    // BIOME SIZE-BASED SCALING: Mountains grow taller based on biome extent
-    // Sample surrounding area to determine mountain biome density
-    if (baseHeightMultiplier > 1.5f) {  // Only for mountainous biomes
+    // NEW: For mountainous biomes, use mountain range noise for gradual slopes
+    if (baseHeightMultiplier > 1.5f) {
+        // Sample mountain range noise for gradual, wide mountains
+        float rangeNoise = m_mountainRangeNoise->GetNoise(worldX, worldZ);
+        rangeNoise = (rangeNoise + 1.0f) * 0.5f;  // Map to [0, 1]
+
+        // Mountains only rise where range noise is high
+        // This creates gradual slopes from plains → foothills → peaks
+        // Power curve creates smooth transition at edges
+        float mountainInfluence = std::pow(rangeNoise, 1.5f);
+
+        // Scale the height multiplier by mountain influence
+        // At mountain edges: multiplier ~1.0 (normal terrain)
+        // At mountain centers/peaks: multiplier = full height_multiplier
+        baseHeightMultiplier = 1.0f + (baseHeightMultiplier - 1.0f) * mountainInfluence;
+
+        // Also apply biome size-based scaling for extra tall central peaks
         // Cache mountain density at 32-block resolution to avoid expensive sampling
-        // PERFORMANCE: Use bit shift instead of division (24-39x faster)
-        int mountainRegionX = static_cast<int>(worldX) >> 5;  // Equivalent to worldX / 32
-        int mountainRegionZ = static_cast<int>(worldZ) >> 5;  // Equivalent to worldZ / 32
+        int mountainRegionX = static_cast<int>(worldX) >> 5;
+        int mountainRegionZ = static_cast<int>(worldZ) >> 5;
         uint64_t mountainKey = coordsToKey(mountainRegionX, mountainRegionZ);
 
         float sizeScaling = 1.0f;
@@ -235,53 +266,45 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
             auto it = m_mountainDensityCache.find(mountainKey);
             if (it != m_mountainDensityCache.end()) {
                 sizeScaling = it->second;
-                baseHeightMultiplier *= sizeScaling;
-                goto skip_mountain_sampling;  // Cache hit - skip expensive sampling
-            }
-        }
+            } else {
+                // Cache miss - sample surrounding area
+                const float sampleRadius = 500.0f;
+                int mountainCount = 0;
+                const int totalSamples = 8;
 
-        // Cache miss - sample surrounding area
-        {
-            // Sample 8 points in a 500-block radius to check mountain biome extent
-            const float sampleRadius = 500.0f;
-            int mountainCount = 0;
-            const int totalSamples = 8;
+                for (int i = 0; i < totalSamples; i++) {
+                    float angle = (i / float(totalSamples)) * 2.0f * 3.14159f;
+                    float sampleX = worldX + std::cos(angle) * sampleRadius;
+                    float sampleZ = worldZ + std::sin(angle) * sampleRadius;
 
-            for (int i = 0; i < totalSamples; i++) {
-                float angle = (i / float(totalSamples)) * 2.0f * 3.14159f;
-                float sampleX = worldX + std::cos(angle) * sampleRadius;
-                float sampleZ = worldZ + std::sin(angle) * sampleRadius;
-
-                const Biome* sampleBiome = getBiomeAt(sampleX, sampleZ);
-                // Count how many samples are also mountainous (height_multiplier > 1.5)
-                if (sampleBiome && sampleBiome->height_multiplier > 1.5f) {
-                    mountainCount++;
+                    const Biome* sampleBiome = getBiomeAt(sampleX, sampleZ);
+                    if (sampleBiome && sampleBiome->height_multiplier > 1.5f) {
+                        mountainCount++;
+                    }
                 }
-            }
 
-            // Calculate mountain density (0.0 = isolated peak, 1.0 = large mountain range)
-            float mountainDensity = mountainCount / float(totalSamples);
+                float mountainDensity = mountainCount / float(totalSamples);
+                sizeScaling = 0.8f + (mountainDensity * 0.4f);  // Range: 0.8x to 1.2x
 
-            // Scale height multiplier based on mountain range size
-            // ADJUSTED (2025-11-23): Reduced from 2.0x→1.5x max to prevent extreme mountains
-            // Small isolated mountains: 0.7x multiplier (slightly shorter)
-            // Large mountain ranges: up to 1.5x multiplier (was 2.0x)
-            sizeScaling = 0.7f + (mountainDensity * 0.8f);  // Range: 0.7x to 1.5x (was 0.5x to 2.0x)
-
-            // Store in cache
-            {
-                std::unique_lock<std::shared_mutex> lock(m_mountainCacheMutex);
+                // Store in cache (release read lock, acquire write lock)
+                std::unique_lock<std::shared_mutex> writeLock(m_mountainCacheMutex);
                 if (m_mountainDensityCache.size() < MAX_CACHE_SIZE) {
                     m_mountainDensityCache[mountainKey] = sizeScaling;
                 }
             }
-
-            baseHeightMultiplier *= sizeScaling;
         }
+
+        baseHeightMultiplier *= sizeScaling;
     }
-    skip_mountain_sampling:
 
     heightVariation *= baseHeightMultiplier;
+
+    // NEW: Apply power curve to flatten valleys while keeping gentle peaks
+    // Power > 1.0 pushes middle values down, creating flatter lowlands
+    // This reduces the "choppy" look of constant hills/valleys
+    float normalizedNoise = (noise + 1.0f) * 0.5f;  // Map [-1, 1] to [0, 1]
+    normalizedNoise = std::pow(normalizedNoise, 1.3f);  // Gentle flattening curve
+    noise = normalizedNoise * 2.0f - 1.0f;  // Map back to [-1, 1]
 
     // Calculate final height
     int height = BASE_HEIGHT + static_cast<int>(noise * heightVariation);
@@ -299,6 +322,11 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     // We must always generate terrain from Y=0 upward to avoid gaps.
 
     return height;
+}
+
+float BiomeMap::getTerrainNoise(float worldX, float worldZ) {
+    // Return raw terrain noise for snow line variation and other effects
+    return m_terrainNoise->GetNoise(worldX, worldZ);
 }
 
 float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ, int terrainHeight) {

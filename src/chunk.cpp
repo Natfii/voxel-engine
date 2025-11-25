@@ -489,11 +489,37 @@ void Chunk::generate(BiomeMap* biomeMap) {
                     int depthFromSurface = terrainHeight - worldY;
 
                     if (depthFromSurface == 1) {
-                        // Top layer - use biome's surface block
-                        m_blocks[x][y][z] = biome->primary_surface_block;
+                        // ================================================================
+                        // SNOW ON MOUNTAIN PEAKS (2025-11-25)
+                        // ================================================================
+                        // High elevation terrain gets snow regardless of biome
+                        // Creates realistic snow-capped mountain peaks
+                        // ================================================================
+                        if (worldY >= SNOW_LINE + SNOW_TRANSITION) {
+                            // Fully above snow line - always snow
+                            m_blocks[x][y][z] = BLOCK_SNOW;
+                        } else if (worldY >= SNOW_LINE) {
+                            // Transition zone - mix snow and normal surface using noise
+                            // Creates patchy, natural-looking snow line
+                            float snowNoise = biomeMap->getTerrainNoise(worldXf, worldZf);
+                            float snowChance = static_cast<float>(worldY - SNOW_LINE) / static_cast<float>(SNOW_TRANSITION);
+                            // Higher elevation = more snow, noise adds variation
+                            if (snowNoise > (1.0f - snowChance * 2.0f)) {
+                                m_blocks[x][y][z] = BLOCK_SNOW;
+                            } else {
+                                m_blocks[x][y][z] = biome->primary_surface_block;
+                            }
+                        } else {
+                            // Below snow line - use biome's normal surface block
+                            m_blocks[x][y][z] = biome->primary_surface_block;
+                        }
                     } else if (depthFromSurface <= TOPSOIL_DEPTH) {
-                        // Topsoil layer - dirt
-                        m_blocks[x][y][z] = BLOCK_DIRT;
+                        // Topsoil layer - dirt (or snow layer if very high elevation)
+                        if (worldY >= SNOW_LINE + SNOW_TRANSITION && depthFromSurface <= 2) {
+                            m_blocks[x][y][z] = BLOCK_SNOW;  // Snow layer below surface snow
+                        } else {
+                            m_blocks[x][y][z] = BLOCK_DIRT;
+                        }
                     } else {
                         // Deep underground - use biome's stone block
                         m_blocks[x][y][z] = biome->primary_stone_block;

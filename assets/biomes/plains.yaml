@@ -5,7 +5,7 @@
 name: "Plains"
 temperature: 60        # Temperate
 moisture: 50           # Moderate
-age: 80                # Flat, old terrain
+age: 95                # Very flat, ancient terrain (was 80) - wide open fields
 activity: 45           # Moderate structure spawning
 
 # Vegetation

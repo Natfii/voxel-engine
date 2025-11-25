@@ -33,6 +33,10 @@ namespace TerrainGeneration {
 
     // Water physics
     constexpr int WATER_LEVEL = 62;              ///< Sea level height in blocks (Y coordinate)
+
+    // Snow line (2025-11-25): Y level above which snow appears on peaks
+    constexpr int SNOW_LINE = 95;                ///< Y level above which snow appears
+    constexpr int SNOW_TRANSITION = 5;           ///< Blocks of gradual snow transition
 }
 
 namespace PhysicsConstants {

@@ -5,7 +5,7 @@
 name: "Desert"
 temperature: 90        # Very hot
 moisture: 5            # Very dry
-age: 75                # Relatively flat with dunes
+age: 92                # Very flat with gentle dunes (was 75) - wide open desert
 activity: 25           # Low structure spawning
 
 # Vegetation

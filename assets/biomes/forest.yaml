@@ -5,7 +5,7 @@
 name: "Forest"
 temperature: 55        # Cool-temperate
 moisture: 70           # Moist
-age: 60                # Moderate terrain roughness
+age: 70                # Gentler hills for forests (was 60)
 activity: 55           # Good structure spawning
 
 # Vegetation
