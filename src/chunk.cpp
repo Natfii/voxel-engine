@@ -706,9 +706,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
     }
 
     // Acquire buffers from pool (reuses allocated memory)
-    std::vector<Vertex> verts = pool.acquireVertexBuffer();
+    std::vector<CompressedVertex> verts = pool.acquireVertexBuffer();
     std::vector<uint32_t> indices = pool.acquireIndexBuffer();
-    std::vector<Vertex> transparentVerts = pool.acquireVertexBuffer();
+    std::vector<CompressedVertex> transparentVerts = pool.acquireVertexBuffer();
     std::vector<uint32_t> transparentIndices = pool.acquireIndexBuffer();
 
     // Reserve space for estimated visible faces (roughly 30% of blocks visible, 3 faces each on average)
@@ -1045,18 +1045,6 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                     float blockX = (startX >= 0) ? float(m_x * WIDTH + startX) : bx;
                     float blockY = (startY >= 0) ? float(m_y * HEIGHT + startY) : by;
                     float blockZ = (startZ >= 0) ? float(m_z * DEPTH + startZ) : bz;
-                    auto [uMin, vMin] = getUVsForFace(faceTexture);
-                    float uvScaleZoomed = uvScale;
-
-                    // For animated textures, scale UVs to cover the full animation area
-                    // e.g., if animatedTiles=2, UVs should span 2x2 cells instead of 1 cell
-                    if (def.animatedTiles > 1) {
-                        uvScaleZoomed = uvScale * def.animatedTiles;
-                    }
-                    // Recalculate uvScaleZoomed if texture variation is enabled (per-face)
-                    else if (faceTexture.variation > 1.0f) {
-                        uvScaleZoomed = uvScale / faceTexture.variation;
-                    }
 
                     // Choose which vectors to use based on transparency
                     auto& targetVerts = useTransparent ? transparentVerts : verts;
@@ -1065,13 +1053,87 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                     // Get the base index for these vertices
                     uint32_t baseIndex = static_cast<uint32_t>(targetVerts.size());
 
-                    // Create 4 vertices for this face (corners of the quad)
-                    // For merged quads, scale vertices based on quadWidth/quadHeight
-                    for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
-                        Vertex v;
+                    // ========== COMPRESSED VERTEX SETUP ==========
+                    // Determine normal index from face normal
+                    uint8_t normalIndex;
+                    if (faceNormal.x > 0) normalIndex = CompressedVertex::NORMAL_POS_X;
+                    else if (faceNormal.x < 0) normalIndex = CompressedVertex::NORMAL_NEG_X;
+                    else if (faceNormal.y > 0) normalIndex = CompressedVertex::NORMAL_POS_Y;
+                    else if (faceNormal.y < 0) normalIndex = CompressedVertex::NORMAL_NEG_Y;
+                    else if (faceNormal.z > 0) normalIndex = CompressedVertex::NORMAL_POS_Z;
+                    else normalIndex = CompressedVertex::NORMAL_NEG_Z;
 
+                    // Determine if this is a top/bottom face (affects UV corner mapping)
+                    bool isYFace = (faceNormal.y != 0);
+
+                    // Get atlas cell indices (clamp to valid range)
+                    float atlasSize = (uvScale > 0.0f) ? (1.0f / uvScale) : 16.0f;
+                    int maxCell = static_cast<int>(atlasSize) - 1;
+                    uint8_t atlasX = static_cast<uint8_t>(std::clamp(faceTexture.atlasX, 0, maxCell));
+                    uint8_t atlasY = static_cast<uint8_t>(std::clamp(faceTexture.atlasY, 0, maxCell));
+
+                    // Calculate quad dimensions (clamped to 0-31)
+                    uint8_t qw = static_cast<uint8_t>(std::clamp(static_cast<int>(quadWidth), 1, 31));
+                    uint8_t qh = static_cast<uint8_t>(std::clamp(static_cast<int>(quadHeight), 1, 31));
+
+                    // Determine color tint based on block type
+                    // TODO: Add isFoliage/isGrass properties to BlockDefinition for tint support
+                    uint8_t colorTint = CompressedVertex::TINT_WHITE;
+                    if (def.isLiquid) {
+                        colorTint = CompressedVertex::TINT_WATER;
+                    }
+
+                    // Calculate lighting once per face (classic retro style)
+                    uint8_t skyLightInt = 15;
+                    uint8_t blockLightInt = 0;
+                    uint8_t aoInt = 15;  // 15 = full brightness (1.0), no AO darkening
+
+                    if (DebugState::instance().lightingEnabled.getValue()) {
+                        int sampleX = X + faceNormal.x;
+                        int sampleY = Y + faceNormal.y;
+                        int sampleZ = Z + faceNormal.z;
+
+                        if (callerHoldsLock) {
+                            if (sampleX >= 0 && sampleX < WIDTH && sampleY >= 0 && sampleY < HEIGHT && sampleZ >= 0 && sampleZ < DEPTH) {
+                                skyLightInt = static_cast<uint8_t>(calculateSkyLightFromHeightmap(sampleX, sampleY, sampleZ));
+                                blockLightInt = static_cast<uint8_t>(std::clamp(getInterpolatedBlockLight(sampleX, sampleY, sampleZ) * 15.0f, 0.0f, 15.0f));
+                            }
+                        } else {
+                            glm::vec3 sampleWorldPos = localToWorldPos(sampleX, sampleY, sampleZ);
+                            Chunk* chunk = world->getChunkAtWorldPos(sampleWorldPos.x, sampleWorldPos.y, sampleWorldPos.z);
+                            if (chunk) {
+                                int localX = static_cast<int>(sampleWorldPos.x) - (chunk->getChunkX() * WIDTH);
+                                int localY = static_cast<int>(sampleWorldPos.y) - (chunk->getChunkY() * HEIGHT);
+                                int localZ = static_cast<int>(sampleWorldPos.z) - (chunk->getChunkZ() * DEPTH);
+                                skyLightInt = static_cast<uint8_t>(chunk->calculateSkyLightFromHeightmap(localX, localY, localZ));
+                                blockLightInt = static_cast<uint8_t>(std::clamp(chunk->getInterpolatedBlockLight(localX, localY, localZ) * 15.0f, 0.0f, 15.0f));
+                            }
+                        }
+                    }
+
+                    // Corner index mapping for UV calculation
+                    // Vertex order: BL(0), BR(1), TR(2), TL(3)
+                    // Side faces use V-flipped UVs, top/bottom use standard UVs
+                    // Side faces V-flipped: (0,H), (W,H), (W,0), (0,0) -> corners 2,3,1,0
+                    // Top/bottom standard: (0,0), (W,0), (W,H), (0,H) -> corners 0,1,3,2
+                    static constexpr uint8_t sideCorners[4] = {
+                        CompressedVertex::CORNER_HEIGHT,  // Vertex 0: UV(0, H)
+                        CompressedVertex::CORNER_BOTH,    // Vertex 1: UV(W, H)
+                        CompressedVertex::CORNER_WIDTH,   // Vertex 2: UV(W, 0)
+                        CompressedVertex::CORNER_ORIGIN   // Vertex 3: UV(0, 0)
+                    };
+                    static constexpr uint8_t yFaceCorners[4] = {
+                        CompressedVertex::CORNER_ORIGIN,  // Vertex 0: UV(0, 0)
+                        CompressedVertex::CORNER_WIDTH,   // Vertex 1: UV(W, 0)
+                        CompressedVertex::CORNER_BOTH,    // Vertex 2: UV(W, H)
+                        CompressedVertex::CORNER_HEIGHT   // Vertex 3: UV(0, H)
+                    };
+                    const uint8_t* cornerMap = isYFace ? yFaceCorners : sideCorners;
+
+                    // Create 4 vertices for this face (corners of the quad)
+                    int vertexIndex = 0;
+                    for (int i = cubeStart; i < cubeStart + 12; i += 3, vertexIndex++) {
                         // Scale vertex position for merged quads
-                        // Determine which axes to scale based on face normal
                         float vx = cube[i+0];
                         float vy = cube[i+1];
                         float vz = cube[i+2];
@@ -1091,107 +1153,33 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                             if (vy > 0.5f) vy *= quadHeight;
                         }
 
-                        v.x = vx + blockX;
-                        v.z = vz + blockZ;
-
-                        // Apply height adjustment: if adjustTopOnly=true, only adjust top vertices (y>0.5)
+                        // Calculate world position
+                        float worldX = vx + blockX;
+                        float worldZ = vz + blockZ;
+                        float worldY;
                         if (adjustTopOnly) {
-                            v.y = vy + blockY + (vy > 0.4f ? heightAdjust : 0.0f);
+                            worldY = vy + blockY + (vy > 0.4f ? heightAdjust : 0.0f);
                         } else {
-                            v.y = vy + blockY + heightAdjust;
-                        }
-                        v.r = cr; v.g = cg; v.b = cb; v.a = ca;
-
-                        // TILED UV ENCODING for greedy meshing
-                        // Encode UV as: cellIndex + (localUV * quadSize) / atlasSize
-                        // This keeps UV in [cellIndex, cellIndex+1) range
-                        // Shader extracts cell with floor() and tiles with fract()
-                        // NOTE: Liquids use stretched UVs for shader scrolling animation
-                        bool useStretchedUV = (def.animatedTiles > 1) || def.isLiquid || (uvScale <= 0.0f);
-                        if (useStretchedUV) {
-                            // Animated textures and liquids - use stretched UVs (shader has special handling)
-                            v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                            v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        } else {
-                            // Tiled encoding: integer cell + fractional local UV
-                            // Works for both single blocks (1x1 tiling) and merged quads (NxM tiling)
-                            float atlasSize = 1.0f / uvScale;
-                            int maxCell = static_cast<int>(atlasSize) - 1;
-
-                            // Validate atlas indices - log warning if out of bounds (helps debug texture issues)
-                            if (faceTexture.atlasX < 0 || faceTexture.atlasX > maxCell ||
-                                faceTexture.atlasY < 0 || faceTexture.atlasY > maxCell) {
-                                static int warningCount = 0;
-                                if (warningCount < 10) {
-                                    Logger::warning() << "Block ID " << id << " has invalid atlas coords ("
-                                                   << faceTexture.atlasX << ", " << faceTexture.atlasY
-                                                   << ") - max is " << maxCell;
-                                    warningCount++;
-                                }
-                            }
-
-                            // Bounds check atlas indices to prevent invalid values
-                            int cellXi = std::clamp(faceTexture.atlasX, 0, maxCell);
-                            int cellYi = std::clamp(faceTexture.atlasY, 0, maxCell);
-                            float cellX = static_cast<float>(cellXi);
-                            float cellY = static_cast<float>(cellYi);
-                            v.u = cellX + cubeUVs[uv+0] * quadWidth / atlasSize;
-                            v.v = cellY + cubeUVs[uv+1] * quadHeight / atlasSize;
+                            worldY = vy + blockY + heightAdjust;
                         }
 
-                        // CLASSIC RETRO LIGHTING - Per-face uniform lighting
-                        // Sample light from the block adjacent to this face (not per-vertex)
-                        // This gives consistent, blocky lighting like classic Minecraft
-                        if (DebugState::instance().lightingEnabled.getValue()) {
-                            // Sample the light from the block in the direction this face is pointing
-                            // Use the face normal to determine which neighbor to sample
-                            int sampleX = X + faceNormal.x;
-                            int sampleY = Y + faceNormal.y;
-                            int sampleZ = Z + faceNormal.z;
+                        // Get corner index for this vertex
+                        uint8_t cornerIndex = cornerMap[vertexIndex];
 
-                            // Get light at the sampled position (may be in neighboring chunk)
-                            glm::vec3 sampleWorldPos = localToWorldPos(sampleX, sampleY, sampleZ);
-
-                            float skyLight = 15.0f;  // Default full sunlight
-                            float blockLight = 0.0f;  // Default no block light
-
-                            if (callerHoldsLock) {
-                                // Can't query other chunks - use local data if available
-                                if (sampleX >= 0 && sampleX < WIDTH && sampleY >= 0 && sampleY < HEIGHT && sampleZ >= 0 && sampleZ < DEPTH) {
-                                    // PERFORMANCE: Use heightmap for instant sky light (no BFS!)
-                                    skyLight = static_cast<float>(calculateSkyLightFromHeightmap(sampleX, sampleY, sampleZ));
-                                    blockLight = getInterpolatedBlockLight(sampleX, sampleY, sampleZ);
-                                }
-                            } else {
-                                // Query world for neighbor chunks
-                                Chunk* chunk = world->getChunkAtWorldPos(sampleWorldPos.x, sampleWorldPos.y, sampleWorldPos.z);
-                                if (chunk) {
-                                    int localX = static_cast<int>(sampleWorldPos.x) - (chunk->getChunkX() * WIDTH);
-                                    int localY = static_cast<int>(sampleWorldPos.y) - (chunk->getChunkY() * HEIGHT);
-                                    int localZ = static_cast<int>(sampleWorldPos.z) - (chunk->getChunkZ() * DEPTH);
-                                    // PERFORMANCE: Use heightmap for instant sky light (no BFS!)
-                                    skyLight = static_cast<float>(chunk->calculateSkyLightFromHeightmap(localX, localY, localZ));
-                                    blockLight = chunk->getInterpolatedBlockLight(localX, localY, localZ);
-                                }
-                            }
-
-                            // Normalize to 0-1 range
-                            v.skyLight = skyLight / 15.0f;
-                            v.blockLight = blockLight / 15.0f;
-                            v.ao = 1.0f;  // No AO for classic look
-                        } else {
-                            // Lighting disabled - full brightness
-                            v.skyLight = 1.0f;
-                            v.blockLight = 1.0f;
-                            v.ao = 1.0f;
-                        }
-
-                        targetVerts.push_back(v);
+                        // Pack and add compressed vertex
+                        targetVerts.push_back(CompressedVertex::pack(
+                            worldX, worldY, worldZ,
+                            normalIndex,
+                            qw, qh,
+                            atlasX, atlasY,
+                            cornerIndex,
+                            skyLightInt, blockLightInt, aoInt,
+                            colorTint
+                        ));
                     }
 
                     // SIMPLIFIED TRIANGLE SPLIT FOR CLASSIC LIGHTING
                     // Use consistent diagonal (0-2) for all faces
-                    // This ensures adjacent blocks have matching gradients (retro aesthetic)
                     targetIndices.push_back(baseIndex + 0);
                     targetIndices.push_back(baseIndex + 1);
                     targetIndices.push_back(baseIndex + 2);

@@ -19,6 +19,7 @@
 #include "chunk.h"
 #include "mesh/mesh.h"
 #include "logger.h"
+#include "block_system.h"
 #include <stdexcept>
 #include <iostream>
 #include <set>
@@ -190,8 +191,8 @@ static std::vector<char> readFile(const std::string& filename) {
     return buffer;
 }
 
-// Note: Vertex::getBindingDescription() and Vertex::getAttributeDescriptions()
-// are defined in chunk.cpp to avoid duplicate symbol linker errors
+// Note: CompressedVertex::getBindingDescription() and CompressedVertex::getAttributeDescriptions()
+// are defined inline in chunk.h
 
 // Constructor
 VulkanRenderer::VulkanRenderer(GLFWwindow* window) : m_window(window) {
@@ -557,8 +558,8 @@ void VulkanRenderer::createGraphicsPipeline() {
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto bindingDescription = CompressedVertex::getBindingDescription();
+    auto attributeDescriptions = CompressedVertex::getAttributeDescriptions();
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -691,8 +692,8 @@ void VulkanRenderer::createTransparentPipeline() {
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto bindingDescription = CompressedVertex::getBindingDescription();
+    auto attributeDescriptions = CompressedVertex::getAttributeDescriptions();
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -825,8 +826,8 @@ void VulkanRenderer::createWireframePipeline() {
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto bindingDescription = CompressedVertex::getBindingDescription();
+    auto attributeDescriptions = CompressedVertex::getAttributeDescriptions();
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -950,8 +951,8 @@ void VulkanRenderer::createLinePipeline() {
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto bindingDescription = CompressedVertex::getBindingDescription();
+    auto attributeDescriptions = CompressedVertex::getAttributeDescriptions();
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -1872,6 +1873,14 @@ void VulkanRenderer::updateUniformBuffer(uint32_t currentImage, const glm::mat4&
     ubo.liquidFogColor = glm::vec4(liquidFogColor, 1.0f);  // RGB + unused alpha
     ubo.liquidFogDist = glm::vec4(liquidFogStart, liquidFogEnd, 0.0f, 0.0f);  // Start, end, unused, unused
     ubo.liquidTint = glm::vec4(liquidTintColor, liquidDarkenFactor);  // RGB tint + darken factor
+
+    // Atlas info for compressed vertex UV reconstruction
+    // .x = atlas grid size (number of cells per row/column)
+    // .y = same as .x (square atlas)
+    // .z = cell size (1.0 / gridSize, for UV normalization)
+    // .w = unused
+    float atlasGridSize = static_cast<float>(BlockRegistry::instance().getAtlasGridSize());
+    ubo.atlasInfo = glm::vec4(atlasGridSize, atlasGridSize, 1.0f / atlasGridSize, 0.0f);
 
     memcpy(m_uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }

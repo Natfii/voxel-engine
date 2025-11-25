@@ -6,24 +6,24 @@
  */
 
 #include "mesh_buffer_pool.h"
-#include "chunk.h"  // For Vertex struct
+#include "chunk.h"  // For CompressedVertex struct
 
 MeshBufferPool::MeshBufferPool(size_t initialPoolSize) {
     // Pre-allocate buffers to reduce initial allocation overhead
     reserve(initialPoolSize);
 }
 
-std::vector<Vertex> MeshBufferPool::acquireVertexBuffer() {
+std::vector<CompressedVertex> MeshBufferPool::acquireVertexBuffer() {
     if (!m_vertexBufferPool.empty()) {
         // Reuse a buffer from the pool
-        std::vector<Vertex> buffer = std::move(m_vertexBufferPool.back());
+        std::vector<CompressedVertex> buffer = std::move(m_vertexBufferPool.back());
         m_vertexBufferPool.pop_back();
         buffer.clear();  // Clear contents but keep capacity
         return buffer;
     } else {
         // Create a new buffer
         m_totalVertexBuffersCreated++;
-        std::vector<Vertex> buffer;
+        std::vector<CompressedVertex> buffer;
         // CRITICAL FIX: Reserve enough to avoid reallocation during typical use
         // chunk.cpp reserves WIDTH*HEIGHT*DEPTH*12/10 = 39,321 vertices
         buffer.reserve(40000);  // Matches actual usage to achieve 40-60% speedup
@@ -49,13 +49,13 @@ std::vector<uint32_t> MeshBufferPool::acquireIndexBuffer() {
     }
 }
 
-void MeshBufferPool::releaseVertexBuffer(std::vector<Vertex>&& buffer) {
+void MeshBufferPool::releaseVertexBuffer(std::vector<CompressedVertex>&& buffer) {
     // Clear the buffer but keep its capacity for reuse
     buffer.clear();
 
     // Only keep buffers with reasonable capacity to avoid memory waste
     // Buffers larger than 100KB might be outliers (complex chunks)
-    const size_t MAX_BUFFER_CAPACITY = 100 * 1024 / sizeof(Vertex);  // ~100KB
+    const size_t MAX_BUFFER_CAPACITY = 100 * 1024 / sizeof(CompressedVertex);  // ~100KB
 
     if (buffer.capacity() < MAX_BUFFER_CAPACITY) {
         m_vertexBufferPool.push_back(std::move(buffer));
@@ -101,7 +101,7 @@ void MeshBufferPool::reserve(size_t numBuffers) {
 
     // Pre-allocate some buffers with correct capacity
     for (size_t i = 0; i < numBuffers; i++) {
-        std::vector<Vertex> vertexBuffer;
+        std::vector<CompressedVertex> vertexBuffer;
         vertexBuffer.reserve(40000);  // Match actual usage
         m_vertexBufferPool.push_back(std::move(vertexBuffer));
 

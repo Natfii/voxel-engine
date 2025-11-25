@@ -217,6 +217,11 @@ bool LoadingSphere::createBuffers() {
 }
 
 void LoadingSphere::render() {
+    // TODO: LoadingSphere disabled until converted to use CompressedVertex or separate pipeline
+    // The main graphics pipeline now uses 12-byte CompressedVertex format which is incompatible
+    // with the 48-byte Vertex format used by the sphere mesh.
+    return;
+
     if (!m_initialized) return;
 
     // Calculate rotation based on elapsed time

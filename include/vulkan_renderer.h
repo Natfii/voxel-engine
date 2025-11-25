@@ -38,6 +38,7 @@ struct UniformBufferObject {
     alignas(16) glm::vec4 liquidFogColor;///< Liquid fog color (.rgb) + density (.a)
     alignas(16) glm::vec4 liquidFogDist; ///< Fog distances (.x=start, .y=end) + unused (.zw)
     alignas(16) glm::vec4 liquidTint;    ///< Liquid tint color (.rgb) + darken factor (.a)
+    alignas(16) glm::vec4 atlasInfo;     ///< Texture atlas info (.x=width in cells, .y=height, .z=cell size, .w=unused)
 };
 
 /**
