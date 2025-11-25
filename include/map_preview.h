@@ -86,6 +86,16 @@ public:
     bool isReady() const { return m_initialized; }
 
     /**
+     * @brief Get Vulkan image view for external rendering (e.g., loading sphere)
+     */
+    VkImageView getImageView() const { return m_imageView; }
+
+    /**
+     * @brief Get Vulkan sampler for external rendering
+     */
+    VkSampler getSampler() const { return m_sampler; }
+
+    /**
      * @brief Cleanup GPU resources
      */
     void cleanup();

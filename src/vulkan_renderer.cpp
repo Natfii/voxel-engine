@@ -27,6 +27,121 @@
 #include <cstring>
 #include <chrono>
 
+// ========== StagingBufferPool Implementation (2025-11-25) ==========
+
+void StagingBufferPool::initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize bufferSize, size_t count) {
+    std::lock_guard<std::mutex> lock(m_poolMutex);
+
+    // Helper to find memory type
+    auto findMemoryType = [physicalDevice](uint32_t typeFilter, VkMemoryPropertyFlags properties) -> uint32_t {
+        VkPhysicalDeviceMemoryProperties memProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+        throw std::runtime_error("failed to find suitable memory type for staging buffer pool!");
+    };
+
+    for (size_t i = 0; i < count; i++) {
+        StagingBuffer sb;
+        sb.size = bufferSize;
+        sb.inUse = false;
+
+        // Create buffer
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = bufferSize;
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (vkCreateBuffer(device, &bufferInfo, nullptr, &sb.buffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create staging buffer in pool!");
+        }
+
+        // Get memory requirements
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(device, sb.buffer, &memRequirements);
+
+        // Allocate memory
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &sb.memory) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate staging buffer memory in pool!");
+        }
+
+        vkBindBufferMemory(device, sb.buffer, sb.memory, 0);
+
+        // Map memory ONCE - never unmap (persistent mapping)
+        vkMapMemory(device, sb.memory, 0, bufferSize, 0, &sb.mappedPtr);
+
+        m_pool.push_back(sb);
+    }
+
+    std::cout << "[StagingBufferPool] Initialized " << count << " buffers ("
+              << (bufferSize * count / (1024 * 1024)) << " MB total)" << '\n';
+}
+
+void StagingBufferPool::cleanup(VkDevice device) {
+    std::lock_guard<std::mutex> lock(m_poolMutex);
+
+    for (auto& sb : m_pool) {
+        if (sb.mappedPtr != nullptr) {
+            vkUnmapMemory(device, sb.memory);
+        }
+        vkDestroyBuffer(device, sb.buffer, nullptr);
+        vkFreeMemory(device, sb.memory, nullptr);
+    }
+    m_pool.clear();
+}
+
+StagingBuffer* StagingBufferPool::acquire() {
+    std::lock_guard<std::mutex> lock(m_poolMutex);
+
+    for (auto& sb : m_pool) {
+        if (!sb.inUse) {
+            sb.inUse = true;
+            return &sb;
+        }
+    }
+    return nullptr;  // All buffers in use
+}
+
+StagingBuffer* StagingBufferPool::acquireWithSize(VkDeviceSize minSize) {
+    std::lock_guard<std::mutex> lock(m_poolMutex);
+
+    for (auto& sb : m_pool) {
+        if (!sb.inUse && sb.size >= minSize) {
+            sb.inUse = true;
+            return &sb;
+        }
+    }
+    return nullptr;  // No suitable buffer available
+}
+
+void StagingBufferPool::release(StagingBuffer* buffer) {
+    if (buffer) {
+        std::lock_guard<std::mutex> lock(m_poolMutex);
+        buffer->inUse = false;
+    }
+}
+
+size_t StagingBufferPool::getInUseCount() const {
+    // Note: Not locking for quick reads (acceptable race)
+    size_t count = 0;
+    for (const auto& sb : m_pool) {
+        if (sb.inUse) count++;
+    }
+    return count;
+}
+
+// ========== End StagingBufferPool Implementation ==========
+
 // Debug callback
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -106,6 +221,9 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : m_window(window) {
     createCommandBuffers();
     createSyncObjects();
     initializeMegaBuffers();  // GPU optimization: indirect drawing mega-buffers
+
+    // PERF (2025-11-25): Initialize staging buffer pool for efficient GPU uploads
+    m_stagingBufferPool.initialize(m_device, m_physicalDevice, STAGING_BUFFER_SIZE, STAGING_BUFFER_COUNT);
 }
 
 // Destructor
@@ -245,6 +363,10 @@ void VulkanRenderer::createLogicalDevice() {
     vkGetDeviceQueue(m_device, indices.presentFamily.value(), 0, &m_presentQueue);
     // PERF (2025-11-24): Get transfer queue for async GPU uploads
     vkGetDeviceQueue(m_device, indices.transferFamily.value(), 0, &m_transferQueue);
+
+    // PERF (2025-11-25): Store queue family indices for queue ownership transfer barriers
+    m_graphicsQueueFamily = indices.graphicsFamily.value();
+    m_transferQueueFamily = indices.transferFamily.value();
 }
 
 // Create swapchain
@@ -1302,19 +1424,22 @@ void VulkanRenderer::createUniformBuffers() {
 void VulkanRenderer::createDescriptorPool() {
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
 
+    // Extra sets for custom textures (loading sphere, ImGui, etc.)
+    const uint32_t EXTRA_SETS = 10;
+
     // UBO pool size
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT + EXTRA_SETS);
 
-    // Combined image sampler pool size (for texture atlas + day cube map + night cube map)
+    // Combined image sampler pool size (for texture atlas + day cube map + night cube map + extras)
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 3);  // 3 samplers per frame
+    poolSizes[1].descriptorCount = static_cast<uint32_t>((MAX_FRAMES_IN_FLIGHT + EXTRA_SETS) * 3);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT + EXTRA_SETS);
 
     if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor pool!");
@@ -1401,6 +1526,89 @@ void VulkanRenderer::createDescriptorSets() {
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(descriptorWrites.size()),
                               descriptorWrites.data(), 0, nullptr);
     }
+}
+
+// Create a descriptor set for a custom texture (e.g., map preview on loading sphere)
+VkDescriptorSet VulkanRenderer::createCustomTextureDescriptorSet(VkImageView imageView, VkSampler sampler) {
+    VkDescriptorSet descriptorSet;
+
+    // Allocate descriptor set
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &m_descriptorSetLayout;
+
+    if (vkAllocateDescriptorSets(m_device, &allocInfo, &descriptorSet) != VK_SUCCESS) {
+        std::cerr << "Failed to allocate custom texture descriptor set!" << '\n';
+        return VK_NULL_HANDLE;
+    }
+
+    // UBO descriptor (use current frame's UBO)
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = m_uniformBuffers[m_currentFrame];
+    bufferInfo.offset = 0;
+    bufferInfo.range = sizeof(UniformBufferObject);
+
+    // Custom texture descriptor
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfo.imageView = imageView;
+    imageInfo.sampler = sampler;
+
+    // Cube map descriptors (reuse existing skybox)
+    VkDescriptorImageInfo cubeMapInfo{};
+    cubeMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    cubeMapInfo.imageView = m_skyboxView;
+    cubeMapInfo.sampler = m_skyboxSampler;
+
+    VkDescriptorImageInfo nightCubeMapInfo{};
+    nightCubeMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    nightCubeMapInfo.imageView = m_nightSkyboxView;
+    nightCubeMapInfo.sampler = m_skyboxSampler;
+
+    std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
+
+    // Write UBO (binding 0)
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = descriptorSet;
+    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].dstArrayElement = 0;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[0].descriptorCount = 1;
+    descriptorWrites[0].pBufferInfo = &bufferInfo;
+
+    // Write custom texture (binding 1)
+    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[1].dstSet = descriptorSet;
+    descriptorWrites[1].dstBinding = 1;
+    descriptorWrites[1].dstArrayElement = 0;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[1].descriptorCount = 1;
+    descriptorWrites[1].pImageInfo = &imageInfo;
+
+    // Write day cube map (binding 2)
+    descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[2].dstSet = descriptorSet;
+    descriptorWrites[2].dstBinding = 2;
+    descriptorWrites[2].dstArrayElement = 0;
+    descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[2].descriptorCount = 1;
+    descriptorWrites[2].pImageInfo = &cubeMapInfo;
+
+    // Write night cube map (binding 3)
+    descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[3].dstSet = descriptorSet;
+    descriptorWrites[3].dstBinding = 3;
+    descriptorWrites[3].dstArrayElement = 0;
+    descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[3].descriptorCount = 1;
+    descriptorWrites[3].pImageInfo = &nightCubeMapInfo;
+
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(descriptorWrites.size()),
+                          descriptorWrites.data(), 0, nullptr);
+
+    return descriptorSet;
 }
 
 // Create command buffers
@@ -1527,6 +1735,31 @@ bool VulkanRenderer::beginFrame() {
 
     if (vkBeginCommandBuffer(m_commandBuffers[m_currentFrame], &beginInfo) != VK_SUCCESS) {
         throw std::runtime_error("failed to begin recording command buffer!");
+    }
+
+    // ========================================================================
+    // PERF (2025-11-25): Memory barrier for async transfer synchronization
+    // ========================================================================
+    // When using dedicated transfer queue, ensure any completed async transfers
+    // are visible to the graphics queue before rendering. This barrier ensures
+    // transfer writes to mega-buffers are visible for vertex/index reads.
+    // Only needed when we have a dedicated transfer queue (concurrent sharing).
+    // ========================================================================
+    if (hasDedicatedTransferQueue()) {
+        VkMemoryBarrier memoryBarrier{};
+        memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        memoryBarrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
+
+        vkCmdPipelineBarrier(
+            m_commandBuffers[m_currentFrame],
+            VK_PIPELINE_STAGE_TRANSFER_BIT,       // Wait for transfers to complete
+            VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,   // Before vertex input reads
+            0,                                     // No dependency flags
+            1, &memoryBarrier,                    // Memory barrier
+            0, nullptr,                           // No buffer barriers
+            0, nullptr                            // No image barriers
+        );
     }
 
     VkRenderPassBeginInfo renderPassInfo{};
@@ -3349,6 +3582,10 @@ void VulkanRenderer::cleanup() {
     }
     m_pendingUploads.clear();
 
+    // PERF (2025-11-25): Cleanup staging buffer pool
+    std::cout << "    Cleaning up staging buffer pool..." << '\n';
+    m_stagingBufferPool.cleanup(m_device);
+
     std::cout << "    Cleaning up command pools..." << '\n';
     vkDestroyCommandPool(m_device, m_commandPool, nullptr);
     vkDestroyCommandPool(m_device, m_transferCommandPool, nullptr);  // PERF (2025-11-24): Transfer command pool
@@ -3377,38 +3614,85 @@ void VulkanRenderer::cleanup() {
 void VulkanRenderer::initializeMegaBuffers() {
     std::cout << "Initializing mega-buffers for indirect drawing..." << '\n';
 
+    // ========================================================================
+    // PERF (2025-11-25): Use VK_SHARING_MODE_CONCURRENT for mega-buffers
+    // ========================================================================
+    // When using a dedicated transfer queue, mega-buffers are accessed by both:
+    //   - Transfer queue: writes data from staging buffers
+    //   - Graphics queue: reads for rendering
+    // Using concurrent sharing avoids explicit queue ownership transfer barriers.
+    // ========================================================================
+    const bool useConcurrentSharing = hasDedicatedTransferQueue();
+    std::vector<uint32_t> queueFamilyIndices;
+    if (useConcurrentSharing) {
+        queueFamilyIndices = {m_graphicsQueueFamily, m_transferQueueFamily};
+        std::cout << "  Using VK_SHARING_MODE_CONCURRENT (dedicated transfer queue)" << '\n';
+    } else {
+        std::cout << "  Using VK_SHARING_MODE_EXCLUSIVE (shared queue)" << '\n';
+    }
+
+    // Helper lambda to create a mega-buffer with proper sharing mode
+    auto createMegaBuffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VkDeviceMemory& memory) {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = size;
+        bufferInfo.usage = usage;
+
+        if (useConcurrentSharing) {
+            bufferInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+            bufferInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndices.size());
+            bufferInfo.pQueueFamilyIndices = queueFamilyIndices.data();
+        } else {
+            bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        }
+
+        if (vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create mega-buffer!");
+        }
+
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(m_device, buffer, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        if (vkAllocateMemory(m_device, &allocInfo, nullptr, &memory) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate mega-buffer memory!");
+        }
+
+        vkBindBufferMemory(m_device, buffer, memory, 0);
+    };
+
     // Create opaque vertex mega-buffer
-    createBuffer(
+    createMegaBuffer(
         MEGA_BUFFER_VERTEX_SIZE,
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_megaVertexBuffer,
         m_megaVertexBufferMemory
     );
 
     // Create opaque index mega-buffer
-    createBuffer(
+    createMegaBuffer(
         MEGA_BUFFER_INDEX_SIZE,
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_megaIndexBuffer,
         m_megaIndexBufferMemory
     );
 
     // Create transparent vertex mega-buffer
-    createBuffer(
+    createMegaBuffer(
         MEGA_BUFFER_VERTEX_SIZE,
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_megaTransparentVertexBuffer,
         m_megaTransparentVertexBufferMemory
     );
 
     // Create transparent index mega-buffer
-    createBuffer(
+    createMegaBuffer(
         MEGA_BUFFER_INDEX_SIZE,
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_megaTransparentIndexBuffer,
         m_megaTransparentIndexBufferMemory
     );

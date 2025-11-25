@@ -55,6 +55,7 @@
 #include "mesh/mesh_renderer.h"
 #include "mesh/mesh_loader.h"
 #include "map_preview.h"
+#include "loading_sphere.h"
 // BlockIconRenderer is now part of block_system.h
 
 // Game state
@@ -174,98 +175,126 @@ int main() {
         // Note: ImGui will handle font upload in the next frame
 
         // ========== LOADING SCREEN SYSTEM ==========
-        // Helper to render loading screen with progress and animated dots
-        float loadingProgress = 0.0f;
+        // Thread-safe loading state (atomic for cross-thread access)
+        std::atomic<float> loadingProgress{0.0f};
+        std::atomic<bool> loadingComplete{false};
+        std::atomic<bool> loadingThreadRunning{false};
         std::string loadingMessage = "Initializing";
-        bool loadingComplete = false;
-        int dotAnimationFrame = 0;
+        std::mutex loadingMessageMutex;
+        std::mutex renderMutex;  // Protects Vulkan rendering operations
 
         // Map preview for loading screen (shows terrain as it generates)
         MapPreview* mapPreview = nullptr;
 
-        auto renderLoadingScreen = [&]() {
-            if (loadingComplete) return;
+        // Spinning 3D sphere for loading screen (prevents "frozen" appearance)
+        LoadingSphere loadingSphere;
+        bool sphereInitialized = loadingSphere.initialize(&renderer);
+        if (sphereInitialized) {
+            std::cout << "Loading sphere initialized successfully" << '\n';
+        }
 
-            if (!renderer.beginFrame()) return;
+        // ========== THREADED LOADING SCREEN RENDERER ==========
+        // Runs continuously on its own thread to keep sphere spinning during loading
+        auto loadingRenderThread = [&]() {
+            int dotAnimationFrame = 0;
 
-            // Animate dots pattern: .  ..  ...  .  ..  ... (cycles every 6 frames)
-            const char* dotPatterns[] = {".", "..", "...", ".", "..", "..."};
-            std::string animatedMessage = loadingMessage + dotPatterns[dotAnimationFrame % 6];
-            dotAnimationFrame++;
+            while (loadingThreadRunning.load() && !loadingComplete.load()) {
+                // Try to acquire render lock - skip frame if main thread is doing Vulkan ops
+                std::unique_lock<std::mutex> renderLock(renderMutex, std::try_to_lock);
+                if (!renderLock.owns_lock()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    continue;
+                }
 
-            // Update map preview texture if available
-            if (mapPreview && mapPreview->isReady()) {
-                mapPreview->updateTexture();
-            }
+                if (!renderer.beginFrame()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                    continue;
+                }
 
-            // Start ImGui frame
-            ImGui_ImplVulkan_NewFrame();
-            ImGui_ImplGlfw_NewFrame();
-            ImGui::NewFrame();
+                // Get current message safely
+                std::string currentMessage;
+                {
+                    std::lock_guard<std::mutex> lock(loadingMessageMutex);
+                    currentMessage = loadingMessage;
+                }
 
-            // Full-screen black overlay
-            ImGuiIO& io = ImGui::GetIO();
-            ImGui::SetNextWindowPos(ImVec2(0, 0));
-            ImGui::SetNextWindowSize(io.DisplaySize);
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-            ImGui::Begin("LoadingOverlay", nullptr,
-                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs);
+                // Animate dots pattern
+                const char* dotPatterns[] = {".", "..", "...", ".", "..", "..."};
+                std::string animatedMessage = currentMessage + dotPatterns[dotAnimationFrame % 6];
+                dotAnimationFrame++;
 
-            // Center the loading UI
-            float centerX = io.DisplaySize.x * 0.5f;
-            float centerY = io.DisplaySize.y * 0.5f;
+                // Update map preview texture if available
+                if (mapPreview && mapPreview->isReady()) {
+                    mapPreview->updateTexture();
+                }
 
-            // Loading text with animated dots
-            ImGui::SetCursorPos(ImVec2(centerX - 150, centerY - 50));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-            ImGui::Text("%s", animatedMessage.c_str());
-            ImGui::PopStyleColor();
+                // ========== RENDER SPINNING SPHERE (before ImGui overlay) ==========
+                if (sphereInitialized && loadingSphere.isReady()) {
+                    loadingSphere.render();
+                }
 
-            // Progress bar
-            ImGui::SetCursorPos(ImVec2(centerX - 150, centerY));
-            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-            ImGui::ProgressBar(loadingProgress, ImVec2(300, 30), "");
-            ImGui::PopStyleColor();
+                // Start ImGui frame
+                ImGui_ImplVulkan_NewFrame();
+                ImGui_ImplGlfw_NewFrame();
+                ImGui::NewFrame();
 
-            // Percentage text
-            ImGui::SetCursorPos(ImVec2(centerX - 30, centerY + 40));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-            ImGui::Text("%.0f%%", loadingProgress * 100.0f);
-            ImGui::PopStyleColor();
+                // Full-screen semi-transparent overlay (sphere visible through)
+                ImGuiIO& io = ImGui::GetIO();
+                ImGui::SetNextWindowPos(ImVec2(0, 0));
+                ImGui::SetNextWindowSize(io.DisplaySize);
+                ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.7f));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+                ImGui::Begin("LoadingOverlay", nullptr,
+                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs);
 
-            // ========== MAP PREVIEW (below progress bar) ==========
-            if (mapPreview && mapPreview->isReady()) {
-                const float mapSize = 180.0f;  // Display size
-                ImGui::SetCursorPos(ImVec2(centerX - mapSize/2, centerY + 70));
-                ImGui::Image((ImTextureID)mapPreview->getImGuiTexture(),
-                            ImVec2(mapSize, mapSize));
+                float centerX = io.DisplaySize.x * 0.5f;
+                float centerY = io.DisplaySize.y * 0.5f;
 
-                // Border around map
-                ImVec2 mapPos = ImGui::GetItemRectMin();
-                ImVec2 mapEnd = ImGui::GetItemRectMax();
-                ImGui::GetWindowDrawList()->AddRect(mapPos, mapEnd,
-                    IM_COL32(100, 100, 100, 255), 0.0f, 0, 2.0f);
+                // Loading text with animated dots
+                ImGui::SetCursorPos(ImVec2(centerX - 150, centerY - 50));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                ImGui::Text("%s", animatedMessage.c_str());
+                ImGui::PopStyleColor();
 
-                // Label below map
-                ImGui::SetCursorPos(ImVec2(centerX - 50, centerY + 70 + mapSize + 5));
+                // Progress bar
+                ImGui::SetCursorPos(ImVec2(centerX - 150, centerY));
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+                ImGui::ProgressBar(loadingProgress.load(), ImVec2(300, 30), "");
+                ImGui::PopStyleColor();
+
+                // Percentage text
+                ImGui::SetCursorPos(ImVec2(centerX - 30, centerY + 40));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+                ImGui::Text("%.0f%%", loadingProgress.load() * 100.0f);
+                ImGui::PopStyleColor();
+
+                // Label
+                ImGui::SetCursorPos(ImVec2(centerX - 80, centerY + 70));
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
                 ImGui::Text("Generating world...");
                 ImGui::PopStyleColor();
+
+                ImGui::End();
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
+
+                ImGui::Render();
+                ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), renderer.getCurrentCommandBuffer());
+
+                renderer.endFrame();
+                glfwPollEvents();
+
+                // Target ~60fps for smooth animation
+                std::this_thread::sleep_for(std::chrono::milliseconds(16));
             }
+        };
 
-            ImGui::End();
-            ImGui::PopStyleVar(2);
-            ImGui::PopStyleColor();
-
-            // Render ImGui
-            ImGui::Render();
-            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), renderer.getCurrentCommandBuffer());
-
-            renderer.endFrame();
+        // For Vulkan operations during loading, acquire render mutex
+        auto renderLoadingScreen = [&]() {
+            if (loadingComplete.load()) return;
             glfwPollEvents();  // Keep window responsive
         };
 
@@ -348,8 +377,16 @@ int main() {
 
             // CRITICAL FIX: Reset loading screen flag for subsequent world loads
             // Without this, the loading screen won't show on second+ world generation
-            loadingComplete = false;
-            loadingProgress = 0.0f;
+            loadingComplete.store(false);
+            loadingProgress.store(0.0f);
+
+            // Reset sphere animation timer for new load
+            loadingSphere.resetTimer();
+
+            // ========== START LOADING RENDER THREAD ==========
+            // Render thread runs continuously to keep sphere spinning during loading
+            loadingThreadRunning.store(true);
+            std::thread renderThread(loadingRenderThread);
 
             // Disable cursor for gameplay
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -366,8 +403,8 @@ int main() {
 
         // Loading stages 1-3: Parallel asset loading (10-20%)
         // OPTIMIZATION: Load all registries in parallel (3x faster startup)
-        loadingProgress = 0.05f;
-        loadingMessage = "Loading assets";
+        loadingProgress.store(0.05f);
+        { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Loading assets"; }
         renderLoadingScreen();
         std::cout << "Loading all registries in parallel..." << '\n';
 
@@ -397,8 +434,8 @@ int main() {
         std::cout << "All registries loaded successfully!" << '\n';
 
         // Loading stage 4: Bind textures (25%)
-        loadingProgress = 0.25f;
-        loadingMessage = "Setting up renderer";
+        loadingProgress.store(0.25f);
+        { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Setting up renderer"; }
         renderLoadingScreen();
         std::cout << "Binding texture atlas..." << '\n';
         renderer.bindAtlasTexture(
@@ -416,8 +453,8 @@ int main() {
         BlockIconRenderer::init(atlasImGuiDescriptor);
 
         // Loading stage 5: Initialize world (30%)
-        loadingProgress = 0.30f;
-        loadingMessage = loadingExistingWorld ? "Loading world data" : "Initializing world generator";
+        loadingProgress.store(0.30f);
+        { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = loadingExistingWorld ? "Loading world data" : "Initializing world generator"; }
         renderLoadingScreen();
 
         World world(worldWidth, worldHeight, worldDepth, seed,
@@ -427,8 +464,8 @@ int main() {
             std::cout << "Loading world from: " << worldPath << '\n';
             Chunk::initNoise(seed);  // Init with placeholder, will be overwritten by loaded seed
 
-            loadingProgress = 0.35f;
-            loadingMessage = "Loading chunks from disk";
+            loadingProgress.store(0.35f);
+            { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Loading chunks from disk"; }
             renderLoadingScreen();
 
             if (!world.loadWorld(worldPath)) {
@@ -447,8 +484,8 @@ int main() {
                 // Old flow: mesh → lighting → mesh regeneration (DOUBLE WORK)
                 // New flow: lighting → mesh (SINGLE PASS)
 
-                loadingProgress = 0.50f;
-                loadingMessage = "Initializing lighting";
+                loadingProgress.store(0.50f);
+                { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Initializing lighting"; }
                 renderLoadingScreen();
                 std::cout << "Initializing lighting for loaded chunks..." << '\n';
 
@@ -458,8 +495,8 @@ int main() {
                 }
 
                 // Complete light propagation (horizontal BFS)
-                loadingProgress = 0.60f;
-                loadingMessage = "Initializing lighting";
+                loadingProgress.store(0.60f);
+                { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Initializing lighting"; }
                 renderLoadingScreen();
                 std::cout << "Initializing block lights (torches, lava)..." << '\n';
 
@@ -482,8 +519,8 @@ int main() {
                 std::cout << "Lighting initialization skipped (using heightmap system)" << '\n';
 
                 // NOW generate meshes WITH correct lighting (single pass)
-                loadingProgress = 0.70f;
-                loadingMessage = "Building chunk meshes";
+                loadingProgress.store(0.70f);
+                { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Building chunk meshes"; }
                 renderLoadingScreen();
                 std::cout << "Generating meshes with lighting for " << chunks.size() << " chunks..." << '\n';
 
@@ -529,8 +566,8 @@ int main() {
             // ============================================================================
             // LIVE MAP PREVIEW (2025-11-25): Initialize preview before chunk generation
             // ============================================================================
-            loadingProgress = 0.33f;
-            loadingMessage = "Creating map preview";
+            loadingProgress.store(0.33f);
+            { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Creating map preview"; }
             renderLoadingScreen();
 
             mapPreview = new MapPreview();
@@ -538,13 +575,16 @@ int main() {
                 std::cout << "Generating map preview..." << '\n';
                 mapPreview->generateFullPreview();
                 mapPreview->updateTexture();
+
+                // Connect map preview to loading sphere so it shows the world texture
+                loadingSphere.setMapPreview(mapPreview);
             }
 
             // Loading stage 6: Generate spawn area only (much faster than full world)
             // With 320 chunk height, generating all 46,080 chunks takes forever
             // Instead, generate just a small area around spawn and let streaming handle the rest
-            loadingProgress = 0.35f;
-            loadingMessage = "Generating spawn area";
+            loadingProgress.store(0.35f);
+            { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Generating spawn area"; }
             renderLoadingScreen();
             std::cout << "Generating spawn chunks (streaming will handle the rest)..." << '\n';
 
@@ -581,8 +621,8 @@ int main() {
 
             // PERFORMANCE: Skip lighting initialization - using heightmap system
             // Heightmap calculates sky light instantly during mesh generation
-            loadingProgress = 0.75f;
-            loadingMessage = "Preparing lighting";
+            loadingProgress.store(0.75f);
+            { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Preparing lighting"; }
             renderLoadingScreen();
             std::cout << "Lighting ready (heightmap-based)" << '\n';
 
@@ -594,8 +634,8 @@ int main() {
 
             // Regenerate all meshes with updated lighting (synchronously during loading)
             // Pass nullptr for renderer to skip GPU upload (createBuffers will batch upload later)
-            loadingProgress = 0.77f;
-            loadingMessage = "Updating lighting on meshes";
+            loadingProgress.store(0.77f);
+            { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Updating lighting on meshes"; }
             renderLoadingScreen();
             std::cout << "Regenerating meshes with final lighting..." << '\n';
             world.getLightingSystem()->regenerateAllDirtyChunks(10000, nullptr);  // Mesh only, no GPU upload yet
@@ -603,23 +643,23 @@ int main() {
         }
 
         // Loading stage 8: Create GPU buffers (85%)
-        loadingProgress = 0.80f;
-        loadingMessage = "Creating GPU buffers";
+        loadingProgress.store(0.80f);
+        { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Creating GPU buffers"; }
         renderLoadingScreen();
         std::cout << "Creating GPU buffers..." << '\n';
         world.createBuffers(&renderer);
 
         // Loading stage 8.5: GPU warm-up - wait for all uploads to finish (87%)
-        loadingProgress = 0.87f;
-        loadingMessage = "Warming up GPU (this ensures smooth 60 FPS)";
+        loadingProgress.store(0.87f);
+        { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Warming up GPU (this ensures smooth 60 FPS)"; }
         renderLoadingScreen();
         std::cout << "Warming up GPU - waiting for all chunk uploads to complete..." << '\n';
         renderer.waitForGPUIdle();
         std::cout << "GPU warm-up complete - ready for 60 FPS gameplay!" << '\n';
 
         // Loading stage 9: Finding spawn location (90%)
-        loadingProgress = 0.88f;
-        loadingMessage = "Finding safe spawn location";
+        loadingProgress.store(0.88f);
+        { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Finding safe spawn location"; }
         renderLoadingScreen();
 
         // Improved spawn logic: Search for safe flat area with solid ground (no caves below)
@@ -844,14 +884,14 @@ int main() {
         std::cout << "===========================\n" << '\n';
 
         // Loading stage 10: Spawning player (95%)
-        loadingProgress = 0.95f;
-        loadingMessage = "Spawning player";
+        loadingProgress.store(0.95f);
+        { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Spawning player"; }
         renderLoadingScreen();
         Player player(glm::vec3(spawnX, spawnY, spawnZ), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
 
         // Loading stage 11: Initializing game systems (98%)
-        loadingProgress = 0.98f;
-        loadingMessage = "Initializing game systems";
+        loadingProgress.store(0.98f);
+        { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Initializing game systems"; }
         renderLoadingScreen();
         PauseMenu pauseMenu(window);
 
@@ -869,8 +909,8 @@ int main() {
 
         // Loading stage 12: Final check - wait for player to be on ground (99%)
         // NOTE: Lighting initialization moved earlier (before GPU upload) to prevent chunk re-uploads
-        loadingProgress = 0.99f;
-        loadingMessage = "Ready";
+        loadingProgress.store(0.99f);
+        { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Ready"; }
         renderLoadingScreen();
 
         // Verify player is safely on the ground before hiding loading screen
@@ -878,12 +918,15 @@ int main() {
         player.update(window, 0.016f, &world, false);  // 1 frame at 60fps, no input
 
         // Final loading screen frame at 100%
-        loadingProgress = 1.0f;
-        loadingMessage = "Ready";
-        renderLoadingScreen();
+        loadingProgress.store(1.0f);
+        { std::lock_guard<std::mutex> lock(loadingMessageMutex); loadingMessage = "Ready"; }
 
-        // Hide loading screen - game is ready!
-        loadingComplete = true;
+        // ========== STOP LOADING RENDER THREAD ==========
+        loadingComplete.store(true);
+        loadingThreadRunning.store(false);
+        if (renderThread.joinable()) {
+            renderThread.join();
+        }
 
         // Cleanup map preview (no longer needed after loading)
         if (mapPreview) {
