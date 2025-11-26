@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <mutex>
 #include <glm/glm.hpp>
 #include <yaml-cpp/yaml.h>
 
@@ -27,6 +29,83 @@
  */
 
 /**
+ * @brief Thread-safe registry for storing script variables
+ *
+ * This singleton class provides a global key-value store for script variables.
+ * Variables can be used to maintain state across script executions, implement
+ * counters, flags, and other stateful behaviors.
+ *
+ * Example usage:
+ * @code
+ * auto& registry = ScriptVariableRegistry::instance();
+ * registry.setVariable("counter", "0");
+ * registry.increment("counter");
+ * int count = registry.getNumeric("counter"); // Returns 1
+ * @endcode
+ */
+class ScriptVariableRegistry {
+public:
+    /**
+     * @brief Get the singleton instance
+     * @return Reference to the global ScriptVariableRegistry instance
+     */
+    static ScriptVariableRegistry& instance();
+
+    /**
+     * @brief Set a variable to a string value
+     * @param name Variable name
+     * @param value String value to store
+     */
+    void setVariable(const std::string& name, const std::string& value);
+
+    /**
+     * @brief Get a variable's string value
+     * @param name Variable name
+     * @param defaultValue Default value if variable doesn't exist
+     * @return Variable value or default if not found
+     */
+    std::string getVariable(const std::string& name, const std::string& defaultValue = "");
+
+    /**
+     * @brief Set a variable to a numeric value
+     * @param name Variable name
+     * @param value Integer value to store
+     */
+    void setNumeric(const std::string& name, int value);
+
+    /**
+     * @brief Get a variable's numeric value
+     * @param name Variable name
+     * @param defaultValue Default value if variable doesn't exist or isn't numeric
+     * @return Variable value as integer or default if not found/invalid
+     */
+    int getNumeric(const std::string& name, int defaultValue = 0);
+
+    /**
+     * @brief Increment a numeric variable
+     * @param name Variable name
+     * @param amount Amount to increment by (default 1)
+     */
+    void increment(const std::string& name, int amount = 1);
+
+    /**
+     * @brief Decrement a numeric variable
+     * @param name Variable name
+     * @param amount Amount to decrement by (default 1)
+     */
+    void decrement(const std::string& name, int amount = 1);
+
+    /**
+     * @brief Clear all variables
+     */
+    void clear();
+
+private:
+    std::unordered_map<std::string, std::string> m_variables;
+    std::mutex m_mutex;
+};
+
+/**
  * @brief Action types that can be triggered by events
  *
  * These actions represent the operations that can be performed
@@ -40,8 +119,32 @@ enum class ActionType {
     PLAY_SOUND,        ///< Play a sound effect (uses soundName) - Future
     RUN_COMMAND,       ///< Execute a console command (uses command)
     SET_METADATA,      ///< Set block metadata (uses metadata map)
-    TRIGGER_UPDATE     ///< Schedule a block update tick (uses offset)
+    TRIGGER_UPDATE,    ///< Schedule a block update tick (uses offset)
+    SET_VARIABLE,      ///< Set a variable value (uses variableName + variableValue)
+    GET_VARIABLE,      ///< Get a variable value (uses variableName, for conditions)
+    INCREMENT_VAR,     ///< Increment a numeric variable (uses variableName + incrementAmount)
+    DECREMENT_VAR,     ///< Decrement a numeric variable (uses variableName + incrementAmount)
+    CONDITIONAL        ///< If/else based on conditions
 };
+
+/**
+ * @brief Condition types for conditional actions
+ *
+ * These condition types determine what to check when evaluating
+ * a conditional action's logic.
+ */
+enum class ConditionType {
+    BLOCK_IS,        ///< Check if block at position is specific type
+    BLOCK_IS_NOT,    ///< Check if block at position is NOT specific type
+    RANDOM_CHANCE,   ///< Random probability check
+    TIME_IS_DAY,     ///< Check if daytime
+    TIME_IS_NIGHT    ///< Check if nighttime
+};
+
+/**
+ * @brief Forward declaration for recursive action structure
+ */
+struct ScriptAction;
 
 /**
  * @brief A single action to execute in response to an event
@@ -64,6 +167,17 @@ struct ScriptAction {
 
     // Metadata for SET_METADATA action
     std::unordered_map<std::string, std::string> metadata;
+
+    // Variable-related parameters
+    std::string variableName;    ///< Variable name for SET_VARIABLE, GET_VARIABLE, INCREMENT_VAR, DECREMENT_VAR
+    std::string variableValue;   ///< Value to set for SET_VARIABLE
+    int incrementAmount = 1;     ///< Amount to increment/decrement for INCREMENT_VAR, DECREMENT_VAR
+
+    // Conditional action parameters
+    ConditionType conditionType;           ///< Type of condition to evaluate
+    std::string conditionValue;            ///< Block name for BLOCK_IS/BLOCK_IS_NOT, etc.
+    std::vector<ScriptAction> thenActions; ///< Actions to execute if condition is true
+    std::vector<ScriptAction> elseActions; ///< Actions to execute if condition is false (optional)
 
     /**
      * @brief Parse a ScriptAction from a YAML node
@@ -141,6 +255,34 @@ void registerBlockEventHandlers(int blockID, const std::vector<ScriptEventHandle
  * Call this when unloading blocks or cleaning up the registry.
  */
 void unregisterBlockEventHandlers(int blockID);
+
+/**
+ * @brief Register event handlers for a specific biome
+ *
+ * This function connects YAML-defined event handlers to the EventDispatcher,
+ * allowing biomes to respond to events dynamically. Events are filtered by
+ * checking if the event position is within the biome.
+ *
+ * @param biomeName Biome name to register handlers for
+ * @param handlers List of event handlers to register
+ *
+ * Usage:
+ * @code
+ * std::vector<ScriptEventHandler> handlers;
+ * handlers.push_back(ScriptEventHandler::fromYAML("on_chunk_load", yamlNode));
+ * registerBiomeEventHandlers("desert", handlers);
+ * @endcode
+ */
+void registerBiomeEventHandlers(const std::string& biomeName, const std::vector<ScriptEventHandler>& handlers);
+
+/**
+ * @brief Unregister all event handlers for a specific biome
+ *
+ * @param biomeName Biome name to unregister handlers for
+ *
+ * Call this when unloading biomes or cleaning up the registry.
+ */
+void unregisterBiomeEventHandlers(const std::string& biomeName);
 
 /**
  * @brief Parse action type from string

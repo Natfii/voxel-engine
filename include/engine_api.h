@@ -325,6 +325,24 @@ public:
      */
     bool spawnStructure(const std::string& name, const glm::ivec3& position);
 
+    // ==================== PARTICLE EFFECTS ====================
+
+    /**
+     * @brief Spawn a particle effect at a position
+     *
+     * Supported effects:
+     * - "water_splash" or "water" - Water splash particles
+     * - "lava_splash" or "lava" - Lava splash particles
+     * - "explosion" - Explosive burst of particles
+     * - "smoke" - Rising smoke particles
+     *
+     * @param effectName Name of the particle effect
+     * @param position World position for the effect
+     * @param intensity Effect intensity (1-10 scale, default 1.0)
+     * @return True if successful, false if effect name not found
+     */
+    bool spawnParticles(const std::string& effectName, const glm::vec3& position, float intensity = 1.0f);
+
     /**
      * @brief Spawn a structure with rotation
      *

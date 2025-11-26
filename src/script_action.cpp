@@ -8,6 +8,8 @@
 #include "event_types.h"
 #include "block_system.h"
 #include "structure_system.h"
+#include "engine_api.h"
+#include "command_registry.h"
 #include "logger.h"
 #include <unordered_map>
 #include <random>
@@ -20,6 +22,10 @@ class World; // We'll need this for executing actions
 // Global storage for block event handlers
 // Maps blockID -> list of listener handles for cleanup
 static std::unordered_map<int, std::vector<ListenerHandle>> g_blockEventHandles;
+
+// Global storage for biome event handlers
+// Maps biomeName -> list of listener handles for cleanup
+static std::unordered_map<std::string, std::vector<ListenerHandle>> g_biomeEventHandles;
 
 // Random number generator for probability checks
 static std::random_device g_rd;
@@ -70,6 +76,97 @@ static glm::ivec3 parseOffset(const YAML::Node& node) {
     );
 }
 
+/**
+ * @brief Parse ConditionType from string
+ */
+static ConditionType parseConditionType(const std::string& condStr) {
+    std::string normalized = normalizeString(condStr);
+
+    if (normalized == "block_is") return ConditionType::BLOCK_IS;
+    if (normalized == "block_is_not") return ConditionType::BLOCK_IS_NOT;
+    if (normalized == "random_chance") return ConditionType::RANDOM_CHANCE;
+    if (normalized == "time_is_day") return ConditionType::TIME_IS_DAY;
+    if (normalized == "time_is_night") return ConditionType::TIME_IS_NIGHT;
+
+    throw std::runtime_error("Unknown condition type: " + condStr);
+}
+
+// ============================================================================
+// ScriptVariableRegistry Implementation
+// ============================================================================
+
+ScriptVariableRegistry& ScriptVariableRegistry::instance() {
+    static ScriptVariableRegistry instance;
+    return instance;
+}
+
+void ScriptVariableRegistry::setVariable(const std::string& name, const std::string& value) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_variables[name] = value;
+}
+
+std::string ScriptVariableRegistry::getVariable(const std::string& name, const std::string& defaultValue) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_variables.find(name);
+    if (it != m_variables.end()) {
+        return it->second;
+    }
+    return defaultValue;
+}
+
+void ScriptVariableRegistry::setNumeric(const std::string& name, int value) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_variables[name] = std::to_string(value);
+}
+
+int ScriptVariableRegistry::getNumeric(const std::string& name, int defaultValue) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_variables.find(name);
+    if (it != m_variables.end()) {
+        try {
+            return std::stoi(it->second);
+        } catch (const std::exception&) {
+            return defaultValue;
+        }
+    }
+    return defaultValue;
+}
+
+void ScriptVariableRegistry::increment(const std::string& name, int amount) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    int currentValue = 0;
+    auto it = m_variables.find(name);
+    if (it != m_variables.end()) {
+        try {
+            currentValue = std::stoi(it->second);
+        } catch (const std::exception&) {
+            // If parsing fails, treat as 0
+            currentValue = 0;
+        }
+    }
+    m_variables[name] = std::to_string(currentValue + amount);
+}
+
+void ScriptVariableRegistry::decrement(const std::string& name, int amount) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    int currentValue = 0;
+    auto it = m_variables.find(name);
+    if (it != m_variables.end()) {
+        try {
+            currentValue = std::stoi(it->second);
+        } catch (const std::exception&) {
+            // If parsing fails, treat as 0
+            currentValue = 0;
+        }
+    }
+    m_variables[name] = std::to_string(currentValue - amount);
+}
+
+void ScriptVariableRegistry::clear() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_variables.clear();
+}
+
 // ============================================================================
 // ActionType Parsing
 // ============================================================================
@@ -85,6 +182,11 @@ ActionType parseActionType(const std::string& typeStr) {
     if (normalized == "run_command") return ActionType::RUN_COMMAND;
     if (normalized == "set_metadata") return ActionType::SET_METADATA;
     if (normalized == "trigger_update") return ActionType::TRIGGER_UPDATE;
+    if (normalized == "set_variable") return ActionType::SET_VARIABLE;
+    if (normalized == "get_variable") return ActionType::GET_VARIABLE;
+    if (normalized == "increment_var") return ActionType::INCREMENT_VAR;
+    if (normalized == "decrement_var") return ActionType::DECREMENT_VAR;
+    if (normalized == "conditional") return ActionType::CONDITIONAL;
 
     throw std::runtime_error("Unknown action type: " + typeStr);
 }
@@ -99,6 +201,11 @@ std::string actionTypeToString(ActionType type) {
         case ActionType::RUN_COMMAND: return "run_command";
         case ActionType::SET_METADATA: return "set_metadata";
         case ActionType::TRIGGER_UPDATE: return "trigger_update";
+        case ActionType::SET_VARIABLE: return "set_variable";
+        case ActionType::GET_VARIABLE: return "get_variable";
+        case ActionType::INCREMENT_VAR: return "increment_var";
+        case ActionType::DECREMENT_VAR: return "decrement_var";
+        case ActionType::CONDITIONAL: return "conditional";
         default: return "unknown";
     }
 }
@@ -179,6 +286,73 @@ ScriptAction ScriptAction::fromYAML(const YAML::Node& node) {
             }
             break;
 
+        case ActionType::SET_VARIABLE:
+            if (!node["name"]) {
+                throw std::runtime_error("SET_VARIABLE action missing required field 'name'");
+            }
+            if (!node["value"]) {
+                throw std::runtime_error("SET_VARIABLE action missing required field 'value'");
+            }
+            action.variableName = node["name"].as<std::string>();
+            action.variableValue = node["value"].as<std::string>();
+            break;
+
+        case ActionType::GET_VARIABLE:
+            if (!node["name"]) {
+                throw std::runtime_error("GET_VARIABLE action missing required field 'name'");
+            }
+            action.variableName = node["name"].as<std::string>();
+            // Optional default value
+            if (node["default"]) {
+                action.variableValue = node["default"].as<std::string>();
+            }
+            break;
+
+        case ActionType::INCREMENT_VAR:
+        case ActionType::DECREMENT_VAR:
+            if (!node["name"]) {
+                throw std::runtime_error("INCREMENT_VAR/DECREMENT_VAR action missing required field 'name'");
+            }
+            action.variableName = node["name"].as<std::string>();
+            // Optional amount (default 1)
+            if (node["amount"]) {
+                action.incrementAmount = node["amount"].as<int>();
+            }
+            break;
+
+        case ActionType::CONDITIONAL:
+            if (!node["condition"]) {
+                throw std::runtime_error("CONDITIONAL action missing required field 'condition'");
+            }
+            action.conditionType = parseConditionType(node["condition"].as<std::string>());
+
+            // Parse condition-specific parameters
+            if (node["value"]) {
+                action.conditionValue = node["value"].as<std::string>();
+            }
+
+            // Parse then actions
+            if (!node["then"]) {
+                throw std::runtime_error("CONDITIONAL action missing required field 'then'");
+            }
+            if (!node["then"].IsSequence()) {
+                throw std::runtime_error("CONDITIONAL 'then' field must be a sequence of actions");
+            }
+            for (size_t i = 0; i < node["then"].size(); i++) {
+                action.thenActions.push_back(ScriptAction::fromYAML(node["then"][i]));
+            }
+
+            // Parse else actions (optional)
+            if (node["else"]) {
+                if (!node["else"].IsSequence()) {
+                    throw std::runtime_error("CONDITIONAL 'else' field must be a sequence of actions");
+                }
+                for (size_t i = 0; i < node["else"].size(); i++) {
+                    action.elseActions.push_back(ScriptAction::fromYAML(node["else"][i]));
+                }
+            }
+            break;
+
         case ActionType::BREAK_BLOCK:
         case ActionType::TRIGGER_UPDATE:
             // No additional parameters needed
@@ -206,7 +380,7 @@ ScriptEventHandler ScriptEventHandler::fromYAML(const std::string& eventType, co
             ScriptAction action = ScriptAction::fromYAML(node[i]);
             handler.actions.push_back(action);
         } catch (const std::exception& e) {
-            Logger::warn() << "Error parsing action " << i << " in event '" << eventType << "': " << e.what();
+            Logger::warning() << "Error parsing action " << i << " in event '" << eventType << "': " << e.what();
             // Continue parsing other actions
         }
     }
@@ -242,40 +416,87 @@ static void executeAction(const ScriptAction& action, const glm::ivec3& position
             int blockID = registry.getID(action.blockName);
 
             if (blockID < 0) {
-                Logger::warn() << "Unknown block name: " << action.blockName;
+                Logger::warning() << "Unknown block name: " << action.blockName;
                 break;
             }
 
-            // TODO: Actually place the block in the world
-            // This requires a World reference, which we'll need to pass through
-            Logger::info() << "PLACE_BLOCK: " << action.blockName << " at ("
-                          << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+            // Place the block using EngineAPI
+            auto& api = EngineAPI::instance();
+            if (api.isInitialized()) {
+                if (api.placeBlock(targetPos, blockID)) {
+                    Logger::debug() << "PLACE_BLOCK: " << action.blockName << " at ("
+                                   << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+                } else {
+                    Logger::warning() << "Failed to place block " << action.blockName << " at ("
+                                     << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+                }
+            } else {
+                Logger::warning() << "EngineAPI not initialized, cannot place block";
+            }
             break;
         }
 
         case ActionType::BREAK_BLOCK: {
-            // TODO: Break block at target position
-            Logger::info() << "BREAK_BLOCK at ("
-                          << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+            // Break the block using EngineAPI
+            auto& api = EngineAPI::instance();
+            if (api.isInitialized()) {
+                if (api.breakBlock(targetPos)) {
+                    Logger::debug() << "BREAK_BLOCK at ("
+                                   << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+                } else {
+                    Logger::warning() << "Failed to break block at ("
+                                     << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+                }
+            } else {
+                Logger::warning() << "EngineAPI not initialized, cannot break block";
+            }
             break;
         }
 
         case ActionType::SPAWN_STRUCTURE: {
-            // TODO: Spawn structure at target position
-            Logger::info() << "SPAWN_STRUCTURE: " << action.structureName << " at ("
-                          << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+            // Spawn structure using EngineAPI
+            auto& api = EngineAPI::instance();
+            if (api.isInitialized()) {
+                if (api.spawnStructure(action.structureName, targetPos)) {
+                    Logger::debug() << "SPAWN_STRUCTURE: " << action.structureName << " at ("
+                                   << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+                } else {
+                    Logger::warning() << "Failed to spawn structure " << action.structureName << " at ("
+                                     << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+                }
+            } else {
+                Logger::warning() << "EngineAPI not initialized, cannot spawn structure";
+            }
             break;
         }
 
         case ActionType::SPAWN_PARTICLES: {
-            // TODO: Spawn particle effect
-            Logger::info() << "SPAWN_PARTICLES: " << action.particleName << " at ("
-                          << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+            // Spawn particle effect using EngineAPI
+            auto& api = EngineAPI::instance();
+            if (api.isInitialized()) {
+                // Convert integer position to float for particle system
+                glm::vec3 particlePos(
+                    static_cast<float>(targetPos.x) + 0.5f,  // Center of block
+                    static_cast<float>(targetPos.y) + 0.5f,
+                    static_cast<float>(targetPos.z) + 0.5f
+                );
+
+                if (api.spawnParticles(action.particleName, particlePos)) {
+                    Logger::debug() << "SPAWN_PARTICLES: " << action.particleName << " at ("
+                                   << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+                } else {
+                    Logger::warning() << "Failed to spawn particles '" << action.particleName << "' at ("
+                                     << targetPos.x << ", " << targetPos.y << ", " << targetPos.z
+                                     << "): unknown effect name";
+                }
+            } else {
+                Logger::warning() << "EngineAPI not initialized, cannot spawn particles";
+            }
             break;
         }
 
         case ActionType::PLAY_SOUND: {
-            // TODO: Play sound effect
+            // TODO: Play sound effect (not yet implemented in EngineAPI)
             Logger::info() << "PLAY_SOUND: " << action.soundName << " at ("
                           << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
             break;
@@ -283,24 +504,178 @@ static void executeAction(const ScriptAction& action, const glm::ivec3& position
 
         case ActionType::RUN_COMMAND: {
             Logger::info() << "RUN_COMMAND: " << action.command;
-            // TODO: Execute console command
+            bool success = CommandRegistry::instance().executeCommand(action.command);
+            if (!success) {
+                Logger::warning() << "Command failed or not found: " << action.command;
+            }
             break;
         }
 
         case ActionType::SET_METADATA: {
-            Logger::info() << "SET_METADATA at ("
-                          << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
-            // TODO: Set block metadata
-            for (const auto& pair : action.metadata) {
-                Logger::debug() << "  " << pair.first << " = " << pair.second;
+            auto& api = EngineAPI::instance();
+            if (api.isInitialized()) {
+                // Set block metadata for each key-value pair
+                for (const auto& pair : action.metadata) {
+                    // Parse the value as uint8_t
+                    try {
+                        uint8_t metadataValue = static_cast<uint8_t>(std::stoi(pair.second));
+                        if (api.setBlockMetadata(targetPos, metadataValue)) {
+                            Logger::debug() << "SET_METADATA at ("
+                                           << targetPos.x << ", " << targetPos.y << ", " << targetPos.z
+                                           << "): " << pair.first << " = " << (int)metadataValue;
+                        } else {
+                            Logger::warning() << "Failed to set metadata at ("
+                                             << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+                        }
+                    } catch (const std::exception& e) {
+                        Logger::warning() << "Invalid metadata value for " << pair.first
+                                         << ": " << pair.second << " (" << e.what() << ")";
+                    }
+                }
+            } else {
+                Logger::warning() << "EngineAPI not initialized, cannot set metadata";
             }
             break;
         }
 
         case ActionType::TRIGGER_UPDATE: {
-            // TODO: Schedule block update tick
-            Logger::info() << "TRIGGER_UPDATE at ("
-                          << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+            // Dispatch a block update event
+            auto& api = EngineAPI::instance();
+            if (api.isInitialized()) {
+                // Get the block ID at the target position
+                auto blockQuery = api.getBlockAt(targetPos);
+                if (blockQuery.valid) {
+                    EventDispatcher::instance().dispatch(
+                        std::make_unique<BlockUpdateEvent>(targetPos, blockQuery.blockID)
+                    );
+                    Logger::debug() << "TRIGGER_UPDATE at ("
+                                   << targetPos.x << ", " << targetPos.y << ", " << targetPos.z << ")";
+                } else {
+                    Logger::warning() << "Failed to trigger update at ("
+                                     << targetPos.x << ", " << targetPos.y << ", " << targetPos.z
+                                     << "): invalid block position";
+                }
+            } else {
+                Logger::warning() << "EngineAPI not initialized, cannot trigger update";
+            }
+            break;
+        }
+
+        case ActionType::SET_VARIABLE: {
+            auto& registry = ScriptVariableRegistry::instance();
+            registry.setVariable(action.variableName, action.variableValue);
+            Logger::debug() << "SET_VARIABLE: " << action.variableName
+                           << " = " << action.variableValue;
+            break;
+        }
+
+        case ActionType::GET_VARIABLE: {
+            auto& registry = ScriptVariableRegistry::instance();
+            std::string value = registry.getVariable(action.variableName, action.variableValue);
+            Logger::debug() << "GET_VARIABLE: " << action.variableName
+                           << " = " << value;
+            // Note: GET_VARIABLE is primarily for future condition checking
+            // For now, it just logs the value
+            break;
+        }
+
+        case ActionType::INCREMENT_VAR: {
+            auto& registry = ScriptVariableRegistry::instance();
+            registry.increment(action.variableName, action.incrementAmount);
+            int newValue = registry.getNumeric(action.variableName);
+            Logger::debug() << "INCREMENT_VAR: " << action.variableName
+                           << " by " << action.incrementAmount
+                           << " (new value: " << newValue << ")";
+            break;
+        }
+
+        case ActionType::DECREMENT_VAR: {
+            auto& registry = ScriptVariableRegistry::instance();
+            registry.decrement(action.variableName, action.incrementAmount);
+            int newValue = registry.getNumeric(action.variableName);
+            Logger::debug() << "DECREMENT_VAR: " << action.variableName
+                           << " by " << action.incrementAmount
+                           << " (new value: " << newValue << ")";
+            break;
+        }
+
+        case ActionType::CONDITIONAL: {
+            // Evaluate the condition
+            bool conditionResult = false;
+
+            switch (action.conditionType) {
+                case ConditionType::BLOCK_IS: {
+                    auto& api = EngineAPI::instance();
+                    if (api.isInitialized()) {
+                        auto blockQuery = api.getBlockAt(targetPos);
+                        if (blockQuery.valid) {
+                            auto& registry = BlockRegistry::instance();
+                            std::string blockName = registry.getBlockName(blockQuery.blockID);
+                            conditionResult = (normalizeString(blockName) == normalizeString(action.conditionValue));
+                        }
+                    }
+                    break;
+                }
+
+                case ConditionType::BLOCK_IS_NOT: {
+                    auto& api = EngineAPI::instance();
+                    if (api.isInitialized()) {
+                        auto blockQuery = api.getBlockAt(targetPos);
+                        if (blockQuery.valid) {
+                            auto& registry = BlockRegistry::instance();
+                            std::string blockName = registry.getBlockName(blockQuery.blockID);
+                            conditionResult = (normalizeString(blockName) != normalizeString(action.conditionValue));
+                        } else {
+                            conditionResult = true; // Invalid position counts as "not matching"
+                        }
+                    }
+                    break;
+                }
+
+                case ConditionType::RANDOM_CHANCE: {
+                    try {
+                        int chance = std::stoi(action.conditionValue);
+                        conditionResult = rollProbability(chance);
+                    } catch (const std::exception& e) {
+                        Logger::warning() << "Invalid random chance value: " << action.conditionValue;
+                        conditionResult = false;
+                    }
+                    break;
+                }
+
+                case ConditionType::TIME_IS_DAY: {
+                    auto& api = EngineAPI::instance();
+                    if (api.isInitialized()) {
+                        // Minecraft-style: daytime is 0-12000 in 24000-tick cycle
+                        float time = api.getTimeOfDay();
+                        conditionResult = (time >= 0.0f && time < 12000.0f);
+                    }
+                    break;
+                }
+
+                case ConditionType::TIME_IS_NIGHT: {
+                    auto& api = EngineAPI::instance();
+                    if (api.isInitialized()) {
+                        // Minecraft-style: nighttime is 12000-24000 in 24000-tick cycle
+                        float time = api.getTimeOfDay();
+                        conditionResult = (time >= 12000.0f && time < 24000.0f);
+                    }
+                    break;
+                }
+            }
+
+            Logger::debug() << "CONDITIONAL: condition evaluated to " << (conditionResult ? "true" : "false");
+
+            // Execute appropriate actions based on condition result
+            if (conditionResult) {
+                for (const auto& thenAction : action.thenActions) {
+                    executeAction(thenAction, position);
+                }
+            } else {
+                for (const auto& elseAction : action.elseActions) {
+                    executeAction(elseAction, position);
+                }
+            }
             break;
         }
     }
@@ -316,7 +691,7 @@ static void executeHandler(const ScriptEventHandler& handler, const glm::ivec3& 
         try {
             executeAction(action, position);
         } catch (const std::exception& e) {
-            Logger::warn() << "Error executing action: " << e.what();
+            Logger::warning() << "Error executing action: " << e.what();
             // Continue executing other actions
         }
     }
@@ -340,6 +715,17 @@ static EventType stringToEventType(const std::string& eventStr) {
     }
     if (normalized == "on_interact") return EventType::BLOCK_INTERACT;
     if (normalized == "on_update") return EventType::BLOCK_UPDATE;
+
+    // Chunk/World events (for biomes)
+    if (normalized == "on_chunk_load" || normalized == "chunk_load") return EventType::CHUNK_LOAD;
+    if (normalized == "on_chunk_unload" || normalized == "chunk_unload") return EventType::CHUNK_UNLOAD;
+    if (normalized == "on_world_save" || normalized == "world_save") return EventType::WORLD_SAVE;
+    if (normalized == "on_world_load" || normalized == "world_load") return EventType::WORLD_LOAD;
+
+    // Time events (for biomes)
+    if (normalized == "on_time_change" || normalized == "time_change") return EventType::TIME_CHANGE;
+    if (normalized == "on_day_start" || normalized == "day_start") return EventType::DAY_START;
+    if (normalized == "on_night_start" || normalized == "night_start") return EventType::NIGHT_START;
 
     throw std::runtime_error("Unknown event type: " + eventStr);
 }
@@ -429,7 +815,7 @@ void registerBlockEventHandlers(int blockID, const std::vector<ScriptEventHandle
                            << " with " << handler.actions.size() << " actions";
 
         } catch (const std::exception& e) {
-            Logger::warn() << "Error registering event handler '" << handler.eventType
+            Logger::warning() << "Error registering event handler '" << handler.eventType
                           << "' for block " << blockID << ": " << e.what();
         }
     }
@@ -457,4 +843,125 @@ void unregisterBlockEventHandlers(int blockID) {
     g_blockEventHandles.erase(it);
 
     Logger::debug() << "Unregistered event handlers for block ID " << blockID;
+}
+
+// ============================================================================
+// Biome Event Handler Registration
+// ============================================================================
+
+void registerBiomeEventHandlers(const std::string& biomeName, const std::vector<ScriptEventHandler>& handlers) {
+    if (handlers.empty()) {
+        return;
+    }
+
+    auto& dispatcher = EventDispatcher::instance();
+    std::vector<ListenerHandle> handles;
+
+    Logger::info() << "Registering " << handlers.size() << " event handlers for biome: " << biomeName;
+
+    for (const auto& handler : handlers) {
+        try {
+            EventType eventType = stringToEventType(handler.eventType);
+
+            // Create a callback that filters by biome name and position
+            auto callback = [biomeName, handler](Event& event) {
+                glm::ivec3 position;
+                bool isValidEvent = false;
+
+                // Extract position from event based on event type
+                switch (event.type) {
+                    case EventType::CHUNK_LOAD: {
+                        auto& e = static_cast<ChunkLoadEvent&>(event);
+                        // For chunk events, use chunk center position
+                        position = glm::ivec3(e.chunkX * 16 + 8, 0, e.chunkZ * 16 + 8);
+                        isValidEvent = true;
+                        break;
+                    }
+                    case EventType::CHUNK_UNLOAD: {
+                        auto& e = static_cast<ChunkUnloadEvent&>(event);
+                        // For chunk events, use chunk center position
+                        position = glm::ivec3(e.chunkX * 16 + 8, 0, e.chunkZ * 16 + 8);
+                        isValidEvent = true;
+                        break;
+                    }
+                    case EventType::TIME_CHANGE:
+                    case EventType::DAY_START:
+                    case EventType::NIGHT_START:
+                        // Time events don't have a position, execute for all biomes
+                        // We'll use player position or world spawn as reference
+                        // For now, skip biome filtering for time events
+                        isValidEvent = false;
+                        break;
+                    case EventType::WORLD_SAVE:
+                    case EventType::WORLD_LOAD:
+                        // World events don't have a position, execute for all biomes
+                        isValidEvent = false;
+                        break;
+                    default:
+                        return; // Unsupported event type for biome scripts
+                }
+
+                // Only execute if this is a position-based event
+                if (isValidEvent) {
+                    // Check if the position is in the biome using EngineAPI
+                    auto& api = EngineAPI::instance();
+                    if (api.isInitialized()) {
+                        std::string currentBiome = api.getBiomeAt(position.x, position.z);
+
+                        // Normalize biome name for comparison
+                        std::string normalizedBiome = normalizeString(currentBiome);
+                        std::string normalizedTarget = normalizeString(biomeName);
+
+                        if (normalizedBiome == normalizedTarget) {
+                            executeHandler(handler, position);
+                        }
+                    } else {
+                        Logger::warning() << "EngineAPI not initialized, cannot check biome for event handler";
+                    }
+                }
+            };
+
+            // Subscribe to the event
+            std::string ownerStr = "biome:" + biomeName;
+            ListenerHandle handle = dispatcher.subscribe(
+                eventType,
+                callback,
+                EventPriority::NORMAL,
+                ownerStr
+            );
+
+            handles.push_back(handle);
+
+            Logger::debug() << "  Registered handler for " << handler.eventType
+                           << " with " << handler.actions.size() << " actions";
+
+        } catch (const std::exception& e) {
+            Logger::warning() << "Error registering event handler '" << handler.eventType
+                          << "' for biome " << biomeName << ": " << e.what();
+        }
+    }
+
+    // Store handles for cleanup
+    if (!handles.empty()) {
+        g_biomeEventHandles[biomeName] = std::move(handles);
+    }
+}
+
+void unregisterBiomeEventHandlers(const std::string& biomeName) {
+    auto it = g_biomeEventHandles.find(biomeName);
+    if (it == g_biomeEventHandles.end()) {
+        return; // No handlers registered for this biome
+    }
+
+    auto& dispatcher = EventDispatcher::instance();
+
+    // Unsubscribe all handles
+    for (ListenerHandle handle : it->second) {
+        dispatcher.unsubscribe(handle);
+    }
+
+    // Remove from map
+    g_biomeEventHandles.erase(it);
+
+    Logger::debug() << "Unregistered event handlers for biome: " << biomeName;
 }

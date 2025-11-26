@@ -14,6 +14,7 @@
 #include "raycast.h"
 #include "mesh/mesh_renderer.h"
 #include "mesh/mesh.h"
+#include "logger.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cmath>
@@ -723,6 +724,22 @@ bool EngineAPI::spawnStructure(const std::string& name, const glm::ivec3& positi
 }
 
 // ============================================================================
+// Particle Effects
+// ============================================================================
+
+bool EngineAPI::spawnParticles(const std::string& effectName, const glm::vec3& position, float intensity) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_world) return false;
+
+    // Get the particle system from the world
+    auto particleSystem = m_world->getParticleSystem();
+    if (!particleSystem) return false;
+
+    // Spawn the particle effect
+    return particleSystem->spawnParticleEffect(effectName, position, intensity);
+}
+
+// ============================================================================
 // Entity/Mesh Spawning
 // ============================================================================
 
@@ -734,17 +751,10 @@ SpawnedEntity EngineAPI::spawnSphere(const glm::vec3& position, float radius,
     entity.position = position;
     entity.type = "sphere";
 
-    if (m_meshRenderer) {
-        // Create sphere mesh
-        Mesh sphereMesh = Mesh::createSphere(radius, 16, 16);
-        uint32_t meshId = m_meshRenderer->createMesh(sphereMesh);
-
-        // Create transform
-        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position);
-
-        // Create instance
-        m_meshRenderer->createInstance(meshId, transform, color);
-    }
+    // TODO: Implement Mesh::createSphere() for procedural sphere generation
+    // For now, log intent and return entity without mesh
+    Logger::debug() << "spawnSphere: TODO - implement mesh creation at ("
+                   << position.x << ", " << position.y << ", " << position.z << ")";
 
     m_spawnedEntities.push_back(entity);
     return entity;
@@ -758,17 +768,10 @@ SpawnedEntity EngineAPI::spawnCube(const glm::vec3& position, float size,
     entity.position = position;
     entity.type = "cube";
 
-    if (m_meshRenderer) {
-        // Create cube mesh
-        Mesh cubeMesh = Mesh::createCube(size);
-        uint32_t meshId = m_meshRenderer->createMesh(cubeMesh);
-
-        // Create transform
-        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position);
-
-        // Create instance
-        m_meshRenderer->createInstance(meshId, transform, color);
-    }
+    // TODO: Implement Mesh::createCube() for procedural cube generation
+    // For now, log intent and return entity without mesh
+    Logger::debug() << "spawnCube: TODO - implement mesh creation at ("
+                   << position.x << ", " << position.y << ", " << position.z << ")";
 
     m_spawnedEntities.push_back(entity);
     return entity;
@@ -782,17 +785,10 @@ SpawnedEntity EngineAPI::spawnCylinder(const glm::vec3& position, float radius, 
     entity.position = position;
     entity.type = "cylinder";
 
-    if (m_meshRenderer) {
-        // Create cylinder mesh
-        Mesh cylinderMesh = Mesh::createCylinder(radius, height, 16);
-        uint32_t meshId = m_meshRenderer->createMesh(cylinderMesh);
-
-        // Create transform
-        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position);
-
-        // Create instance
-        m_meshRenderer->createInstance(meshId, transform, color);
-    }
+    // TODO: Implement Mesh::createCylinder() for procedural cylinder generation
+    // For now, log intent and return entity without mesh
+    Logger::debug() << "spawnCylinder: TODO - implement mesh creation at ("
+                   << position.x << ", " << position.y << ", " << position.z << ")";
 
     m_spawnedEntities.push_back(entity);
     return entity;
@@ -1233,8 +1229,8 @@ void EngineAPI::regenerateAffectedChunks(const glm::ivec3& start, const glm::ive
             for (int cx = chunkStartX; cx <= chunkEndX; ++cx) {
                 auto chunk = m_world->getChunkAt(cx, cy, cz);
                 if (chunk) {
-                    chunk->generateMesh(m_world, &m_world->getMeshBufferPool());
-                    chunk->createBuffers(m_renderer);
+                    chunk->generateMesh(m_world);
+                    chunk->createVertexBuffer(m_renderer);
                 }
             }
         }

@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include <memory>
+#include <string>
 
 class VulkanRenderer;
 
@@ -51,6 +52,15 @@ public:
      * @param intensity Number of particles (1-10 scale)
      */
     void spawnLavaSplash(const glm::vec3& position, float intensity = 1.0f);
+
+    /**
+     * @brief Spawns a particle effect by name
+     * @param effectName Name of the effect ("water_splash", "lava_splash", "explosion", etc.)
+     * @param position World position for the effect
+     * @param intensity Effect intensity (1-10 scale, default 1.0)
+     * @return True if effect was spawned, false if unknown effect name
+     */
+    bool spawnParticleEffect(const std::string& effectName, const glm::vec3& position, float intensity = 1.0f);
 
     /**
      * @brief Gets all active particles for rendering
