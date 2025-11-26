@@ -1628,6 +1628,10 @@ bool World::addStreamedChunk(std::unique_ptr<Chunk> chunk, VulkanRenderer* rende
     // This ensures water in dynamically loaded chunks can flow properly
     registerWaterInChunk(chunkPtr);
 
+    // Fire ChunkLoadEvent
+    ChunkLoadEvent loadEvent(chunkX, chunkY, chunkZ, chunkPtr->needsDecoration());
+    EventDispatcher::instance().dispatch(std::make_unique<ChunkLoadEvent>(loadEvent));
+
     Logger::debug() << "Added streamed chunk (" << chunkX << ", " << chunkY << ", " << chunkZ << ") to world";
 
     return true;
@@ -1647,6 +1651,13 @@ bool World::removeChunk(int chunkX, int chunkY, int chunkZ, VulkanRenderer* rend
 
     // Remove from vector (order doesn't matter, so use swap-and-pop for O(1))
     Chunk* chunkPtr = it->second.get();
+
+    // Fire ChunkUnloadEvent before removing the chunk
+    ChunkUnloadEvent unloadEvent(chunkX, chunkY, chunkZ);
+    // Release lock temporarily for event dispatch to prevent deadlock
+    lock.unlock();
+    EventDispatcher::instance().dispatchImmediate(unloadEvent);
+    lock.lock();
 
     // DECORATION FIX: Remove from pending decorations if present
     {
@@ -1850,6 +1861,22 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
 
     // Check if block is water (use UNSAFE version - we already hold lock)
     int blockID = getBlockAtUnsafe(worldX, worldY, worldZ);
+
+    // Fire BlockBreakEvent (can be cancelled)
+    glm::ivec3 pos(static_cast<int>(floor(worldX)), static_cast<int>(floor(worldY)), static_cast<int>(floor(worldZ)));
+    BlockBreakEvent event(pos, blockID, BreakCause::PLAYER, 0);
+
+    // Release lock temporarily for event dispatch to prevent deadlock
+    lock.unlock();
+    EventDispatcher::instance().dispatchImmediate(event);
+    lock.lock();
+
+    if (event.isCancelled()) {
+        return;  // Don't break the block
+    }
+
+    // Re-read blockID in case it changed during event dispatch
+    blockID = getBlockAtUnsafe(worldX, worldY, worldZ);
     auto& registry = BlockRegistry::instance();
 
     // Bounds check before registry access to prevent crash
@@ -2019,6 +2046,19 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
         }
     }
 
+    // Fire NeighborChangedEvent to adjacent blocks
+    const glm::ivec3 neighborOffsets[6] = {
+        {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1}
+    };
+    for (const auto& offset : neighborOffsets) {
+        glm::ivec3 neighborPos = pos + offset;
+        int neighborBlock = getBlockAt(neighborPos.x, neighborPos.y, neighborPos.z);
+        if (neighborBlock != 0) {  // Not air
+            NeighborChangedEvent neighborEvent(neighborPos, pos, blockID, 0);
+            EventDispatcher::instance().dispatch(std::make_unique<NeighborChangedEvent>(neighborEvent));
+        }
+    }
+
     // LIGHTING FIX: Update lighting AFTER releasing lock
     // The lighting system methods call getChunkAtWorldPos() which acquires locks
     if (needsLightingUpdate) {
@@ -2085,6 +2125,23 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
     // Check if there's already a block here (don't place over existing blocks)
     // Use UNSAFE version - we already hold lock
     int existingBlock = getBlockAtUnsafe(worldX, worldY, worldZ);
+    if (existingBlock != 0) return;
+
+    // Fire BlockPlaceEvent (can be cancelled)
+    glm::ivec3 pos(static_cast<int>(floor(worldX)), static_cast<int>(floor(worldY)), static_cast<int>(floor(worldZ)));
+    BlockPlaceEvent event(pos, blockID, 0, glm::ivec3(0));  // placerEntityID=0, placedAgainst=origin for now
+
+    // Release lock temporarily for event dispatch to prevent deadlock
+    lock.unlock();
+    EventDispatcher::instance().dispatchImmediate(event);
+    lock.lock();
+
+    if (event.isCancelled()) {
+        return;  // Don't place the block
+    }
+
+    // Re-check that the position is still empty after event dispatch
+    existingBlock = getBlockAtUnsafe(worldX, worldY, worldZ);
     if (existingBlock != 0) return;
 
     // Place the block
@@ -2174,6 +2231,19 @@ void World::placeBlock(float worldX, float worldY, float worldZ, int blockID, Vu
         } catch (const std::exception& e) {
             Logger::error() << "Failed to update chunk after placing block: " << e.what();
             // Continue updating other chunks even if one fails
+        }
+    }
+
+    // Fire NeighborChangedEvent to adjacent blocks
+    const glm::ivec3 neighborOffsets[6] = {
+        {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1}
+    };
+    for (const auto& offset : neighborOffsets) {
+        glm::ivec3 neighborPos = pos + offset;
+        int neighborBlock = getBlockAt(neighborPos.x, neighborPos.y, neighborPos.z);
+        if (neighborBlock != 0) {  // Not air
+            NeighborChangedEvent neighborEvent(neighborPos, pos, 0, blockID);  // oldBlockID=0 (was air), newBlockID=blockID
+            EventDispatcher::instance().dispatch(std::make_unique<NeighborChangedEvent>(neighborEvent));
         }
     }
 

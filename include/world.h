@@ -22,6 +22,8 @@
 #include "particle_system.h"
 #include "biome_map.h"
 #include "mesh_buffer_pool.h"
+#include "event_dispatcher.h"
+#include "event_types.h"
 
 // Forward declarations
 class VulkanRenderer;

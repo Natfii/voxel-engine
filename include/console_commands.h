@@ -42,4 +42,9 @@ private:
     static void cmdSkyTime(const std::vector<std::string>& args);
     static void cmdTimeSpeed(const std::vector<std::string>& args);
     static void cmdSpawnStructure(const std::vector<std::string>& args);
+    static void cmdReload(const std::vector<std::string>& args);
+    static void cmdApi(const std::vector<std::string>& args);
+    static void cmdBrush(const std::vector<std::string>& args);
+    static void cmdSpawn(const std::vector<std::string>& args);
+    static void cmdEntity(const std::vector<std::string>& args);
 };

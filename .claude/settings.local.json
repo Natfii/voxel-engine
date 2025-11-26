@@ -56,7 +56,9 @@
       "WebFetch(domain:sites.google.com)",
       "WebFetch(domain:minecraft.wiki)",
       "WebFetch(domain:w-shadow.com)",
-      "WebFetch(domain:www.gamedeveloper.com)"
+      "WebFetch(domain:www.gamedeveloper.com)",
+      "WebFetch(domain:wiki.bedrock.dev)",
+      "WebFetch(domain:docs.iolite-engine.com)"
     ],
     "deny": [],
     "ask": []

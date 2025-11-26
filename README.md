@@ -2,10 +2,10 @@
 
 A modern voxel-based game engine built with **Vulkan**, featuring procedural terrain generation and first-person camera controls.
 
-![Vulkan](https://img.shields.io/badge/Vulkan-1.3-red)
-![C++](https://img.shields.io/badge/C++-17-blue)
-![CMake](https://img.shields.io/badge/CMake-3.10%2B-green)
-![VS](https://img.shields.io/badge/Visual%20Studio-2017%2F2019%2F2022-blue)
+![Vulkan](https://img.shields.io/badge/Vulkan-1.4-red)
+![C++](https://img.shields.io/badge/C++-20-blue)
+![CMake](https://img.shields.io/badge/CMake-3.29%2B-green)
+![VS](https://img.shields.io/badge/Build%20Tools-2019%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
 
 ## Features
@@ -60,36 +60,45 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - Debug overlays (FPS, position, target info)
 - Markdown documentation viewer
 
+🔧 **Event System & Engine API**
+- Thread-safe EventDispatcher with priority-based handling
+- 23 event types (Block, Neighbor, World, Player, Time, Custom)
+- 60+ Engine API methods for world manipulation
+- YAML-based scripting for blocks and biomes
+- Script actions: place/break blocks, spawn structures, particles, commands
+- Conditional logic (if/else) and variables in scripts
+- Biome-specific event handlers
+
 ## Quick Start
 
 ### Prerequisites
 
-- **Windows**:
-  - Visual Studio 2017/2019/2022 (2022 recommended, Community is free)
-  - CMake 3.10+ (3.29+ recommended)
-  - Vulkan SDK 1.2+
+- **Windows** (Strict Requirements):
+  - **Visual Studio 2019+** or **Build Tools 2019+**
+  - **CMake 3.29.0** or higher
+  - **Vulkan SDK 1.4.x** or higher
 - **Linux**:
-  - GCC 7+ or Clang 5+
-  - CMake 3.10+
-  - Vulkan development libraries
+  - GCC 11+ or Clang 14+ (C++20 required)
+  - CMake 3.29+
+  - Vulkan 1.4 development libraries
   - GLFW3
 
-**Note**: The Windows build script will detect your installed tools and provide download links if anything is missing!
+> **Important**: The Windows build script enforces strict version requirements. Older versions of Visual Studio (2017) or CMake (<3.29) are **not supported** due to C++20 feature requirements.
 
 ### Building
 
 #### Windows (Enhanced Build System)
 
-The build script automatically detects your toolchain and provides helpful guidance:
+The build script automatically verifies your toolchain and provides helpful guidance:
 
 ```cmd
-# Normal build (detects CMake, VS 2017/2019/2022, Vulkan SDK)
+# Normal build (verifies CMake 3.29+, Build Tools 2019+, Vulkan 1.4+)
 build.bat
 
-# Clean build (removes old build directory)
+# Clean build (removes old build directory and recompiles)
 build.bat -clean
 
-# Show help
+# Show help and version requirements
 build.bat -help
 
 # Run the game
@@ -97,15 +106,18 @@ run.bat
 ```
 
 **Features:**
-- ✅ Auto-detects Visual Studio 2017/2019/2022 (prefers latest)
-- ✅ Auto-detects CMake in PATH or common install locations
-- ✅ Provides download links if tools are missing
-- ✅ Helpful error messages with troubleshooting tips
-- ✅ Backward compatible with older toolchains
+- ✅ Strict version checking (CMake 3.29+, Build Tools 2019+, Vulkan 1.4+)
+- ✅ Clear error messages if requirements not met
+- ✅ Provides download links for all required tools
+- ✅ Automatic shader compilation
+- ✅ Clean build option for fresh recompiles
 
-**Supported Configurations:**
-- CMake: 3.10+ (minimum), 3.21+ (recommended), 3.29+ (latest)
-- Visual Studio: 2017 (minimum), 2019 (supported), 2022 (recommended)
+**Required Versions:**
+| Tool | Required Version | Download |
+|------|-----------------|----------|
+| CMake | 3.29.0 | [cmake.org](https://cmake.org/download/) |
+| Build Tools | 2019 | [vs_buildtools.exe](https://aka.ms/vs/16/release/vs_buildtools.exe) |
+| Vulkan SDK | 1.4.x | [vulkan.lunarg.com](https://vulkan.lunarg.com/sdk/home#windows) |
 
 #### Linux
 ```bash
@@ -149,19 +161,52 @@ height = 600
 
 Note: World dimensions are handled dynamically through the infinite world streaming system.
 
+## YAML Scripting
+
+Blocks and biomes can have event-driven behaviors defined in YAML:
+
+```yaml
+# Example block with event handlers
+name: "explosive_ore"
+events:
+  on_break:
+    - action: spawn_particles
+      effect: "explosion"
+      intensity: 2.0
+    - action: place_block
+      offset: [0, -1, 0]
+      block: "air"
+  on_step:
+    - action: conditional
+      condition: "random"
+      chance: 0.1
+      then:
+        - action: run_command
+          command: "say Careful!"
+```
+
+**Available Script Actions:**
+- `place_block` / `break_block` - Modify blocks
+- `spawn_structure` - Place predefined structures
+- `spawn_particles` - Visual effects
+- `run_command` - Execute console commands
+- `conditional` - If/else logic with random, variable, or block conditions
+- `set_variable` / `increment_var` - Script state management
+
+See the [YAML Scripting System](ENGINE_HANDBOOK.md#66-yaml-scripting-system) documentation for full details.
+
 ## Technical Details
 
-**Graphics API**: Vulkan 1.0
-
-**Math Library**: GLM
-
-**Window/Input**: GLFW 3.4
-
-**UI**: Dear ImGui 1.91.9b
-
-**Noise Generation**: FastNoiseLite
-
-**Configuration**: yaml-cpp
+| Component | Technology |
+|-----------|------------|
+| **Graphics API** | Vulkan 1.4 |
+| **Language** | C++20 |
+| **Math Library** | GLM |
+| **Window/Input** | GLFW 3.4 |
+| **UI** | Dear ImGui 1.91.9b |
+| **Noise Generation** | FastNoiseLite |
+| **Configuration** | yaml-cpp |
+| **Event System** | Custom thread-safe dispatcher |
 
 ## System Requirements
 
@@ -188,10 +233,17 @@ Note: World dimensions are handled dynamically through the infinite world stream
 - [Architecture & Design](ENGINE_HANDBOOK.md#4-architecture--design) - Threading, memory management, chunk lifecycle
 - [Development Guide](ENGINE_HANDBOOK.md#5-development-guide) - Adding features, shaders, testing
 - [API Reference](ENGINE_HANDBOOK.md#6-api-reference) - Core classes and utility functions
+- [YAML Scripting System](ENGINE_HANDBOOK.md#66-yaml-scripting-system) - Event-driven scripting for blocks and biomes
 
 ## Development Status
 
 🚀 **Recently Completed:**
+- ✅ **Event System & Engine API** 
+  - Thread-safe EventDispatcher with priority handling
+  - 23 event types for blocks, players, world, and custom events
+  - 60+ Engine API methods for scripting
+  - YAML-based script actions with conditionals and variables
+  - Biome-specific event handlers
 - ✅ Migrated from OpenGL to Vulkan
 - ✅ Fixed coordinate system (Y-axis flip)
 - ✅ Implemented proper face culling

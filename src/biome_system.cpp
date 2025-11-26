@@ -1,6 +1,7 @@
 #include "biome_system.h"
 #include "tree_generator.h"
 #include "logger.h"
+#include "script_action.h"
 #include <yaml-cpp/yaml.h>
 #include <filesystem>
 #include <algorithm>
@@ -219,6 +220,31 @@ bool BiomeRegistry::loadBiomeFromFile(const std::string& filepath) {
         m_maxTemperature = std::max(m_maxTemperature, biome->temperature);
         m_minMoisture = std::min(m_minMoisture, biome->moisture);
         m_maxMoisture = std::max(m_maxMoisture, biome->moisture);
+
+        // Parse and register event handlers (if any)
+        if (doc["events"]) {
+            std::vector<ScriptEventHandler> handlers;
+
+            // Iterate through all event types in the "events" section
+            for (auto it = doc["events"].begin(); it != doc["events"].end(); ++it) {
+                std::string eventType = it->first.as<std::string>();
+
+                try {
+                    ScriptEventHandler handler = ScriptEventHandler::fromYAML(eventType, it->second);
+                    handlers.push_back(handler);
+                    Logger::debug() << "    Parsed event handler: " << eventType
+                                   << " with " << handler.actions.size() << " actions";
+                } catch (const std::exception& e) {
+                    Logger::warning() << "Error parsing event handler '" << eventType
+                                     << "' for biome " << biome->name << ": " << e.what();
+                }
+            }
+
+            // Register the handlers
+            if (!handlers.empty()) {
+                registerBiomeEventHandlers(biome->name, handlers);
+            }
+        }
 
         // Add to registry
         int index = static_cast<int>(m_biomes.size());

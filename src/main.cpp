@@ -56,6 +56,7 @@
 #include "mesh/mesh_loader.h"
 #include "map_preview.h"
 #include "loading_sphere.h"
+#include "event_dispatcher.h"
 // BlockIconRenderer is now part of block_system.h
 
 // Game state
@@ -185,6 +186,11 @@ int main(int argc, char* argv[]) {
         // Upload ImGui fonts
         ImGui_ImplVulkan_CreateFontsTexture();
         // Note: ImGui will handle font upload in the next frame
+
+        // ========== EVENT SYSTEM INITIALIZATION ==========
+        // Start the event dispatcher thread for async event processing
+        std::cout << "Starting event dispatcher..." << '\n';
+        EventDispatcher::instance().start();
 
         // ========== LOADING SCREEN SYSTEM ==========
         // Thread-safe loading state (atomic for cross-thread access)
@@ -1693,6 +1699,10 @@ int main(int argc, char* argv[]) {
     // Only reached when player quits
     // Note: Game is already saved if it was running (via QUIT or EXIT_TO_MENU handlers)
     std::cout << "Shutting down..." << '\n';
+
+        // Stop event dispatcher (processes remaining events before stopping)
+        std::cout << "  Stopping event dispatcher..." << '\n';
+        EventDispatcher::instance().stop();
 
         // Wait for device to finish before cleanup
         std::cout << "  Waiting for GPU to finish..." << '\n';

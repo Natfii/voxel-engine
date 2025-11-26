@@ -75,7 +75,7 @@ void WaterSimulation::update(float deltaTime, World* world, const glm::vec3& pla
         ++frameCount;
 
         if (DebugState::instance().debugWater.getValue() && frameCount % 60 == 0) {
-            Logger::debug() << "Water simulation: " << cellsToProcess.size() << " active cells";
+            Logger::debug() << "Water simulation: " << m_activeQueue.size() << " active cells";
         }
 #endif
 
