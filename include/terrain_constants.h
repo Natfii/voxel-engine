@@ -12,7 +12,6 @@ namespace TerrainGeneration {
     constexpr int WORLD_HEIGHT_CHUNKS = 512;     ///< World height in chunks (16384 blocks, near-infinite vertical)
     constexpr int WORLD_BOTTOM_Y = -128;         ///< Bottom of the world (Y coordinate in blocks)
     constexpr int BEDROCK_LAYER_Y = -120;        ///< Y level where bedrock layer begins (bottom 8 blocks)
-    constexpr int UNDERGROUND_DEPTH_CHUNKS = 5;  ///< How many chunks deep to generate underground (5 chunks = 160 blocks)
 
     // Terrain height generation
     constexpr int BASE_HEIGHT = 64;              ///< Base terrain height in blocks (Y coordinate)
