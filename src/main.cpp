@@ -1078,8 +1078,8 @@ int main(int argc, char* argv[]) {
                 std::cout << "Player model ready for third-person view (F3 to toggle)" << '\n';
             }
         } catch (const std::exception& e) {
-            Logger::warning() << "Could not load player model: " << e.what();
-            Logger::info() << "Place player.glb in assets/models/ for third-person view";
+            std::cerr << "Warning: Could not load player model: " << e.what() << '\n';
+            std::cout << "Place player.glb in assets/models/ for third-person view" << '\n';
         }
 
         bool isPaused = false;
