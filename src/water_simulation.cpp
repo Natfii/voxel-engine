@@ -1,426 +1,142 @@
+/**
+ * @file water_simulation.cpp
+ * @brief Minecraft-style cellular automata water simulation
+ *
+ * Water uses simple cellular automata (DwarfCorp-inspired):
+ * - Each frame, iterate through all water cells
+ * - Each cell tries to flow down first, then spread horizontally
+ * - Maintains Minecraft's 7-block max flow distance (levels 8→1)
+ */
+
 #include "water_simulation.h"
 #include "world.h"
+#include "world_utils.h"
+#include <iostream>
 #include "block_system.h"
 #include "chunk.h"
+#include "terrain_constants.h"
+#include "logger.h"
 #include <algorithm>
-#include <random>
-#include <cmath>
-#include <thread>
+#include <array>
 
-WaterSimulation::WaterSimulation()
-    : m_enableEvaporation(true)
-    , m_flowSpeed(64.0f)
-    , m_lavaFlowMultiplier(0.5f)
-    , m_evaporationThreshold(5)
-    , m_frameOffset(0)
-    , m_rng(std::random_device{}())
-{
+WaterSimulation::WaterSimulation() {
 }
 
 WaterSimulation::~WaterSimulation() {
 }
 
+// ============================================================================
+// Main Update - Cellular Automata
+// ============================================================================
+
 void WaterSimulation::update(float deltaTime, World* world, const glm::vec3& playerPos, float renderDistance) {
-    // OPTIMIZATION: Clear flow weight cache each frame to prevent stale data
-    // Cache is only valid for current frame (terrain might change between frames)
-    m_flowWeightCache.clear();
+    (void)deltaTime;
+    (void)playerPos;
+    (void)renderDistance;
 
-    // Update water sources first (marks sources as dirty)
-    updateWaterSources(deltaTime);
+    if (!world) return;
 
-    // Update water bodies (maintain levels, marks body cells as dirty)
-    updateWaterBodies();
+    constexpr int BLOCK_WATER = 5;
 
-    // CRITICAL OPTIMIZATION: Only update dirty cells instead of scanning ALL cells
-    // Before: Scanned 37M water blocks per frame (O(millions))
-    // After: Only update ~1000 dirty cells per frame (O(dirty_count))
-    // Result: 100x+ speedup for water simulation
+    // Process multiple iterations per frame to make water flow faster
+    // Using 2 iterations to balance speed vs chunk rebuild limits (10/frame)
+    // More iterations = more dirty chunks = flashing as chunks can't rebuild fast enough
+    constexpr int MAX_ITERATIONS = 2;
 
-    // CHUNK FREEZING: Only simulate water within render distance
-    // This prevents wasting CPU on water simulation far from player
-    const float renderDistanceSquared = renderDistance * renderDistance;
-
-    std::vector<glm::ivec3> cellsToUpdate;
-    cellsToUpdate.reserve(m_dirtyCells.size());
-
-    std::unordered_set<glm::ivec3> cellsToKeepDirty;  // Distant cells to preserve
-
-    // Copy dirty cells to vector (we'll modify m_dirtyCells during update)
-    // Filter by render distance - freeze chunks outside player's view
-    for (const auto& pos : m_dirtyCells) {
-        // Calculate distance from player to water cell
-        glm::vec3 cellWorldPos(static_cast<float>(pos.x), static_cast<float>(pos.y), static_cast<float>(pos.z));
-        glm::vec3 delta = cellWorldPos - playerPos;
-        float distanceSquared = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
-
-        // Only update water cells within render distance
-        if (distanceSquared <= renderDistanceSquared) {
-            cellsToUpdate.push_back(pos);
-        } else {
-            // CHUNK FREEZING: Keep distant cells dirty so they resume when player approaches
-            cellsToKeepDirty.insert(pos);
+    for (int iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+        // Collect cells to update (can't modify while iterating)
+        std::vector<glm::ivec3> cellsToProcess;
+        for (const auto& [pos, cell] : m_waterCells) {
+            if (cell.level > 0) {
+                cellsToProcess.push_back(pos);
+            }
         }
-    }
 
-    // Clear dirty set - cells will re-mark themselves if still dirty
-    m_dirtyCells.clear();
+        if (cellsToProcess.empty()) break;
 
-    // Restore distant cells that should stay frozen
-    m_dirtyCells = std::move(cellsToKeepDirty);
+        // Debug: Show active water cells count periodically
+        static int frameCount = 0;
+        if (++frameCount % 60 == 0) {
+            std::cerr << "[DEBUG] Water simulation: " << cellsToProcess.size() << " active cells" << std::endl;
+        }
 
-    // Update dirty cells
-    // CRITICAL BUG FIX: Make local copy of cell to avoid reference invalidation
-    // when map rehashes during updateWaterCell() (which inserts new cells)
-    for (const auto& pos : cellsToUpdate) {
-        auto it = m_waterCells.find(pos);
-        if (it != m_waterCells.end()) {
-            // Copy cell to avoid reference invalidation
-            WaterCell cellCopy = it->second;
-            uint8_t oldLevel = cellCopy.level;
+        // Track if any changes occurred this iteration
+        bool anyChanges = false;
 
-            updateWaterCell(pos, cellCopy, world, deltaTime);
+        // Process each water cell (cellular automata style)
+        for (const auto& pos : cellsToProcess) {
+            auto it = m_waterCells.find(pos);
+            if (it == m_waterCells.end() || it->second.level == 0) continue;
 
-            // Write updated cell back (re-find in case map rehashed)
-            it = m_waterCells.find(pos);
-            if (it != m_waterCells.end()) {
-                it->second = cellCopy;
+            uint8_t currentLevel = it->second.level;
 
-                // If cell changed, mark it and neighbors as dirty for next frame
-                if (cellCopy.level != oldLevel) {
-                    markDirty(pos);
-                    glm::ivec3 chunkPos(pos.x >> 5, pos.y >> 5, pos.z >> 5);
-                    markChunkDirty(chunkPos);
+            // Step 1: Try to flow DOWN (falling water is always full level)
+            glm::ivec3 below = pos - glm::ivec3(0, 1, 0);
+            int belowBlock = world->getBlockAt(below.x, below.y, below.z);
+            if (belowBlock == 0) {  // Air below
+                // Check if we already have water there
+                auto belowIt = m_waterCells.find(below);
+                if (belowIt == m_waterCells.end() || belowIt->second.level < LEVEL_SOURCE) {
+                    // Place water below at full level (falling water)
+                    world->setBlockAt(static_cast<float>(below.x), static_cast<float>(below.y),
+                                     static_cast<float>(below.z), BLOCK_WATER, false);
+
+                    WaterCell& belowCell = m_waterCells[below];
+                    belowCell.level = LEVEL_SOURCE;  // Falling water is full
+                    belowCell.isSource = false;
+                    belowCell.fluidType = 1;
+
+                    syncToChunk(below, LEVEL_SOURCE, world);
+                    markChunkDirtyAt(below);
+                    markChunkDirtyAt(pos);  // Source chunk also needs update for faces
+                    anyChanges = true;
+                }
+            }
+
+            // Step 2: Spread horizontally (only if level > 1)
+            if (currentLevel > LEVEL_MIN_FLOW) {
+                uint8_t spreadLevel = currentLevel - 1;
+
+                std::array<glm::ivec3, 4> neighbors = {{
+                    pos + glm::ivec3(1, 0, 0),
+                    pos + glm::ivec3(-1, 0, 0),
+                    pos + glm::ivec3(0, 0, 1),
+                    pos + glm::ivec3(0, 0, -1)
+                }};
+
+                for (const auto& neighbor : neighbors) {
+                    int neighborBlock = world->getBlockAt(neighbor.x, neighbor.y, neighbor.z);
+                    if (neighborBlock != 0) continue;  // Only spread into air
+
+                    // Check if we already have water there at higher/equal level
+                    auto neighborIt = m_waterCells.find(neighbor);
+                    if (neighborIt != m_waterCells.end() && neighborIt->second.level >= spreadLevel) {
+                        continue;  // Already has enough water
+                    }
+
+                    // Place flowing water
+                    world->setBlockAt(static_cast<float>(neighbor.x), static_cast<float>(neighbor.y),
+                                     static_cast<float>(neighbor.z), BLOCK_WATER, false);
+
+                    WaterCell& neighborCell = m_waterCells[neighbor];
+                    neighborCell.level = spreadLevel;
+                    neighborCell.isSource = false;
+                    neighborCell.fluidType = 1;
+
+                    syncToChunk(neighbor, spreadLevel, world);
+                    markChunkDirtyAt(neighbor);
+                    markChunkDirtyAt(pos);  // Source chunk also needs update for faces
+                    anyChanges = true;
                 }
             }
         }
+
+        // If no changes this iteration, stop early
+        if (!anyChanges) break;
     }
 
-    // Remove cells with no water
-    for (auto it = m_waterCells.begin(); it != m_waterCells.end();) {
-        if (it->second.level == 0) {
-            m_dirtyCells.erase(it->first);  // Remove from dirty set too
-            it = m_waterCells.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    // Update active chunks list
-    updateActiveChunks();
-
-    // Frame offset no longer needed (dirty tracking replaces frame spreading)
-    m_frameOffset = (m_frameOffset + 1) % 4;
-}
-
-void WaterSimulation::updateWaterCell(const glm::ivec3& pos, WaterCell& cell, World* world, float deltaTime) {
-    // ============================================================================
-    // MINECRAFT-STYLE WATER UPDATE (2025-11-25)
-    // ============================================================================
-    // Simple discrete water physics:
-    // 1. Source blocks (level 255) spread indefinitely
-    // 2. Flowing water (level < 255) spreads at lower levels
-    // 3. Water falls down and becomes source blocks
-    // 4. No evaporation (Minecraft water is permanent)
-    // ============================================================================
-
-    if (cell.level == 0) return;
-
-    // Source blocks spread water but maintain their level
-    if (hasWaterSource(pos)) {
-        cell.level = 255;  // Ensure source is always full
-        spreadHorizontally(pos, cell, world);
-        return;
-    }
-
-    // Step 1: Apply gravity (water falls down, becomes source below)
-    applyGravity(pos, cell, world);
-
-    // Step 2: Spread horizontally at decreasing levels
-    if (cell.level > 0) {
-        spreadHorizontally(pos, cell, world);
-    }
-
-    // Step 3: Sync current level to chunk for rendering
-    syncWaterLevelToChunk(pos, cell.level, world);
-}
-
-void WaterSimulation::applyGravity(const glm::ivec3& pos, WaterCell& cell, World* world) {
-    // ============================================================================
-    // MINECRAFT-STYLE WATER GRAVITY (2025-11-25)
-    // ============================================================================
-    // Water falling down becomes a source block (level 255).
-    // This creates infinite waterfalls like Minecraft.
-    // ============================================================================
-
-    glm::ivec3 below = pos - glm::ivec3(0, 1, 0);
-
-    // Check if block below is solid
-    if (isBlockSolid(below.x, below.y, below.z, world)) {
-        return;
-    }
-
-    auto it = m_waterCells.find(below);
-    WaterCell* belowCellPtr = nullptr;
-    if (it != m_waterCells.end()) {
-        belowCellPtr = &it->second;
-        if (belowCellPtr->level > 0 && belowCellPtr->fluidType != cell.fluidType) {
-            return;
-        }
-    }
-
-    // If there's no water below or it's not full, fill it
-    if (!belowCellPtr || belowCellPtr->level < 255) {
-        if (!belowCellPtr) {
-            belowCellPtr = &m_waterCells[below];
-            belowCellPtr->fluidType = cell.fluidType;
-        }
-
-        // Falling water creates full water below (like Minecraft waterfalls)
-        belowCellPtr->level = 255;
-        belowCellPtr->flowVector = glm::vec2(0.0f, -1.0f);
-
-        markDirty(below);
-        syncWaterLevelToChunk(below, 255, world);
-    }
-}
-
-void WaterSimulation::spreadHorizontally(const glm::ivec3& pos, WaterCell& cell, World* world) {
-    // ============================================================================
-    // MINECRAFT-STYLE WATER SPREADING (2025-11-25)
-    // ============================================================================
-    // Water uses 8 discrete levels (like Minecraft):
-    // - Level 8 (255) = Source block (full water)
-    // - Level 7 (224) = First spread
-    // - Level 1 (32)  = Last spread (can't spread further)
-    // - Level 0       = Empty
-    //
-    // Water spreads to neighbors at (current_level - 32).
-    // If neighbor already has higher level, don't overwrite.
-    // Source blocks never lose water, only spread.
-    // ============================================================================
-
-    // Only spread if we have enough water (at least level 2 worth = 64)
-    if (cell.level < 64) return;
-
-    // Calculate spread level (one step lower than current)
-    uint8_t spreadLevel = (cell.level >= 32) ? (cell.level - 32) : 0;
-    if (spreadLevel < 32) return;  // Can't spread below minimum
-
-    // Check all 4 horizontal neighbors
-    glm::ivec3 neighbors[4] = {
-        pos + glm::ivec3(1, 0, 0),   // East
-        pos + glm::ivec3(-1, 0, 0),  // West
-        pos + glm::ivec3(0, 0, 1),   // North
-        pos + glm::ivec3(0, 0, -1)   // South
-    };
-
-    glm::vec2 directions[4] = {
-        glm::vec2(1.0f, 0.0f),
-        glm::vec2(-1.0f, 0.0f),
-        glm::vec2(0.0f, 1.0f),
-        glm::vec2(0.0f, -1.0f)
-    };
-
-    for (int i = 0; i < 4; i++) {
-        glm::ivec3 neighborPos = neighbors[i];
-
-        // Skip solid blocks
-        if (isBlockSolid(neighborPos.x, neighborPos.y, neighborPos.z, world)) {
-            continue;
-        }
-
-        auto it = m_waterCells.find(neighborPos);
-        WaterCell* neighborCellPtr = nullptr;
-        uint8_t neighborLevel = 0;
-
-        if (it != m_waterCells.end()) {
-            neighborCellPtr = &it->second;
-            neighborLevel = neighborCellPtr->level;
-
-            // Skip if different fluid type
-            if (neighborLevel > 0 && neighborCellPtr->fluidType != cell.fluidType) {
-                continue;
-            }
-
-            // Skip if neighbor already has equal or higher water
-            if (neighborLevel >= spreadLevel) {
-                continue;
-            }
-        }
-
-        // Create or update neighbor cell with spread level
-        if (!neighborCellPtr) {
-            neighborCellPtr = &m_waterCells[neighborPos];
-            neighborCellPtr->fluidType = cell.fluidType;
-        }
-
-        // Set neighbor to spread level (discrete, no random bobbing)
-        neighborCellPtr->level = spreadLevel;
-        neighborCellPtr->flowVector = directions[i];
-
-        markDirty(neighborPos);
-
-        // Sync to chunk for visual rendering
-        syncWaterLevelToChunk(neighborPos, spreadLevel, world);
-    }
-}
-
-// ============================================================================
-// SYNC WATER LEVEL TO CHUNK (2025-11-25)
-// Updates chunk metadata so water height is visible in the mesh
-// ============================================================================
-void WaterSimulation::syncWaterLevelToChunk(const glm::ivec3& pos, uint8_t level, World* world) {
-    if (!world) return;
-
-    Chunk* chunk = world->getChunkAtWorldPos(
-        static_cast<float>(pos.x),
-        static_cast<float>(pos.y),
-        static_cast<float>(pos.z)
-    );
-
-    if (chunk) {
-        // Convert world position to local chunk position
-        int localX = pos.x & 31;  // pos.x % 32
-        int localY = pos.y & 31;
-        int localZ = pos.z & 31;
-
-        // Convert 0-255 level to 0-7 visual level (3 bits in metadata)
-        // 255 = full water = visual level 0 (no offset)
-        // 0 = empty = visual level 7 (max offset)
-        uint8_t visualLevel = (level >= 224) ? 0 : (7 - (level >> 5));
-
-        chunk->setBlockMetadata(localX, localY, localZ, visualLevel);
-    }
-}
-
-int WaterSimulation::calculateFlowWeight(const glm::ivec3& from, const glm::ivec3& to, World* world) {
-    // OPTIMIZATION: Check cache first to avoid redundant BFS (thread-safe)
-    {
-        std::lock_guard<std::mutex> lock(m_flowCacheMutex);
-        auto fromCacheIt = m_flowWeightCache.find(from);
-        if (fromCacheIt != m_flowWeightCache.end()) {
-            auto toCacheIt = fromCacheIt->second.find(to);
-            if (toCacheIt != fromCacheIt->second.end()) {
-                return toCacheIt->second;  // Cache hit!
-            }
-        }
-    }
-
-    // Default weight (no path found)
-    int weight = 1000;
-
-    // Check if destination is solid
-    if (isBlockSolid(to.x, to.y, to.z, world)) {
-        // Cache and return (thread-safe)
-        std::lock_guard<std::mutex> lock(m_flowCacheMutex);
-        m_flowWeightCache[from][to] = weight;
-        return weight;
-    }
-
-    auto it = m_waterCells.find(to);
-    if (it != m_waterCells.end()) {
-        auto fromIt = m_waterCells.find(from);
-        if (fromIt != m_waterCells.end() && it->second.fluidType != fromIt->second.fluidType && it->second.level > 0) {
-            // Cache and return (thread-safe)
-            std::lock_guard<std::mutex> lock(m_flowCacheMutex);
-            m_flowWeightCache[from][to] = weight;
-            return weight;
-        }
-    }
-
-    // ====================================================================================
-    // PERFORMANCE FIX (2025-11-24): Simplified flow calculation - NO BFS!
-    // ====================================================================================
-    // OLD: BFS pathfinding to find "way down" within 4 blocks
-    //      - Allocated std::queue and std::unordered_set for EACH calculation
-    //      - Called 4 times per water cell (once per horizontal neighbor)
-    //      - With ~1000 dirty cells = 4000 BFS searches per update = 20,000 BFS/sec at 5Hz
-    //      - Each BFS did up to 16 iterations with hash lookups
-    // NEW: Simple height-based flow - water flows to lower neighbors
-    //      - Check if destination has downward path (block below is air)
-    //      - Lower elevation = better weight (0 = directly above empty space)
-    //      - No allocations, no BFS, no hash lookups
-    // IMPACT: 100× faster flow calculation, eliminates allocation overhead
-    // ====================================================================================
-
-    // Check if destination block has downward path (preferred direction)
-    glm::ivec3 below = to - glm::ivec3(0, 1, 0);
-    if (!isBlockSolid(below.x, below.y, below.z, world)) {
-        weight = 0;  // Best weight - direct downward path
-    } else {
-        // No direct downward path - use distance-based weight
-        // Water spreads horizontally with slight preference for lower elevation
-        weight = 1;  // Neutral weight for horizontal flow
-    }
-
-    // Cache the result before returning (thread-safe)
-    {
-        std::lock_guard<std::mutex> lock(m_flowCacheMutex);
-        m_flowWeightCache[from][to] = weight;
-    }
-    return weight;
-}
-
-void WaterSimulation::updateShoreCounter(const glm::ivec3& pos, WaterCell& cell, World* world) {
-    cell.shoreCounter = 0;
-
-    // Check all 6 neighbors (including up/down)
-    glm::ivec3 neighbors[6] = {
-        pos + glm::ivec3(1, 0, 0),
-        pos + glm::ivec3(-1, 0, 0),
-        pos + glm::ivec3(0, 0, 1),
-        pos + glm::ivec3(0, 0, -1),
-        pos + glm::ivec3(0, 1, 0),
-        pos + glm::ivec3(0, -1, 0)
-    };
-
-    for (const auto& neighbor : neighbors) {
-        // Count solid blocks or air
-        if (isBlockSolid(neighbor.x, neighbor.y, neighbor.z, world) ||
-            (!isBlockLiquid(neighbor.x, neighbor.y, neighbor.z, world))) {
-            cell.shoreCounter++;
-        }
-    }
-}
-
-void WaterSimulation::updateWaterSources(float deltaTime) {
-    for (const auto& source : m_waterSources) {
-        WaterCell& cell = m_waterCells[source.position];
-
-        // Maintain source water level
-        int amountToAdd = (int)(source.flowRate * deltaTime);
-        cell.level = std::min(255, (int)cell.level + amountToAdd);
-
-        // Ensure it doesn't drop below output level
-        if (cell.level < source.outputLevel) {
-            cell.level = source.outputLevel;
-        }
-
-        cell.fluidType = source.fluidType;
-
-        // Mark source as dirty (active water source)
-        markDirty(source.position);
-    }
-}
-
-void WaterSimulation::updateWaterBodies() {
-    for (const auto& body : m_waterBodies) {
-        if (!body.isInfinite) continue;
-
-        for (const auto& pos : body.cells) {
-            WaterCell& cell = m_waterCells[pos];
-
-            if (cell.level < body.minLevel) {
-                cell.level = body.minLevel;
-                markDirty(pos);
-            }
-        }
-    }
-}
-
-void WaterSimulation::updateActiveChunks() {
+    // Update active chunks set
     m_activeChunks.clear();
-
     for (const auto& [pos, cell] : m_waterCells) {
         if (cell.level > 0) {
             m_activeChunks.insert(worldToChunk(pos));
@@ -428,19 +144,178 @@ void WaterSimulation::updateActiveChunks() {
     }
 }
 
-void WaterSimulation::setWaterLevel(int x, int y, int z, uint8_t level, uint8_t fluidType) {
+// ============================================================================
+// Water Placement/Removal
+// ============================================================================
+
+void WaterSimulation::placeWaterSource(int x, int y, int z, World* world) {
     glm::ivec3 pos(x, y, z);
 
-    if (level == 0) {
-        m_waterCells.erase(pos);
-        m_dirtyCells.erase(pos);
-    } else {
-        WaterCell& cell = m_waterCells[pos];
-        cell.level = level;
-        cell.fluidType = fluidType;
+    // Can't place water in solid block
+    if (isBlockSolid(x, y, z, world)) {
+        return;
+    }
 
-        // Mark as dirty when water is added/modified
-        markDirty(pos);
+    // Set as source block
+    setWaterCell(pos, LEVEL_SOURCE, true, world);
+    m_sourceBlocks.insert(pos);
+
+    // Queue for spreading
+    queueSpread(pos);
+}
+
+void WaterSimulation::removeWaterSource(int x, int y, int z, World* world) {
+    glm::ivec3 pos(x, y, z);
+
+    // Remove source status
+    m_sourceBlocks.erase(pos);
+
+    auto it = m_waterCells.find(pos);
+    if (it != m_waterCells.end()) {
+        it->second.isSource = false;
+    }
+
+    // Remove the water at this position
+    removeWaterCell(pos, world);
+
+    // Queue neighbors for removal check
+    std::array<glm::ivec3, 6> neighbors = {{
+        pos + glm::ivec3(1, 0, 0),
+        pos + glm::ivec3(-1, 0, 0),
+        pos + glm::ivec3(0, 1, 0),
+        pos + glm::ivec3(0, -1, 0),
+        pos + glm::ivec3(0, 0, 1),
+        pos + glm::ivec3(0, 0, -1)
+    }};
+
+    for (const auto& neighbor : neighbors) {
+        if (m_waterCells.find(neighbor) != m_waterCells.end()) {
+            queueRemove(neighbor);
+        }
+    }
+}
+
+bool WaterSimulation::isSource(int x, int y, int z) const {
+    return m_sourceBlocks.find(glm::ivec3(x, y, z)) != m_sourceBlocks.end();
+}
+
+bool WaterSimulation::isNaturalWater(int y) const {
+    // Water at or below sea level (62) is "natural" ocean/lake water
+    // This is treated as infinite source - Minecraft heightmap approach
+    return y <= TerrainGeneration::WATER_LEVEL;
+}
+
+void WaterSimulation::triggerWaterFlow(int brokenX, int brokenY, int brokenZ, World* world, bool lockHeld) {
+    if (!world) return;
+
+    std::cerr << "[DEBUG] triggerWaterFlow called at (" << brokenX << ", " << brokenY << ", " << brokenZ << ")" << std::endl;
+
+    constexpr int BLOCK_WATER = 5;
+    glm::ivec3 brokenPos(brokenX, brokenY, brokenZ);
+
+    // Helper lambdas to use safe or unsafe methods based on lockHeld
+    // IMPORTANT: When lockHeld=true, caller already holds World's chunk mutex
+    // Using the locking versions would cause deadlock (recursive lock on shared_mutex)
+    auto getBlock = [world, lockHeld](int x, int y, int z) -> int {
+        float fx = static_cast<float>(x);
+        float fy = static_cast<float>(y);
+        float fz = static_cast<float>(z);
+        return lockHeld ? world->getBlockAtUnsafe(fx, fy, fz)
+                       : world->getBlockAt(fx, fy, fz);
+    };
+
+    auto setBlock = [world, lockHeld](int x, int y, int z, int blockID) {
+        float fx = static_cast<float>(x);
+        float fy = static_cast<float>(y);
+        float fz = static_cast<float>(z);
+        if (lockHeld) {
+            world->setBlockAtUnsafe(fx, fy, fz, blockID);
+        } else {
+            world->setBlockAt(fx, fy, fz, blockID, false);
+        }
+    };
+
+    // Check all 6 adjacent blocks for water
+    std::array<glm::ivec3, 6> neighbors = {{
+        glm::ivec3(brokenX + 1, brokenY, brokenZ),
+        glm::ivec3(brokenX - 1, brokenY, brokenZ),
+        glm::ivec3(brokenX, brokenY, brokenZ + 1),
+        glm::ivec3(brokenX, brokenY, brokenZ - 1),
+        glm::ivec3(brokenX, brokenY + 1, brokenZ),
+        glm::ivec3(brokenX, brokenY - 1, brokenZ)
+    }};
+
+    // Find the highest level adjacent water source
+    uint8_t bestLevel = 0;
+    bool foundWater = false;
+
+    for (const auto& neighbor : neighbors) {
+        int blockID = getBlock(neighbor.x, neighbor.y, neighbor.z);
+        if (blockID != BLOCK_WATER) continue;
+
+        foundWater = true;
+        uint8_t neighborLevel = LEVEL_SOURCE;  // Default for natural/untracked water
+
+        // Check for natural water (at/below sea level) - treat as source
+        if (isNaturalWater(neighbor.y)) {
+            // Register this natural water block as source if not already tracked
+            if (m_waterCells.find(neighbor) == m_waterCells.end()) {
+                WaterCell& cell = m_waterCells[neighbor];
+                cell.level = LEVEL_SOURCE;
+                cell.isSource = true;
+                cell.fluidType = 1;
+                m_sourceBlocks.insert(neighbor);
+            }
+            neighborLevel = LEVEL_SOURCE;
+        } else {
+            // Check tracked simulation water
+            auto it = m_waterCells.find(neighbor);
+            if (it != m_waterCells.end()) {
+                neighborLevel = it->second.level;
+            }
+        }
+
+        if (neighborLevel > bestLevel) {
+            bestLevel = neighborLevel;
+        }
+    }
+
+    // IMMEDIATELY place water at the broken block position if adjacent to water
+    if (foundWater && bestLevel > LEVEL_MIN_FLOW) {
+        // Calculate the level for the new water (one less than source, or full if falling)
+        uint8_t newLevel;
+
+        // Check if water is falling from above
+        int aboveBlock = getBlock(brokenX, brokenY + 1, brokenZ);
+        if (aboveBlock == BLOCK_WATER) {
+            newLevel = LEVEL_SOURCE;  // Falling water is full
+        } else {
+            newLevel = bestLevel - 1;  // Horizontal flow decreases level
+            if (newLevel < LEVEL_MIN_FLOW) newLevel = LEVEL_MIN_FLOW;
+        }
+
+        // Place water at the broken block position
+        setBlock(brokenX, brokenY, brokenZ, BLOCK_WATER);
+
+        // Track in simulation
+        WaterCell& newCell = m_waterCells[brokenPos];
+        newCell.level = newLevel;
+        newCell.isSource = false;
+        newCell.fluidType = 1;
+
+        // CRITICAL: Queue for spread so water continues flowing!
+        queueSpread(brokenPos);
+
+        // Sync to chunk and mark dirty (pass lockHeld through to avoid deadlock)
+        Logger::info() << "WATER FLOW: Placing water at (" << brokenX << "," << brokenY << "," << brokenZ
+                       << ") level=" << (int)newLevel << " visualLevel=" << (int)(LEVEL_SOURCE - newLevel);
+        syncToChunk(brokenPos, newLevel, world, lockHeld);
+        markChunkDirtyAt(brokenPos);
+
+        // Also mark adjacent chunks dirty for face updates
+        for (const auto& neighbor : neighbors) {
+            markChunkDirtyAt(neighbor);
+        }
     }
 }
 
@@ -456,57 +331,392 @@ uint8_t WaterSimulation::getFluidType(int x, int y, int z) const {
 
 glm::vec2 WaterSimulation::getFlowVector(int x, int y, int z) const {
     auto it = m_waterCells.find(glm::ivec3(x, y, z));
-    return (it != m_waterCells.end()) ? it->second.flowVector : glm::vec2(0.0f, 0.0f);
+    return (it != m_waterCells.end()) ? it->second.flowDir : glm::vec2(0.0f);
 }
 
-uint8_t WaterSimulation::getShoreCounter(int x, int y, int z) const {
-    auto it = m_waterCells.find(glm::ivec3(x, y, z));
-    return (it != m_waterCells.end()) ? it->second.shoreCounter : 0;
+// ============================================================================
+// BFS Spread
+// ============================================================================
+
+void WaterSimulation::bfsSpread(World* world, int maxIterations) {
+    int iterations = 0;
+
+    while (!m_spreadQueue.empty() && iterations < maxIterations) {
+        glm::ivec3 pos = m_spreadQueue.front();
+        m_spreadQueue.pop();
+        m_spreadQueued.erase(pos);
+        iterations++;
+
+        auto it = m_waterCells.find(pos);
+        if (it == m_waterCells.end() || it->second.level == 0) {
+            continue;  // No water here anymore
+        }
+
+        uint8_t currentLevel = it->second.level;
+        uint8_t fluidType = it->second.fluidType;
+
+        // ========== Step 1: Try to flow downward ==========
+        glm::ivec3 below = pos - glm::ivec3(0, 1, 0);
+        if (canWaterFlowTo(below.x, below.y, below.z, world)) {
+            auto belowIt = m_waterCells.find(below);
+            uint8_t belowLevel = (belowIt != m_waterCells.end()) ? belowIt->second.level : 0;
+
+            // Falling water is always level 8 (like Minecraft)
+            if (belowLevel < LEVEL_SOURCE) {
+                setWaterCell(below, LEVEL_SOURCE, false, world);
+                // Update flow direction (downward)
+                m_waterCells[below].flowDir = glm::vec2(0.0f, -1.0f);
+                queueSpread(below);
+            }
+        }
+
+        // ========== Step 2: Spread horizontally ==========
+        if (currentLevel <= LEVEL_MIN_FLOW) {
+            continue;  // Can't spread further horizontally
+        }
+
+        uint8_t spreadLevel = currentLevel - 1;
+
+        // Find path to drop (Minecraft optimization)
+        glm::ivec2 dropDir = findPathToDrop(pos, world);
+
+        // Define horizontal neighbors
+        std::array<glm::ivec3, 4> horizontalNeighbors = {{
+            pos + glm::ivec3(1, 0, 0),
+            pos + glm::ivec3(-1, 0, 0),
+            pos + glm::ivec3(0, 0, 1),
+            pos + glm::ivec3(0, 0, -1)
+        }};
+
+        std::array<glm::vec2, 4> flowDirs = {{
+            glm::vec2(1.0f, 0.0f),
+            glm::vec2(-1.0f, 0.0f),
+            glm::vec2(0.0f, 1.0f),
+            glm::vec2(0.0f, -1.0f)
+        }};
+
+        for (int i = 0; i < 4; i++) {
+            glm::ivec3 neighbor = horizontalNeighbors[i];
+
+            if (!canWaterFlowTo(neighbor.x, neighbor.y, neighbor.z, world)) {
+                continue;
+            }
+
+            auto neighborIt = m_waterCells.find(neighbor);
+            uint8_t neighborLevel = (neighborIt != m_waterCells.end()) ? neighborIt->second.level : 0;
+
+            // Only spread if neighbor has less water
+            if (neighborLevel < spreadLevel) {
+                // If there's a path to drop, prioritize that direction
+                if (dropDir != glm::ivec2(0, 0)) {
+                    // Check if this neighbor is in the drop direction
+                    glm::ivec2 neighborDir(neighbor.x - pos.x, neighbor.z - pos.z);
+                    if (neighborDir != dropDir) {
+                        // Not toward drop - reduce spread level by 1 more
+                        if (spreadLevel > LEVEL_MIN_FLOW + 1) {
+                            // Spread but at lower level
+                            uint8_t reducedLevel = spreadLevel - 1;
+                            if (neighborLevel < reducedLevel) {
+                                setWaterCell(neighbor, reducedLevel, false, world);
+                                m_waterCells[neighbor].flowDir = flowDirs[i];
+                                m_waterCells[neighbor].fluidType = fluidType;
+                                queueSpread(neighbor);
+                            }
+                        }
+                        continue;
+                    }
+                }
+
+                setWaterCell(neighbor, spreadLevel, false, world);
+                m_waterCells[neighbor].flowDir = flowDirs[i];
+                m_waterCells[neighbor].fluidType = fluidType;
+                queueSpread(neighbor);
+            }
+        }
+    }
 }
 
-void WaterSimulation::addWaterSource(const glm::ivec3& position, uint8_t fluidType) {
-    // Check if source already exists
-    for (const auto& source : m_waterSources) {
-        if (source.position == position) {
-            return;
+// ============================================================================
+// BFS Remove
+// ============================================================================
+
+void WaterSimulation::bfsRemove(World* world, int maxIterations) {
+    int iterations = 0;
+
+    while (!m_removeQueue.empty() && iterations < maxIterations) {
+        glm::ivec3 pos = m_removeQueue.front();
+        m_removeQueue.pop();
+        m_removeQueued.erase(pos);
+        iterations++;
+
+        auto it = m_waterCells.find(pos);
+        if (it == m_waterCells.end() || it->second.level == 0) {
+            continue;  // Already removed
+        }
+
+        // Source blocks are never removed by BFS
+        if (it->second.isSource) {
+            continue;
+        }
+
+        // Check if this water still has valid upstream
+        if (hasValidUpstream(pos)) {
+            continue;  // Still connected to source, don't remove
+        }
+
+        // Remove this water cell
+        removeWaterCell(pos, world);
+
+        // Queue neighbors for removal check
+        std::array<glm::ivec3, 6> neighbors = {{
+            pos + glm::ivec3(1, 0, 0),
+            pos + glm::ivec3(-1, 0, 0),
+            pos + glm::ivec3(0, 1, 0),
+            pos + glm::ivec3(0, -1, 0),
+            pos + glm::ivec3(0, 0, 1),
+            pos + glm::ivec3(0, 0, -1)
+        }};
+
+        for (const auto& neighbor : neighbors) {
+            auto neighborIt = m_waterCells.find(neighbor);
+            if (neighborIt != m_waterCells.end() && !neighborIt->second.isSource) {
+                queueRemove(neighbor);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Path to Drop (Minecraft optimization)
+// ============================================================================
+
+glm::ivec2 WaterSimulation::findPathToDrop(const glm::ivec3& pos, World* world) {
+    // BFS to find nearest edge/drop within DROP_SEARCH_RADIUS blocks
+    // Returns direction to flow toward the drop
+
+    struct SearchNode {
+        glm::ivec3 pos;
+        glm::ivec2 firstDir;  // Direction of first step from origin
+        int dist;
+    };
+
+    std::queue<SearchNode> searchQueue;
+    std::unordered_set<glm::ivec3> visited;
+
+    // Start with horizontal neighbors
+    std::array<glm::ivec3, 4> dirs = {{
+        glm::ivec3(1, 0, 0),
+        glm::ivec3(-1, 0, 0),
+        glm::ivec3(0, 0, 1),
+        glm::ivec3(0, 0, -1)
+    }};
+
+    for (const auto& dir : dirs) {
+        glm::ivec3 neighbor = pos + dir;
+        if (canWaterFlowTo(neighbor.x, neighbor.y, neighbor.z, world)) {
+            searchQueue.push({neighbor, glm::ivec2(dir.x, dir.z), 1});
+            visited.insert(neighbor);
         }
     }
 
-    m_waterSources.push_back(WaterSource(position, fluidType));
-}
+    while (!searchQueue.empty()) {
+        SearchNode node = searchQueue.front();
+        searchQueue.pop();
 
-void WaterSimulation::removeWaterSource(const glm::ivec3& position) {
-    m_waterSources.erase(
-        std::remove_if(m_waterSources.begin(), m_waterSources.end(),
-            [&position](const WaterSource& source) {
-                return source.position == position;
-            }),
-        m_waterSources.end()
-    );
-}
+        // Check if there's a drop below this position
+        glm::ivec3 below = node.pos - glm::ivec3(0, 1, 0);
+        if (canWaterFlowTo(below.x, below.y, below.z, world)) {
+            // Found a drop! Return direction to flow
+            return node.firstDir;
+        }
 
-bool WaterSimulation::hasWaterSource(const glm::ivec3& position) const {
-    for (const auto& source : m_waterSources) {
-        if (source.position == position) {
-            return true;
+        // Continue searching if within radius
+        if (node.dist >= DROP_SEARCH_RADIUS) {
+            continue;
+        }
+
+        for (const auto& dir : dirs) {
+            glm::ivec3 next = node.pos + dir;
+            if (visited.find(next) == visited.end() &&
+                canWaterFlowTo(next.x, next.y, next.z, world)) {
+                visited.insert(next);
+                searchQueue.push({next, node.firstDir, node.dist + 1});
+            }
         }
     }
+
+    // No drop found
+    return glm::ivec2(0, 0);
+}
+
+// ============================================================================
+// Upstream Check
+// ============================================================================
+
+bool WaterSimulation::hasValidUpstream(const glm::ivec3& pos) const {
+    auto it = m_waterCells.find(pos);
+    if (it == m_waterCells.end()) return false;
+
+    uint8_t currentLevel = it->second.level;
+
+    // Source blocks are always valid
+    if (it->second.isSource) return true;
+
+    // Check above (water falling from above)
+    glm::ivec3 above = pos + glm::ivec3(0, 1, 0);
+    auto aboveIt = m_waterCells.find(above);
+    if (aboveIt != m_waterCells.end() && aboveIt->second.level > 0) {
+        return true;  // Fed by water above
+    }
+
+    // Check horizontal neighbors for higher water
+    std::array<glm::ivec3, 4> neighbors = {{
+        pos + glm::ivec3(1, 0, 0),
+        pos + glm::ivec3(-1, 0, 0),
+        pos + glm::ivec3(0, 0, 1),
+        pos + glm::ivec3(0, 0, -1)
+    }};
+
+    for (const auto& neighbor : neighbors) {
+        auto neighborIt = m_waterCells.find(neighbor);
+        if (neighborIt != m_waterCells.end()) {
+            // Neighbor has higher level (would flow to us)
+            if (neighborIt->second.level > currentLevel) {
+                return true;
+            }
+            // Neighbor is a source at same level or higher
+            if (neighborIt->second.isSource && neighborIt->second.level >= currentLevel) {
+                return true;
+            }
+        }
+    }
+
     return false;
 }
 
-void WaterSimulation::markAsWaterBody(const std::unordered_set<glm::ivec3>& cells, bool infinite) {
-    WaterBody body;
-    body.cells = cells;
-    body.isInfinite = infinite;
-    body.minLevel = 200;
-    m_waterBodies.push_back(body);
+// ============================================================================
+// Helper Methods
+// ============================================================================
+
+void WaterSimulation::queueSpread(const glm::ivec3& pos) {
+    if (m_spreadQueued.find(pos) == m_spreadQueued.end()) {
+        m_spreadQueue.push(pos);
+        m_spreadQueued.insert(pos);
+    }
 }
 
-void WaterSimulation::notifyChunkUnload(int chunkX, int chunkY, int chunkZ) {
-    // PERFORMANCE FIX (2025-11-23): Clean up water cells from unloaded chunks
-    // Without this, water cells accumulate infinitely as player moves
+void WaterSimulation::queueRemove(const glm::ivec3& pos) {
+    if (m_removeQueued.find(pos) == m_removeQueued.end()) {
+        m_removeQueue.push(pos);
+        m_removeQueued.insert(pos);
+    }
+}
 
-    // Calculate chunk bounds in world coordinates (32x32x32 chunks)
+void WaterSimulation::setWaterCell(const glm::ivec3& pos, uint8_t level, bool isSource, World* world) {
+    WaterCell& cell = m_waterCells[pos];
+    cell.level = level;
+    cell.isSource = isSource;
+    if (isSource) {
+        m_sourceBlocks.insert(pos);
+    }
+
+    syncToChunk(pos, level, world);
+    markChunkDirtyAt(pos);
+}
+
+void WaterSimulation::removeWaterCell(const glm::ivec3& pos, World* world) {
+    m_waterCells.erase(pos);
+    m_sourceBlocks.erase(pos);
+
+    syncToChunk(pos, 0, world);
+    markChunkDirtyAt(pos);
+}
+
+void WaterSimulation::syncToChunk(const glm::ivec3& pos, uint8_t level, World* world, bool lockHeld) {
+    if (!world) return;
+
+    // =========================================================================
+    // WATER BLOCK SYNC: Place water blocks and set metadata
+    // =========================================================================
+
+    float worldX = static_cast<float>(pos.x);
+    float worldY = static_cast<float>(pos.y);
+    float worldZ = static_cast<float>(pos.z);
+
+    // BLOCK_WATER = 5 (from terrain_constants.h)
+    constexpr int BLOCK_WATER = 5;
+
+    // Convert level (0-8) to visual height (0-7)
+    // Level 8 = full water = visual 0
+    // Level 1 = minimum = visual 7
+    uint8_t visualLevel = (level >= LEVEL_SOURCE) ? 0 : (LEVEL_SOURCE - level);
+    if (visualLevel > 7) visualLevel = 7;
+
+    if (level > 0) {
+        // Place water block if not already water
+        int currentBlock = lockHeld ? world->getBlockAtUnsafe(worldX, worldY, worldZ)
+                                    : world->getBlockAt(worldX, worldY, worldZ);
+        if (currentBlock == 0) {  // Only place water in air blocks
+            if (lockHeld) {
+                world->setBlockAtUnsafe(worldX, worldY, worldZ, BLOCK_WATER);
+            } else {
+                world->setBlockAt(worldX, worldY, worldZ, BLOCK_WATER, false);
+            }
+        }
+
+        // Set metadata using World's method (handles coordinates correctly)
+        if (lockHeld) {
+            world->setBlockMetadataAtUnsafe(worldX, worldY, worldZ, visualLevel);
+        } else {
+            world->setBlockMetadataAt(worldX, worldY, worldZ, visualLevel);
+        }
+
+        std::cerr << "[DEBUG] syncToChunk: Set metadata at (" << pos.x << "," << pos.y << "," << pos.z
+                  << ") level=" << (int)level << " visualLevel=" << (int)visualLevel << std::endl;
+    }
+}
+
+void WaterSimulation::markChunkDirtyAt(const glm::ivec3& pos) {
+    glm::ivec3 chunkPos = worldToChunk(pos);
+    m_dirtyChunks.insert(chunkPos);
+}
+
+bool WaterSimulation::isBlockSolid(int x, int y, int z, World* world) const {
+    if (!world) return true;
+
+    int blockID = world->getBlockAt(x, y, z);
+    if (blockID == 0) return false;  // Air
+
+    auto& registry = BlockRegistry::instance();
+    if (blockID < 0 || blockID >= registry.count()) return false;
+
+    const BlockDefinition& blockDef = registry.get(blockID);
+    return !blockDef.isLiquid;
+}
+
+bool WaterSimulation::canWaterFlowTo(int x, int y, int z, World* world) const {
+    if (!world) return false;
+
+    int blockID = world->getBlockAt(x, y, z);
+
+    // Can only flow into air - not into existing water (prevents infinite spread into ocean)
+    return blockID == 0;
+}
+
+glm::ivec3 WaterSimulation::worldToChunk(const glm::ivec3& worldPos) const {
+    // Use arithmetic right shift for correct negative handling
+    return glm::ivec3(
+        worldPos.x >> 5,  // Divide by 32
+        worldPos.y >> 5,
+        worldPos.z >> 5
+    );
+}
+
+// ============================================================================
+// Chunk Lifecycle
+// ============================================================================
+
+void WaterSimulation::notifyChunkUnload(int chunkX, int chunkY, int chunkZ) {
     int minX = chunkX * 32;
     int minY = chunkY * 32;
     int minZ = chunkZ * 32;
@@ -514,125 +724,96 @@ void WaterSimulation::notifyChunkUnload(int chunkX, int chunkY, int chunkZ) {
     int maxY = minY + 32;
     int maxZ = minZ + 32;
 
-    // Remove all water cells in this chunk
+    // Remove water cells in this chunk
     for (auto it = m_waterCells.begin(); it != m_waterCells.end();) {
         const glm::ivec3& pos = it->first;
         if (pos.x >= minX && pos.x < maxX &&
             pos.y >= minY && pos.y < maxY &&
             pos.z >= minZ && pos.z < maxZ) {
-            m_dirtyCells.erase(pos);  // Also remove from dirty set
+            m_sourceBlocks.erase(pos);
+            m_spreadQueued.erase(pos);
+            m_removeQueued.erase(pos);
             it = m_waterCells.erase(it);
         } else {
             ++it;
         }
     }
-
-    // Remove water sources in this chunk
-    m_waterSources.erase(
-        std::remove_if(m_waterSources.begin(), m_waterSources.end(),
-            [minX, minY, minZ, maxX, maxY, maxZ](const WaterSource& source) {
-                return source.position.x >= minX && source.position.x < maxX &&
-                       source.position.y >= minY && source.position.y < maxY &&
-                       source.position.z >= minZ && source.position.z < maxZ;
-            }),
-        m_waterSources.end()
-    );
 }
 
 void WaterSimulation::notifyChunkUnloadBatch(const std::vector<std::tuple<int, int, int>>& chunks) {
-    // PERFORMANCE OPTIMIZATION (2025-11-23): Batch water cleanup for 50× speedup
-    // Instead of iterating water cells 50 times (once per chunk), iterate ONCE
-    // and check each water cell against all chunks in the batch
-
     if (chunks.empty()) return;
 
-    // Build spatial hash of chunk bounds for O(1) lookup
-    // Maps chunk coordinate to (minX, minY, minZ, maxX, maxY, maxZ)
     std::unordered_set<glm::ivec3> chunkSet;
     for (const auto& [chunkX, chunkY, chunkZ] : chunks) {
         chunkSet.insert(glm::ivec3(chunkX, chunkY, chunkZ));
     }
 
-    // Single pass through all water cells - check if cell is in any unloading chunk
     for (auto it = m_waterCells.begin(); it != m_waterCells.end();) {
         const glm::ivec3& pos = it->first;
+        glm::ivec3 cellChunk = worldToChunk(pos);
 
-        // Convert world position to chunk coordinates
-        glm::ivec3 cellChunk(
-            pos.x >> 5,  // Divide by 32 (chunk size)
-            pos.y >> 5,
-            pos.z >> 5
-        );
-
-        // Check if this water cell is in any of the chunks being unloaded
         if (chunkSet.find(cellChunk) != chunkSet.end()) {
-            m_dirtyCells.erase(pos);  // Also remove from dirty set
+            m_sourceBlocks.erase(pos);
+            m_spreadQueued.erase(pos);
+            m_removeQueued.erase(pos);
             it = m_waterCells.erase(it);
         } else {
             ++it;
         }
     }
-
-    // Single pass through water sources - check if source is in any unloading chunk
-    m_waterSources.erase(
-        std::remove_if(m_waterSources.begin(), m_waterSources.end(),
-            [&chunkSet](const WaterSource& source) {
-                glm::ivec3 sourceChunk(
-                    static_cast<int>(source.position.x) >> 5,
-                    static_cast<int>(source.position.y) >> 5,
-                    static_cast<int>(source.position.z) >> 5
-                );
-                return chunkSet.find(sourceChunk) != chunkSet.end();
-            }),
-        m_waterSources.end()
-    );
 }
 
-bool WaterSimulation::isBlockSolid(int x, int y, int z, World* world) const {
-    int blockID = world->getBlockAt(x, y, z);
-    if (blockID == 0) return false; // Air
+// ============================================================================
+// Legacy API (for compatibility)
+// ============================================================================
 
-    auto& registry = BlockRegistry::instance();
-    // Bounds check before registry access to prevent crash
-    if (blockID < 0 || blockID >= registry.count()) return false;
+void WaterSimulation::setWaterLevel(int x, int y, int z, uint8_t level, uint8_t fluidType) {
+    glm::ivec3 pos(x, y, z);
 
-    const BlockDefinition& blockDef = registry.get(blockID);
+    if (level == 0) {
+        removeWaterCell(pos, nullptr);
+    } else {
+        // Convert 0-255 to 0-8
+        uint8_t newLevel = (level >= 224) ? LEVEL_SOURCE : ((level / 32) + 1);
+        if (newLevel > LEVEL_SOURCE) newLevel = LEVEL_SOURCE;
 
-    // Water/lava are not solid
-    if (blockDef.isLiquid) return false;
+        WaterCell& cell = m_waterCells[pos];
+        cell.level = newLevel;
+        cell.fluidType = fluidType;
+        cell.isSource = (level == 255);
 
-    return true;
-}
+        if (cell.isSource) {
+            m_sourceBlocks.insert(pos);
+        }
 
-bool WaterSimulation::isBlockLiquid(int x, int y, int z, World* world) const {
-    // Check if there's water in simulation
-    auto it = m_waterCells.find(glm::ivec3(x, y, z));
-    if (it != m_waterCells.end() && it->second.level > 0) {
-        return true;
+        queueSpread(pos);
     }
-
-    // Check if block is marked as liquid
-    int blockID = world->getBlockAt(x, y, z);
-    if (blockID == 0) return false;
-
-    auto& registry = BlockRegistry::instance();
-    // Bounds check before registry access to prevent crash
-    if (blockID < 0 || blockID >= registry.count()) return false;
-
-    const BlockDefinition& blockDef = registry.get(blockID);
-
-    return blockDef.isLiquid;
 }
 
-glm::ivec3 WaterSimulation::worldToChunk(const glm::ivec3& worldPos) const {
-    return glm::ivec3(
-        worldPos.x / Chunk::WIDTH,
-        worldPos.y / Chunk::HEIGHT,
-        worldPos.z / Chunk::DEPTH
-    );
+void WaterSimulation::addWaterSource(const glm::ivec3& position, uint8_t fluidType) {
+    WaterCell& cell = m_waterCells[position];
+    cell.level = LEVEL_SOURCE;
+    cell.fluidType = fluidType;
+    cell.isSource = true;
+    m_sourceBlocks.insert(position);
+    queueSpread(position);
 }
 
-void WaterSimulation::markDirty(const glm::ivec3& pos) {
-    // Add cell to dirty set (will be updated next frame)
-    m_dirtyCells.insert(pos);
+void WaterSimulation::removeWaterSource(const glm::ivec3& position) {
+    removeWaterSource(position.x, position.y, position.z, nullptr);
+}
+
+bool WaterSimulation::hasWaterSource(const glm::ivec3& position) const {
+    return m_sourceBlocks.find(position) != m_sourceBlocks.end();
+}
+
+void WaterSimulation::markAsWaterBody(const std::unordered_set<glm::ivec3>& cells, bool infinite) {
+    (void)infinite;
+    // Mark all cells as sources (infinite water body)
+    for (const auto& pos : cells) {
+        WaterCell& cell = m_waterCells[pos];
+        cell.level = LEVEL_SOURCE;
+        cell.isSource = true;
+        m_sourceBlocks.insert(pos);
+    }
 }

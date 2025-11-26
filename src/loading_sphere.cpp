@@ -217,11 +217,6 @@ bool LoadingSphere::createBuffers() {
 }
 
 void LoadingSphere::render() {
-    // TODO: LoadingSphere disabled until converted to use CompressedVertex or separate pipeline
-    // The main graphics pipeline now uses 12-byte CompressedVertex format which is incompatible
-    // with the 48-byte Vertex format used by the sphere mesh.
-    return;
-
     if (!m_initialized) return;
 
     // Calculate rotation based on elapsed time
@@ -271,9 +266,9 @@ void LoadingSphere::render() {
     // Get command buffer and bind pipeline
     VkCommandBuffer commandBuffer = m_renderer->getCurrentCommandBuffer();
 
-    // Bind the graphics pipeline (same as voxels)
+    // Bind the sphere pipeline (uses old 48-byte Vertex format)
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                      m_renderer->getGraphicsPipeline());
+                      m_renderer->getSpherePipeline());
 
     // Try to use map preview texture if available
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;

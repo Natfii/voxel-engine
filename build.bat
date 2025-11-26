@@ -124,6 +124,22 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
         exit /b 1
     )
 
+    "%VULKAN_SDK%\Bin\glslc.exe" sphere.vert -o sphere_vert.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile sphere.vert!
+        cd ..
+        pause
+        exit /b 1
+    )
+
+    "%VULKAN_SDK%\Bin\glslc.exe" sphere.frag -o sphere_frag.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile sphere.frag!
+        cd ..
+        pause
+        exit /b 1
+    )
+
     echo Shaders compiled successfully!
 
 ) else if exist "%VULKAN_SDK%\Bin\glslangValidator.exe" (
@@ -187,6 +203,22 @@ if exist "%VULKAN_SDK%\Bin\glslc.exe" (
     "%VULKAN_SDK%\Bin\glslangValidator.exe" -V mesh.frag -o mesh_frag.spv
     if errorlevel 1 (
         echo [ERROR] Failed to compile mesh.frag!
+        cd ..
+        pause
+        exit /b 1
+    )
+
+    "%VULKAN_SDK%\Bin\glslangValidator.exe" -V sphere.vert -o sphere_vert.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile sphere.vert!
+        cd ..
+        pause
+        exit /b 1
+    )
+
+    "%VULKAN_SDK%\Bin\glslangValidator.exe" -V sphere.frag -o sphere_frag.spv
+    if errorlevel 1 (
+        echo [ERROR] Failed to compile sphere.frag!
         cd ..
         pause
         exit /b 1

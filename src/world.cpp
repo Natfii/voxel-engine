@@ -15,6 +15,7 @@
 
 #include "world.h"
 #include "world_utils.h"
+#include <iostream>
 #include "world_constants.h"
 #include "world_streaming.h"
 #include "terrain_constants.h"
@@ -423,6 +424,13 @@ void World::decorateWorld() {
                 }
 
                 if (groundY < 10) continue;  // Too low for tree placement
+
+                // Check ground block type - trees only on grass, dirt, snow (not stone!)
+                int groundBlockID = getBlockAt(worldX, static_cast<float>(groundY), worldZ);
+                if (groundBlockID != BLOCK_GRASS && groundBlockID != BLOCK_DIRT &&
+                    groundBlockID != BLOCK_SNOW && groundBlockID != BLOCK_SAND) {
+                    continue;  // Can't place tree on stone/water/etc
+                }
 
                 // placeTree expects block coordinates
                 // Check for float-to-int overflow before casting
@@ -896,6 +904,13 @@ void World::decorateChunk(Chunk* chunk) {
             }
 
             if (groundY < 10) continue;  // Too low for tree placement
+
+            // Check ground block type - trees only on grass, dirt, snow (not stone!)
+            int groundBlockID = getBlockAt(worldX, static_cast<float>(groundY), worldZ);
+            if (groundBlockID != BLOCK_GRASS && groundBlockID != BLOCK_DIRT &&
+                groundBlockID != BLOCK_SNOW && groundBlockID != BLOCK_SAND) {
+                continue;  // Can't place tree on stone/water/etc
+            }
 
             // Bounds check before casting to int
             if (worldX < INT_MIN || worldX > INT_MAX || worldZ < INT_MIN || worldZ > INT_MAX) {
@@ -1782,6 +1797,9 @@ void World::setBlockMetadataAt(float worldX, float worldY, float worldZ, uint8_t
 }
 
 void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer* renderer) {
+    // DEBUG: Confirm breakBlock is being called
+    std::cerr << "[DEBUG] breakBlock called at (" << worldX << ", " << worldY << ", " << worldZ << ")" << std::endl;
+
     // THREAD SAFETY: Acquire unique lock for exclusive write access
     // This prevents race conditions when multiple threads break blocks simultaneously
     std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
@@ -1969,6 +1987,31 @@ void World::breakBlock(float worldX, float worldY, float worldZ, VulkanRenderer*
         if (wasOpaque) {
             bool isOpaque = false;  // Air is transparent
             m_lightingSystem->onBlockChanged(blockPos, wasOpaque, isOpaque);
+        }
+    }
+
+    // Trigger water flow from adjacent water blocks
+    // Uses heightmap approach: water at/below sea level is treated as infinite source
+    // NOTE: Lock was released at line 1958, so we pass lockHeld=false
+    m_waterSimulation->triggerWaterFlow(
+        static_cast<int>(worldX),
+        static_cast<int>(worldY),
+        static_cast<int>(worldZ),
+        this,
+        false  // lockHeld=false - lock was already released
+    );
+
+    // IMPORTANT: Regenerate mesh AFTER water is placed so it's immediately visible
+    // triggerWaterFlow marks chunks dirty, but we need to rebuild NOW
+    Chunk* waterChunk = getChunkAtWorldPos(worldX, worldY, worldZ);
+    if (waterChunk) {
+        try {
+            waterChunk->generateMesh(this);
+            renderer->beginAsyncChunkUpload();
+            waterChunk->createVertexBufferBatched(renderer);
+            renderer->submitAsyncChunkUpload(waterChunk);
+        } catch (const std::exception& e) {
+            Logger::error() << "Failed to update chunk after water flow: " << e.what();
         }
     }
 }
@@ -2550,11 +2593,14 @@ bool World::loadWorld(const std::string& worldPath) {
         metaFile.read(reinterpret_cast<char*>(&savedDepth), sizeof(int));
         metaFile.read(reinterpret_cast<char*>(&savedSeed), sizeof(int));
 
-        // Verify dimensions match current world
+        // Update dimensions from saved world (streaming worlds are initialized as 1x1x1)
+        // Old check would fail when loading saved worlds with different dimensions
         if (savedWidth != m_width || savedHeight != m_height || savedDepth != m_depth) {
-            Logger::error() << "World dimension mismatch - saved: " << savedWidth << "x" << savedHeight
-                          << "x" << savedDepth << ", current: " << m_width << "x" << m_height << "x" << m_depth;
-            return false;
+            Logger::info() << "Updating world dimensions from save: " << savedWidth << "x" << savedHeight
+                          << "x" << savedDepth << " (was " << m_width << "x" << m_height << "x" << m_depth << ")";
+            m_width = savedWidth;
+            m_height = savedHeight;
+            m_depth = savedDepth;
         }
 
         // Update seed to match saved world

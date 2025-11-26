@@ -305,6 +305,7 @@ public:
     VkPipeline getGraphicsPipeline() const { return m_graphicsPipeline; }       ///< Get standard pipeline
     VkPipeline getWireframePipeline() const { return m_wireframePipeline; }     ///< Get wireframe pipeline
     VkPipeline getLinePipeline() const { return m_linePipeline; }               ///< Get line pipeline
+    VkPipeline getSpherePipeline() const { return m_spherePipeline; }               ///< Get line pipeline
     VkPipeline getTransparentPipeline() const { return m_transparentPipeline; } ///< Get transparent pipeline (no depth write)
     VkPipeline getMeshPipeline() const { return m_meshPipeline; }               ///< Get mesh rendering pipeline
     VkPipelineLayout getPipelineLayout() const { return m_pipelineLayout; }     ///< Get pipeline layout
@@ -841,6 +842,7 @@ private:
     void createLinePipeline();
     void createSkyboxPipeline();
     void createMeshPipeline();
+    void createSpherePipeline();
     void createFramebuffers();
     void createCommandPool();
     void createDepthResources();
@@ -927,6 +929,9 @@ private:
     VkDescriptorSetLayout m_meshDescriptorSetLayout;
     VkPipelineLayout m_meshPipelineLayout;
     VkPipeline m_meshPipeline;
+
+    // Sphere pipeline for loading screen (uses uncompressed Vertex format)
+    VkPipeline m_spherePipeline;
 
     // Command buffers
     VkCommandPool m_commandPool;

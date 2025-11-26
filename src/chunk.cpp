@@ -490,27 +490,39 @@ void Chunk::generate(BiomeMap* biomeMap) {
 
                     if (depthFromSurface == 1) {
                         // ================================================================
-                        // SNOW ON MOUNTAIN PEAKS (2025-11-25)
+                        // ELEVATION-AWARE SURFACE BLOCKS (2025-11-25)
                         // ================================================================
-                        // High elevation terrain gets snow regardless of biome
-                        // Creates realistic snow-capped mountain peaks
+                        // - High elevation (>SNOW_LINE): snow
+                        // - Mid elevation (STONE_LINE to SNOW_LINE): exposed stone (mountains)
+                        // - Low elevation: biome's normal surface block (grass/sand/etc)
                         // ================================================================
+                        constexpr int STONE_LINE = 100;  // Stone starts appearing at Y=100
+
                         if (worldY >= SNOW_LINE + SNOW_TRANSITION) {
                             // Fully above snow line - always snow
                             m_blocks[x][y][z] = BLOCK_SNOW;
                         } else if (worldY >= SNOW_LINE) {
-                            // Transition zone - mix snow and normal surface using noise
-                            // Creates patchy, natural-looking snow line
+                            // Snow transition zone - mix snow and stone using noise
                             float snowNoise = biomeMap->getTerrainNoise(worldX, worldZ);
                             float snowChance = static_cast<float>(worldY - SNOW_LINE) / static_cast<float>(SNOW_TRANSITION);
-                            // Higher elevation = more snow, noise adds variation
                             if (snowNoise > (1.0f - snowChance * 2.0f)) {
                                 m_blocks[x][y][z] = BLOCK_SNOW;
+                            } else {
+                                m_blocks[x][y][z] = BLOCK_STONE;  // Exposed stone below snow
+                            }
+                        } else if (worldY >= STONE_LINE && biome->height_multiplier > 1.5f) {
+                            // Mid-elevation mountainous terrain - exposed stone
+                            // Only for biomes with height_multiplier > 1.5 (mountains)
+                            float stoneNoise = biomeMap->getTerrainNoise(worldX + 1000.0f, worldZ);
+                            float stoneChance = static_cast<float>(worldY - STONE_LINE) / static_cast<float>(SNOW_LINE - STONE_LINE);
+                            // Higher = more stone, noise adds variation
+                            if (stoneNoise > (1.0f - stoneChance * 1.5f)) {
+                                m_blocks[x][y][z] = BLOCK_STONE;
                             } else {
                                 m_blocks[x][y][z] = biome->primary_surface_block;
                             }
                         } else {
-                            // Below snow line - use biome's normal surface block
+                            // Low elevation - use biome's normal surface block
                             m_blocks[x][y][z] = biome->primary_surface_block;
                         }
                     } else if (depthFromSurface <= TOPSOIL_DEPTH) {
@@ -797,6 +809,50 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
 
         // Neighbor doesn't exist (edge of loaded world) - return air
         return 0;
+    };
+
+    // Helper: Fast neighbor metadata query for water levels across chunk boundaries
+    auto getNeighborMetadata = [this, neighborPosX, neighborNegX, neighborPosY, neighborNegY, neighborPosZ, neighborNegZ]
+                               (int x, int y, int z, uint8_t defaultValue = 0) -> uint8_t {
+        // Inside this chunk - direct array access
+        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
+            return m_blockMetadata[x][y][z];
+        }
+
+        // Out of bounds - check cached neighbor chunks
+        Chunk* neighbor = nullptr;
+        int localX = x;
+        int localY = y;
+        int localZ = z;
+
+        // Determine which neighbor chunk and convert to local coordinates
+        if (x < 0) {
+            neighbor = neighborNegX;
+            localX = x + WIDTH;  // -1 becomes 31
+        } else if (x >= WIDTH) {
+            neighbor = neighborPosX;
+            localX = x - WIDTH;  // 32 becomes 0
+        } else if (y < 0) {
+            neighbor = neighborNegY;
+            localY = y + HEIGHT;
+        } else if (y >= HEIGHT) {
+            neighbor = neighborPosY;
+            localY = y - HEIGHT;
+        } else if (z < 0) {
+            neighbor = neighborNegZ;
+            localZ = z + DEPTH;
+        } else if (z >= DEPTH) {
+            neighbor = neighborPosZ;
+            localZ = z - DEPTH;
+        }
+
+        // If neighbor exists, get metadata from it (direct array access - fast!)
+        if (neighbor && localX >= 0 && localX < WIDTH && localY >= 0 && localY < HEIGHT && localZ >= 0 && localZ < DEPTH) {
+            return neighbor->m_blockMetadata[localX][localY][localZ];
+        }
+
+        // Neighbor doesn't exist (edge of loaded world) - return default
+        return defaultValue;
     };
 
     // Helper lambda to check if a block is solid (non-air)
@@ -1211,14 +1267,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
 
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            // Water: render if neighbor is not water, OR if water at different level
-                            if (neighborIsLiquid) {
-                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                                uint8_t neighborLevel = (Z > 0) ? m_blockMetadata[X][Y][Z-1] : 0;
-                                shouldRender = (currentLevel != neighborLevel);
-                            } else {
-                                shouldRender = true;
-                            }
+                            // Water: render side faces against air and solid blocks, NOT against other water
+                            shouldRender = !neighborIsLiquid;
                         } else if (isCurrentTransparent) {
                             // Transparent blocks (leaves, glass): render unless neighbor is same block type
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
@@ -1278,13 +1328,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X, Y, Z + 1);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            if (neighborIsLiquid) {
-                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                                uint8_t neighborLevel = (Z < DEPTH-1) ? m_blockMetadata[X][Y][Z+1] : 0;
-                                shouldRender = (currentLevel != neighborLevel);
-                            } else {
-                                shouldRender = true;
-                            }
+                            // Water: render side faces against air and solid blocks, NOT against other water
+                            shouldRender = !neighborIsLiquid;
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
@@ -1342,13 +1387,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X - 1, Y, Z);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            if (neighborIsLiquid) {
-                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                                uint8_t neighborLevel = (X > 0) ? m_blockMetadata[X-1][Y][Z] : 0;
-                                shouldRender = (currentLevel != neighborLevel);
-                            } else {
-                                shouldRender = true;
-                            }
+                            // Water: render side faces against air and solid blocks, NOT against other water
+                            shouldRender = !neighborIsLiquid;
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
@@ -1406,13 +1446,8 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X + 1, Y, Z);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            if (neighborIsLiquid) {
-                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                                uint8_t neighborLevel = (X < WIDTH-1) ? m_blockMetadata[X+1][Y][Z] : 0;
-                                shouldRender = (currentLevel != neighborLevel);
-                            } else {
-                                shouldRender = true;
-                            }
+                            // Water: render side faces against air and solid blocks, NOT against other water
+                            shouldRender = !neighborIsLiquid;
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {

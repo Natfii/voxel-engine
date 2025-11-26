@@ -50,15 +50,15 @@ BiomeMap::BiomeMap(int seed, float tempBias, float moistBias, float ageBias,
     m_terrainNoise->SetFrequency(0.006f);       // Was 0.015 - MUCH lower for grand terrain
                                                  // 0.006 = ~167-block features (gradual hills)
 
-    // Mountain range noise - creates wide, gradual mountain ranges (2025-11-25)
-    // Very low frequency = mountains span thousands of blocks for grand, sweeping peaks
+    // Mountain range noise - creates VERY wide mountain ranges
+    // Lower frequency = wider mountain ranges (0.0004 = ~2500 block features)
     m_mountainRangeNoise = std::make_unique<FastNoiseLite>(seed + 500);
     m_mountainRangeNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_mountainRangeNoise->SetFractalType(FastNoiseLite::FractalType_Ridged);  // Ridged for range shapes
     m_mountainRangeNoise->SetFractalOctaves(4);
     m_mountainRangeNoise->SetFractalLacunarity(2.0f);
     m_mountainRangeNoise->SetFractalGain(0.5f);
-    m_mountainRangeNoise->SetFrequency(0.0008f);  // VERY low - mountain ranges 1000+ blocks wide
+    m_mountainRangeNoise->SetFrequency(0.0004f);  // Even lower - mountains 2000+ blocks wide
 
     // Cave noise - 3D cellular noise for chamber-style caves
     m_caveNoise = std::make_unique<FastNoiseLite>(seed + 300);
@@ -243,9 +243,9 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
         rangeNoise = (rangeNoise + 1.0f) * 0.5f;  // Map to [0, 1]
 
         // Mountains only rise where range noise is high
-        // This creates gradual slopes from plains → foothills → peaks
-        // Power curve creates smooth transition at edges
-        float mountainInfluence = std::pow(rangeNoise, 1.5f);
+        // This creates sharper peaks with steeper slopes
+        // Lower power = sharper transition from plains to peaks (was 1.5, now 0.9)
+        float mountainInfluence = std::pow(rangeNoise, 0.9f);
 
         // Scale the height multiplier by mountain influence
         // At mountain edges: multiplier ~1.0 (normal terrain)
@@ -275,7 +275,8 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
 
         // Cache miss - compute outside the lock to avoid deadlock
         if (needsCompute) {
-            const float sampleRadius = 500.0f;
+            // Sample larger area to detect wide mountain ranges (was 500, now 800)
+            const float sampleRadius = 800.0f;
             int mountainCount = 0;
             const int totalSamples = 8;
 
@@ -291,7 +292,9 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
             }
 
             float mountainDensity = mountainCount / float(totalSamples);
-            sizeScaling = 0.8f + (mountainDensity * 0.4f);  // Range: 0.8x to 1.2x
+            // Increased scaling range: small mountain patches = 0.7x, large mountain ranges = 1.6x
+            // This allows for much taller peaks in wide mountain areas
+            sizeScaling = 0.7f + (mountainDensity * 0.9f);  // Range: 0.7x to 1.6x
 
             // Store in cache (write lock, no other locks held)
             std::unique_lock<std::shared_mutex> writeLock(m_mountainCacheMutex);

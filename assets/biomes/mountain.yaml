@@ -19,10 +19,14 @@ lowest_y: 70           # Higher base elevation
 biome_rarity_weight: 35  # Somewhat uncommon
 river_compatible: true   # Rivers flow down mountains
 underwater_biome: false
-height_multiplier: 2.5   # 2.5x taller - gradual but still dramatic (was 3.5)
+height_multiplier: 6.0   # 6.0x taller for very dramatic tall mountains
 
 # Primary blocks
-primary_surface_block: 1   # Stone (exposed rock on peaks)
+# NOTE: Terrain generation uses elevation-aware surfaces:
+# - Low elevation: grass (allows trees)
+# - Mid elevation: stone (exposed rock)
+# - High elevation: snow (mountain peaks)
+primary_surface_block: 3   # Grass (base - terrain gen overrides at high elevations)
 primary_stone_block: 1     # Stone
 primary_log_block: 6       # Oak log (at lower elevations)
 primary_leave_block: 7     # Oak leaves

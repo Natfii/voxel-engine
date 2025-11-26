@@ -10,8 +10,8 @@ activity: 55           # Good structure spawning
 
 # Vegetation
 trees_spawn: true
-tree_density: 80       # Dense forest
-vegetation_density: 85 # Very lush undergrowth
+tree_density: 45       # Less dense forest (was 80)
+vegetation_density: 60 # Moderate undergrowth (was 85)
 
 # Spawning
 spawn_location: "AboveGround"

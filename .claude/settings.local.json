@@ -51,7 +51,12 @@
       "WebFetch(domain:nickmcd.me)",
       "WebFetch(domain:vkguide.dev)",
       "Bash(\"%VULKAN_SDK%\\Bin\\glslc.exe\" shader.vert -o vert.spv)",
-      "Bash(\"%VULKAN_SDK%\\Bin\\glslc.exe\" shader.frag -o frag.spv)"
+      "Bash(\"%VULKAN_SDK%\\Bin\\glslc.exe\" shader.frag -o frag.spv)",
+      "Bash(\"C:\\VulkanSDK\\1.4.328.1\\Bin\\glslc.exe\":*)",
+      "WebFetch(domain:sites.google.com)",
+      "WebFetch(domain:minecraft.wiki)",
+      "WebFetch(domain:w-shadow.com)",
+      "WebFetch(domain:www.gamedeveloper.com)"
     ],
     "deny": [],
     "ask": []
