@@ -2532,6 +2532,1559 @@ template<typename T>
 T clamp(T value, T min, T max);
 ```
 
+## 6.3 Event System
+
+The voxel engine features a comprehensive event system inspired by Minecraft Forge, providing flexible and extensible game event handling with priority-based listeners, cancellation support, and thread-safe dispatch.
+
+### Overview
+
+The event system consists of three main components:
+
+1. **Event Types** (`event_types.h`) - Defines all event classes and enums
+2. **EventDispatcher** (`event_dispatcher.h`) - Thread-safe event queue and distribution
+3. **Event Handlers** - User-defined callback functions that respond to events
+
+**Key Features:**
+- Thread-safe asynchronous and synchronous event dispatch
+- Priority-based listener ordering (LOWEST to HIGHEST + MONITOR)
+- Event cancellation to prevent default behavior
+- Filtered listeners for conditional event processing
+- Separate main-thread queue for GPU operations
+- Monitor-only listeners for logging without side effects
+
+### Event Types
+
+All events inherit from the base `Event` class and include a timestamp and cancellation state.
+
+#### Block Events
+
+**BLOCK_BREAK** - Fires when a block is broken (cancellable)
+```cpp
+struct BlockBreakEvent : Event {
+    glm::ivec3 position;      // World position of the block
+    int blockID;              // ID of the block being broken
+    BreakCause cause;         // PLAYER, EXPLOSION, WATER, GRAVITY, SCRIPT, UNKNOWN
+    int breakerEntityID;      // Entity ID of breaker (-1 if not an entity)
+};
+```
+**Use cases:** Prevent breaking protected blocks, drop custom items, trigger effects
+
+**BLOCK_PLACE** - Fires when a block is placed (cancellable)
+```cpp
+struct BlockPlaceEvent : Event {
+    glm::ivec3 position;      // Position where block will be placed
+    int blockID;              // ID of the block being placed
+    int placerEntityID;       // Entity ID of the placer
+    glm::ivec3 placedAgainst; // Position of block placed against
+};
+```
+**Use cases:** Prevent placement in protected areas, validate placement rules, trigger effects
+
+**BLOCK_INTERACT** - Fires when a player right-clicks a block (cancellable)
+```cpp
+struct BlockInteractEvent : Event {
+    glm::ivec3 position;      // Position of the interacted block
+    int blockID;              // ID of the block
+    int entityID;             // Entity ID performing interaction
+    bool isRightClick;        // True for right-click, false for left-click
+    int heldItemID;           // ID of held item (-1 if empty hand)
+};
+```
+**Use cases:** Open GUIs (chests, furnaces), trigger actions (buttons, levers), handle tool interactions
+
+**BLOCK_STEP** - Fires when an entity steps on a block
+```cpp
+struct BlockStepEvent : Event {
+    glm::ivec3 position;      // Position of the block being stepped on
+    int blockID;              // ID of the block
+    int entityID;             // Entity ID stepping on the block
+};
+```
+**Use cases:** Pressure plates, farmland trampling, speed/jump boosts, damage floors
+
+**BLOCK_UPDATE** - Fires when a block receives a scheduled update tick
+```cpp
+struct BlockUpdateEvent : Event {
+    glm::ivec3 position;      // Position of the block
+    int blockID;              // ID of the block
+};
+```
+**Use cases:** Crop growth, liquid flow, redstone updates, random ticks
+
+#### Neighbor Events
+
+**NEIGHBOR_CHANGED** - Fires when an adjacent block changes
+```cpp
+struct NeighborChangedEvent : Event {
+    glm::ivec3 position;       // Position of block receiving notification
+    glm::ivec3 neighborPos;    // Position of changed neighbor
+    int oldBlockID;            // Previous block ID at neighbor position
+    int newBlockID;            // New block ID at neighbor position
+};
+```
+**Use cases:** Redstone wire updates, torch physics, water/lava flow, grass spreading
+
+#### Chunk Events
+
+**CHUNK_LOAD** - Fires when a chunk is loaded
+```cpp
+struct ChunkLoadEvent : Event {
+    int chunkX, chunkY, chunkZ;  // Chunk coordinates
+    bool isNewChunk;             // True if newly generated, false if loaded from disk
+};
+```
+**Use cases:** Initialize chunk data, populate with entities, schedule block updates
+
+**CHUNK_UNLOAD** - Fires before a chunk is unloaded
+```cpp
+struct ChunkUnloadEvent : Event {
+    int chunkX, chunkY, chunkZ;  // Chunk coordinates
+};
+```
+**Use cases:** Save custom chunk data, clean up resources, remove entities
+
+#### Player Events
+
+**PLAYER_MOVE** - Fires when a player moves (cancellable)
+```cpp
+struct PlayerMoveEvent : Event {
+    glm::vec3 oldPosition;    // Previous position
+    glm::vec3 newPosition;    // New position (can be modified)
+    int playerID;             // Player entity ID (0 for local player)
+};
+```
+**Use cases:** Region protection, movement restrictions, teleport triggers, anti-cheat
+
+**PLAYER_JUMP** - Fires when a player jumps
+```cpp
+struct PlayerJumpEvent : Event {
+    glm::vec3 position;       // Position where jump occurred
+    int playerID;             // Player entity ID
+};
+```
+**Use cases:** Modify jump height, prevent jumping, custom effects, statistics
+
+**PLAYER_LAND** - Fires when a player lands after falling
+```cpp
+struct PlayerLandEvent : Event {
+    glm::vec3 position;       // Landing position
+    float fallDistance;       // Distance fallen in blocks
+    int playerID;             // Player entity ID
+};
+```
+**Use cases:** Calculate fall damage, landing effects, ground slam abilities
+
+#### Time Events
+
+**TIME_CHANGE** - Fires when world time changes
+```cpp
+struct TimeChangeEvent : Event {
+    float oldTime;  // Previous time (0.0 = midnight, 0.5 = noon)
+    float newTime;  // New time (0.0 = midnight, 0.5 = noon)
+};
+```
+**Use cases:** Update time-dependent systems, trigger time-based events
+
+**DAY_START** - Fires at sunrise
+**NIGHT_START** - Fires at sunset
+
+#### Custom Events
+
+**CUSTOM** - Flexible event for mods and scripts
+```cpp
+struct CustomEvent : Event {
+    std::string eventName;    // Event identifier
+    std::any data;            // Custom data payload (any type)
+};
+```
+**Use cases:** Mod-specific events, quest triggers, custom game modes
+
+### Event Priorities
+
+Listeners are executed in priority order (higher priority = called first):
+
+```cpp
+enum class EventPriority {
+    LOWEST = 0,   // Called last
+    LOW = 1,      // Low priority
+    NORMAL = 2,   // Default priority
+    HIGH = 3,     // High priority
+    HIGHEST = 4,  // Called first
+    MONITOR = 5   // For logging/monitoring only, cannot cancel, always called
+};
+```
+
+**Priority Guidelines:**
+- **HIGHEST** - Permission checks, protection systems
+- **HIGH** - Core game mechanics that should run early
+- **NORMAL** - Standard gameplay features (default)
+- **LOW** - Optional features, quality-of-life additions
+- **LOWEST** - Cleanup, final processing
+- **MONITOR** - Logging, statistics (read-only, no cancellation)
+
+### Using the Event System
+
+#### Subscribing to Events
+
+```cpp
+#include "event_dispatcher.h"
+#include "event_types.h"
+
+// Get the singleton dispatcher
+auto& dispatcher = EventDispatcher::instance();
+
+// Subscribe to an event
+ListenerHandle handle = dispatcher.subscribe(
+    EventType::BLOCK_BREAK,
+    [](Event& e) {
+        auto& breakEvent = static_cast<BlockBreakEvent&>(e);
+
+        // Check if it's bedrock
+        if (breakEvent.blockID == 1) {  // Bedrock ID
+            breakEvent.cancel();  // Prevent breaking
+            // Log or notify player
+        }
+    },
+    EventPriority::HIGHEST,  // Check permissions first
+    "bedrock_protection"     // Owner identifier
+);
+```
+
+#### Filtered Event Listeners
+
+Only receive events that match a filter condition:
+
+```cpp
+// Only listen to block breaks caused by players
+dispatcher.subscribeFiltered(
+    EventType::BLOCK_BREAK,
+    [](Event& e) {
+        auto& breakEvent = static_cast<BlockBreakEvent&>(e);
+        // Handle player-caused breaks
+        logPlayerAction(breakEvent.breakerEntityID, breakEvent.position);
+    },
+    [](const Event& e) {
+        auto& breakEvent = static_cast<const BlockBreakEvent&>(e);
+        return breakEvent.cause == BreakCause::PLAYER;
+    },
+    EventPriority::MONITOR,  // Just logging, don't interfere
+    "player_logger"
+);
+```
+
+#### Dispatching Events
+
+**Asynchronous (queued)** - Event processed on handler thread:
+```cpp
+auto event = std::make_unique<BlockBreakEvent>(
+    glm::ivec3(10, 20, 30),  // position
+    5,                       // blockID
+    BreakCause::PLAYER,      // cause
+    0                        // breakerEntityID
+);
+dispatcher.dispatch(std::move(event));
+```
+
+**Synchronous (immediate)** - Event processed on calling thread:
+```cpp
+BlockBreakEvent event(glm::ivec3(10, 20, 30), 5, BreakCause::PLAYER, 0);
+dispatcher.dispatchImmediate(event);
+
+// Check if event was cancelled
+if (!event.isCancelled()) {
+    // Proceed with breaking the block
+}
+```
+
+**Main Thread Queue** - For GPU operations:
+```cpp
+// Queue event for processing on main thread
+auto event = std::make_unique<ChunkLoadEvent>(0, 0, 0, true);
+dispatcher.queueForMainThread(std::move(event));
+
+// In main game loop:
+dispatcher.processMainThreadQueue();
+```
+
+#### Unsubscribing
+
+```cpp
+// Unsubscribe specific listener
+dispatcher.unsubscribe(handle);
+
+// Unsubscribe all listeners for an owner
+dispatcher.unsubscribeAll("bedrock_protection");
+
+// Unsubscribe all listeners for an event type
+dispatcher.unsubscribeAll(EventType::BLOCK_BREAK);
+```
+
+#### Starting/Stopping the Dispatcher
+
+```cpp
+// Start event handler thread (call during engine initialization)
+dispatcher.start();
+
+// Check if running
+if (dispatcher.isRunning()) {
+    // Dispatch events...
+}
+
+// Stop event handler thread (call during engine shutdown)
+dispatcher.stop();  // Processes remaining queued events before stopping
+```
+
+#### Statistics
+
+```cpp
+// Get current queue size
+size_t queueSize = dispatcher.getQueueSize();
+
+// Get listener counts
+size_t blockBreakListeners = dispatcher.getListenerCount(EventType::BLOCK_BREAK);
+size_t totalListeners = dispatcher.getTotalListenerCount();
+
+// Get processing statistics
+uint64_t eventsProcessed = dispatcher.getEventsProcessed();
+uint64_t eventsCancelled = dispatcher.getEventsCancelled();
+```
+
+### Example: Custom Block Behavior
+
+Create a pressure plate that triggers when stepped on:
+
+```cpp
+// Subscribe to step events
+dispatcher.subscribe(
+    EventType::BLOCK_STEP,
+    [](Event& e) {
+        auto& stepEvent = static_cast<BlockStepEvent&>(e);
+
+        // Check if it's a pressure plate block (ID 42)
+        if (stepEvent.blockID == 42) {
+            // Activate redstone signal
+            activateRedstone(stepEvent.position);
+
+            // Play sound effect
+            playSoundAt(stepEvent.position, "click.wav");
+
+            // Spawn particles
+            spawnParticles(stepEvent.position, ParticleType::REDSTONE);
+        }
+    },
+    EventPriority::NORMAL,
+    "pressure_plate_handler"
+);
+```
+
+### Example: Protected Region System
+
+Prevent breaking/placing blocks in protected areas:
+
+```cpp
+struct ProtectedRegion {
+    glm::ivec3 min;
+    glm::ivec3 max;
+};
+std::vector<ProtectedRegion> protectedRegions;
+
+// Prevent block breaking in protected regions
+dispatcher.subscribe(EventType::BLOCK_BREAK, [](Event& e) {
+    auto& breakEvent = static_cast<BlockBreakEvent&>(e);
+    for (const auto& region : protectedRegions) {
+        if (isInRegion(breakEvent.position, region)) {
+            breakEvent.cancel();
+            notifyPlayer(breakEvent.breakerEntityID, "This area is protected!");
+            break;
+        }
+    }
+}, EventPriority::HIGHEST, "region_protection");
+
+// Prevent block placement in protected regions
+dispatcher.subscribe(EventType::BLOCK_PLACE, [](Event& e) {
+    auto& placeEvent = static_cast<BlockPlaceEvent&>(e);
+    for (const auto& region : protectedRegions) {
+        if (isInRegion(placeEvent.position, region)) {
+            placeEvent.cancel();
+            notifyPlayer(placeEvent.placerEntityID, "This area is protected!");
+            break;
+        }
+    }
+}, EventPriority::HIGHEST, "region_protection");
+```
+
+## 6.4 Engine API Reference
+
+The `EngineAPI` class provides a high-level interface for interacting with the voxel engine. It's the primary API used by console commands, scripts, and external tools.
+
+**Header:** `include/engine_api.h`
+
+### Initialization
+
+```cpp
+// Get singleton instance
+auto& api = EngineAPI::instance();
+
+// Initialize with core engine components (called during engine startup)
+api.initialize(world, renderer, player);
+
+// Check if initialized
+if (api.isInitialized()) {
+    // Use API methods...
+}
+```
+
+### Block Manipulation
+
+#### Place Block
+
+```cpp
+// Place block by ID
+bool placeBlock(int x, int y, int z, int blockID);
+bool placeBlock(const glm::ivec3& pos, int blockID);
+
+// Place block by name
+bool placeBlock(const glm::ivec3& pos, const std::string& blockName);
+
+// Example:
+api.placeBlock(10, 20, 30, 5);                    // Place block ID 5
+api.placeBlock(glm::ivec3(10, 20, 30), "stone");  // Place stone
+```
+
+**Returns:** `true` if successful, `false` if out of bounds or invalid block
+
+#### Break Block
+
+```cpp
+// Remove a block
+bool breakBlock(int x, int y, int z);
+bool breakBlock(const glm::ivec3& pos);
+
+// Example:
+api.breakBlock(10, 20, 30);
+```
+
+**Returns:** `true` if successful, `false` if out of bounds
+
+#### Block Metadata
+
+```cpp
+// Set block metadata (0-255)
+bool setBlockMetadata(const glm::ivec3& pos, uint8_t metadata);
+
+// Get block metadata
+uint8_t getBlockMetadata(const glm::ivec3& pos);
+
+// Example:
+api.setBlockMetadata(glm::ivec3(10, 20, 30), 5);  // Set metadata to 5
+uint8_t meta = api.getBlockMetadata(glm::ivec3(10, 20, 30));
+```
+
+#### Query Block
+
+```cpp
+// Get block information
+BlockQueryResult getBlockAt(int x, int y, int z);
+BlockQueryResult getBlockAt(const glm::ivec3& pos);
+
+struct BlockQueryResult {
+    bool valid;              // True if query succeeded
+    int blockID;             // Block ID (0 = air)
+    std::string blockName;   // Block name (e.g., "grass", "stone")
+    glm::ivec3 position;     // Block position
+};
+
+// Example:
+auto result = api.getBlockAt(10, 20, 30);
+if (result.valid) {
+    std::cout << "Block: " << result.blockName << " (ID: " << result.blockID << ")" << std::endl;
+}
+```
+
+### Area Operations
+
+#### Fill Area
+
+```cpp
+// Fill rectangular region with blocks
+int fillArea(const glm::ivec3& start, const glm::ivec3& end, int blockID);
+int fillArea(const glm::ivec3& start, const glm::ivec3& end, const std::string& blockName);
+
+// Example:
+int count = api.fillArea(
+    glm::ivec3(0, 0, 0),      // Start corner
+    glm::ivec3(10, 10, 10),   // End corner
+    "stone"                   // Block type
+);
+std::cout << "Placed " << count << " blocks" << std::endl;
+```
+
+**Returns:** Number of blocks placed
+
+#### Replace Blocks
+
+```cpp
+// Replace all blocks of one type with another in a region
+int replaceBlocks(const glm::ivec3& start, const glm::ivec3& end,
+                  int fromBlockID, int toBlockID);
+int replaceBlocks(const glm::ivec3& start, const glm::ivec3& end,
+                  const std::string& fromName, const std::string& toName);
+
+// Example:
+int count = api.replaceBlocks(
+    glm::ivec3(0, 0, 0),
+    glm::ivec3(50, 50, 50),
+    "dirt",   // Replace all dirt
+    "stone"   // With stone
+);
+std::cout << "Replaced " << count << " blocks" << std::endl;
+```
+
+**Returns:** Number of blocks replaced
+
+### Sphere Operations
+
+#### Fill Sphere
+
+```cpp
+// Fill spherical region with blocks
+int fillSphere(const glm::vec3& center, float radius, int blockID);
+
+// Example:
+int count = api.fillSphere(
+    glm::vec3(50.0f, 50.0f, 50.0f),  // Center
+    10.0f,                            // Radius
+    1                                 // Block ID (stone)
+);
+```
+
+**Returns:** Number of blocks placed
+
+#### Hollow Sphere
+
+```cpp
+// Create hollow sphere shell
+int hollowSphere(const glm::vec3& center, float radius, int blockID, float thickness = 1.0f);
+
+// Example:
+int count = api.hollowSphere(
+    glm::vec3(50.0f, 50.0f, 50.0f),  // Center
+    15.0f,                            // Radius
+    5,                                // Block ID (glass)
+    2.0f                              // Shell thickness
+);
+```
+
+**Returns:** Number of blocks placed
+
+### Terrain Modification (Brush System)
+
+All terrain brush operations use the `BrushSettings` struct:
+
+```cpp
+struct BrushSettings {
+    float radius = 5.0f;      // Brush radius in blocks
+    float strength = 1.0f;    // Brush strength (0.0 to 1.0)
+    float falloff = 0.5f;     // Edge falloff (0 = hard, 1 = smooth)
+    bool affectWater = false; // Affect water blocks
+};
+```
+
+#### Raise Terrain
+
+```cpp
+// Raise terrain in circular area
+int raiseTerrain(const glm::vec3& center, float radius, float height,
+                 const BrushSettings& brush = {});
+
+// Example:
+BrushSettings brush;
+brush.radius = 10.0f;
+brush.strength = 1.0f;
+brush.falloff = 0.7f;
+
+int count = api.raiseTerrain(
+    glm::vec3(50.0f, 50.0f, 50.0f),  // Center point
+    10.0f,                            // Radius
+    5.0f,                             // Raise by 5 blocks
+    brush
+);
+```
+
+#### Lower Terrain
+
+```cpp
+// Lower terrain in circular area
+int lowerTerrain(const glm::vec3& center, float radius, float depth,
+                 const BrushSettings& brush = {});
+
+// Example:
+int count = api.lowerTerrain(
+    glm::vec3(50.0f, 50.0f, 50.0f),
+    10.0f,   // Radius
+    3.0f     // Lower by 3 blocks
+);
+```
+
+#### Smooth Terrain
+
+```cpp
+// Smooth terrain by averaging heights
+int smoothTerrain(const glm::vec3& center, float radius,
+                  const BrushSettings& brush = {});
+
+// Example:
+int count = api.smoothTerrain(
+    glm::vec3(50.0f, 50.0f, 50.0f),
+    8.0f  // Smooth radius
+);
+```
+
+#### Paint Terrain
+
+```cpp
+// Paint terrain surface with specific block type
+int paintTerrain(const glm::vec3& center, float radius, int blockID,
+                 const BrushSettings& brush = {});
+
+// Example:
+int count = api.paintTerrain(
+    glm::vec3(50.0f, 50.0f, 50.0f),
+    12.0f,  // Paint radius
+    3       // Grass block ID
+);
+```
+
+#### Flatten Terrain
+
+```cpp
+// Flatten terrain to specific Y level
+int flattenTerrain(const glm::vec3& center, float radius, int targetY,
+                   const BrushSettings& brush = {});
+
+// Example:
+int count = api.flattenTerrain(
+    glm::vec3(50.0f, 50.0f, 50.0f),
+    15.0f,  // Flatten radius
+    64      // Target Y level (sea level)
+);
+```
+
+### Structure Spawning
+
+```cpp
+// Spawn structure at position
+bool spawnStructure(const std::string& name, const glm::ivec3& position);
+
+// Spawn structure with rotation (0, 90, 180, 270 degrees)
+bool spawnStructure(const std::string& name, const glm::ivec3& position, int rotation);
+
+// Example:
+if (api.spawnStructure("oak_tree", glm::ivec3(50, 64, 50))) {
+    std::cout << "Tree spawned!" << std::endl;
+}
+
+// Spawn rotated structure
+api.spawnStructure("house", glm::ivec3(100, 64, 100), 90);  // Rotated 90 degrees
+```
+
+**Returns:** `true` if successful, `false` if structure not found
+
+### Entity/Mesh Spawning
+
+```cpp
+// Spawn entity information
+struct SpawnedEntity {
+    uint32_t entityID;       // Unique identifier
+    glm::vec3 position;      // Position in world
+    std::string type;        // Entity type
+};
+```
+
+#### Spawn Primitives
+
+```cpp
+// Spawn sphere entity
+SpawnedEntity spawnSphere(const glm::vec3& position, float radius,
+                          const glm::vec4& color = glm::vec4(1.0f));
+
+// Spawn cube entity
+SpawnedEntity spawnCube(const glm::vec3& position, float size,
+                        const glm::vec4& color = glm::vec4(1.0f));
+
+// Spawn cylinder entity
+SpawnedEntity spawnCylinder(const glm::vec3& position, float radius, float height,
+                            const glm::vec4& color = glm::vec4(1.0f));
+
+// Example:
+auto sphere = api.spawnSphere(
+    glm::vec3(50.0f, 70.0f, 50.0f),  // Position
+    2.0f,                             // Radius
+    glm::vec4(1.0f, 0.0f, 0.0f, 1.0f) // Red color
+);
+std::cout << "Spawned sphere with ID: " << sphere.entityID << std::endl;
+```
+
+#### Spawn Custom Mesh
+
+```cpp
+// Spawn mesh from OBJ file
+SpawnedEntity spawnMesh(const std::string& meshName, const glm::vec3& position,
+                        const glm::vec3& scale = glm::vec3(1.0f),
+                        const glm::vec3& rotation = glm::vec3(0.0f));
+
+// Example:
+auto entity = api.spawnMesh(
+    "tree_model",                     // Mesh file (tree_model.obj)
+    glm::vec3(50.0f, 64.0f, 50.0f),  // Position
+    glm::vec3(2.0f),                 // Scale 2x
+    glm::vec3(0.0f, 45.0f, 0.0f)     // Rotate 45 degrees around Y
+);
+```
+
+#### Entity Management
+
+```cpp
+// Remove entity
+bool removeEntity(uint32_t entityID);
+
+// Update entity properties
+bool setEntityPosition(uint32_t entityID, const glm::vec3& position);
+bool setEntityScale(uint32_t entityID, const glm::vec3& scale);
+bool setEntityColor(uint32_t entityID, const glm::vec4& color);
+
+// Get all entities
+std::vector<SpawnedEntity> getAllEntities();
+
+// Example:
+api.setEntityPosition(sphere.entityID, glm::vec3(60.0f, 70.0f, 60.0f));
+api.setEntityColor(sphere.entityID, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));  // Change to green
+
+if (api.removeEntity(sphere.entityID)) {
+    std::cout << "Entity removed" << std::endl;
+}
+```
+
+### World Queries
+
+#### Raycast
+
+```cpp
+// Cast ray into world
+RaycastResult raycast(const glm::vec3& origin, const glm::vec3& direction,
+                      float maxDistance = 100.0f);
+
+struct RaycastResult {
+    bool hit;                // True if ray hit a block
+    glm::vec3 position;      // Hit point position
+    glm::vec3 normal;        // Hit face normal
+    glm::ivec3 blockPos;     // Block coordinates
+    int blockID;             // Block ID
+    float distance;          // Distance to hit
+};
+
+// Example:
+auto result = api.raycast(
+    glm::vec3(50.0f, 70.0f, 50.0f),  // Origin
+    glm::vec3(0.0f, -1.0f, 0.0f),    // Direction (down)
+    100.0f                            // Max distance
+);
+
+if (result.hit) {
+    std::cout << "Hit block " << result.blockID
+              << " at distance " << result.distance << std::endl;
+}
+```
+
+#### Get Blocks in Radius
+
+```cpp
+// Get all blocks within spherical radius
+std::vector<BlockQueryResult> getBlocksInRadius(const glm::vec3& center, float radius);
+
+// Example:
+auto blocks = api.getBlocksInRadius(glm::vec3(50.0f, 64.0f, 50.0f), 5.0f);
+std::cout << "Found " << blocks.size() << " blocks" << std::endl;
+
+for (const auto& block : blocks) {
+    if (block.blockID == 5) {  // Find all stone blocks
+        std::cout << "Stone at: " << block.position.x << ", "
+                  << block.position.y << ", " << block.position.z << std::endl;
+    }
+}
+```
+
+#### Get Blocks in Area
+
+```cpp
+// Get all blocks in rectangular region
+std::vector<BlockQueryResult> getBlocksInArea(const glm::ivec3& start, const glm::ivec3& end);
+
+// Example:
+auto blocks = api.getBlocksInArea(
+    glm::ivec3(0, 0, 0),
+    glm::ivec3(10, 10, 10)
+);
+```
+
+#### Biome and Terrain
+
+```cpp
+// Get biome name at horizontal position
+std::string getBiomeAt(float x, float z);
+
+// Get terrain height (Y coordinate of top block)
+int getHeightAt(float x, float z);
+
+// Example:
+std::string biome = api.getBiomeAt(50.0f, 50.0f);
+int height = api.getHeightAt(50.0f, 50.0f);
+std::cout << "Biome: " << biome << ", Height: " << height << std::endl;
+```
+
+### Player Control
+
+```cpp
+// Get player eye position
+glm::vec3 getPlayerPosition();
+
+// Set player position
+void setPlayerPosition(const glm::vec3& pos);
+
+// Get player look direction (normalized)
+glm::vec3 getPlayerLookDirection();
+
+// Get block player is looking at
+RaycastResult getPlayerTarget(float maxDistance = 5.0f);
+
+// Example:
+glm::vec3 pos = api.getPlayerPosition();
+glm::vec3 dir = api.getPlayerLookDirection();
+
+auto target = api.getPlayerTarget();
+if (target.hit) {
+    std::cout << "Looking at block " << target.blockID << std::endl;
+}
+
+// Teleport player
+api.setPlayerPosition(glm::vec3(0.0f, 100.0f, 0.0f));
+```
+
+### Water Operations
+
+```cpp
+// Place water source block
+bool placeWater(const glm::ivec3& pos);
+
+// Remove water
+bool removeWater(const glm::ivec3& pos);
+
+// Flood fill area with blocks
+int floodFill(const glm::ivec3& start, int blockID, int maxBlocks = 10000);
+
+// Example:
+api.placeWater(glm::ivec3(50, 64, 50));
+
+// Fill connected air blocks with stone
+int filled = api.floodFill(glm::ivec3(50, 65, 50), 1, 500);
+std::cout << "Filled " << filled << " blocks" << std::endl;
+```
+
+### Utility Functions
+
+```cpp
+// Convert block name to ID
+int getBlockID(const std::string& blockName);
+
+// Convert block ID to name
+std::string getBlockName(int blockID);
+
+// Get all registered blocks
+std::vector<std::string> getAllBlockNames();
+
+// Get all registered structures
+std::vector<std::string> getAllStructureNames();
+
+// Get all registered biomes
+std::vector<std::string> getAllBiomeNames();
+
+// Example:
+int stoneID = api.getBlockID("stone");
+std::string name = api.getBlockName(5);
+
+auto allBlocks = api.getAllBlockNames();
+for (const auto& blockName : allBlocks) {
+    std::cout << blockName << std::endl;
+}
+```
+
+### Time Control
+
+```cpp
+// Get time of day (0.0 = midnight, 0.5 = noon, 1.0 = next midnight)
+float getTimeOfDay();
+
+// Set time of day
+void setTimeOfDay(float time);
+
+// Example:
+api.setTimeOfDay(0.5f);   // Set to noon
+api.setTimeOfDay(0.0f);   // Set to midnight
+api.setTimeOfDay(0.75f);  // Set to sunset
+```
+
+## 6.5 Console Commands
+
+The engine features a powerful Source Engine-style console accessible via **F9**. Commands support autocomplete (Tab key) and provide comprehensive world manipulation capabilities.
+
+### General Commands
+
+#### help
+Show all available commands or detailed help for a specific command.
+```
+help               - List all commands
+help <command>     - Show detailed help for command
+```
+**Examples:**
+```
+help
+help tp
+help api
+```
+
+#### clear
+Clear the console output.
+```
+clear
+```
+
+#### echo
+Print a message to the console.
+```
+echo <message>
+```
+**Example:**
+```
+echo Hello, World!
+```
+
+### Debug Commands
+
+#### noclip
+Toggle noclip mode (fly through walls).
+```
+noclip
+```
+**Controls in noclip:**
+- Space - Fly up
+- Shift - Fly down
+- WASD - Move in any direction
+
+#### wireframe
+Toggle wireframe rendering mode.
+```
+wireframe
+```
+
+#### lighting
+Toggle the voxel lighting system.
+```
+lighting
+```
+**Note:** Regenerate chunks (move around) to see the effect.
+
+#### debug
+Toggle debug rendering modes and performance monitoring.
+```
+debug render        - Toggle debug overlays
+debug drawfps       - Toggle FPS counter
+debug targetinfo    - Toggle block targeting info
+debug perf [interval] - Toggle performance monitoring
+```
+**Examples:**
+```
+debug drawfps
+debug perf 5.0      - Report every 5 seconds
+```
+
+### Movement Commands
+
+#### tp (teleport)
+Teleport player to coordinates.
+```
+tp <x> <y> <z>
+```
+**Example:**
+```
+tp 0 100 0          - Teleport to world spawn at Y=100
+tp 500 64 -200      - Teleport to specific coordinates
+```
+
+### World Manipulation Commands
+
+#### reload
+Hot-reload assets from disk without restarting.
+```
+reload <all|blocks|structures|biomes>
+```
+**Examples:**
+```
+reload blocks       - Reload block definitions and regenerate chunks
+reload structures   - Reload structure definitions
+reload biomes       - Reload biome definitions
+reload all          - Reload everything
+```
+**Use cases:**
+- Modify block textures/properties in `assets/blocks/`
+- Add new structures to `assets/structures/`
+- Adjust biome settings in `assets/biomes/`
+- See changes immediately without restarting
+
+#### api
+Engine API commands for block manipulation.
+```
+api place <blockName> <x> <y> <z>
+api fill <blockName> <x1> <y1> <z1> <x2> <y2> <z2>
+api sphere <blockName> <x> <y> <z> <radius>
+api replace <fromBlock> <toBlock> <x1> <y1> <z1> <x2> <y2> <z2>
+```
+**Examples:**
+```
+api place stone 10 64 20
+api fill grass 0 64 0 10 64 10
+api sphere stone 50 70 50 5
+api replace dirt stone 0 0 0 100 100 100
+```
+
+#### brush
+Terrain brush tools (operates on targeted block).
+```
+brush raise <radius> <height>
+brush lower <radius> <depth>
+brush smooth <radius>
+brush paint <blockName> <radius>
+brush flatten <radius> [targetY]
+```
+**How to use:**
+1. Point crosshair at terrain
+2. Run brush command
+3. Terrain is modified at the targeted location
+
+**Examples:**
+```
+brush raise 10 5       - Raise terrain in 10-block radius by 5 blocks
+brush lower 8 3        - Lower terrain in 8-block radius by 3 blocks
+brush smooth 12        - Smooth terrain in 12-block radius
+brush paint grass 15   - Paint grass in 15-block radius
+brush flatten 20 64    - Flatten to Y=64 in 20-block radius
+```
+
+#### spawn
+Spawn entities in the world (at targeted location).
+```
+spawn sphere <radius> [r] [g] [b]
+spawn cube <size> [r] [g] [b]
+spawn cylinder <radius> <height> [r] [g] [b]
+```
+**Note:** Entity system is currently in development.
+
+**Examples:**
+```
+spawn sphere 2 1.0 0.0 0.0      - Red sphere, radius 2
+spawn cube 3 0.0 1.0 0.0        - Green cube, size 3
+spawn cylinder 1 5 0.0 0.0 1.0  - Blue cylinder
+```
+
+#### entity
+Entity management commands.
+```
+entity list                - List all spawned entities
+entity remove <id>         - Remove entity by ID
+entity clear               - Remove all entities
+```
+**Note:** Entity system is currently in development.
+
+#### spawnstructure
+Spawn a structure at the targeted ground position.
+```
+spawnstructure <name>
+spawnstructure            - List available structures
+```
+**How to use:**
+1. Point crosshair at ground
+2. Run command
+3. Structure spawns on top of targeted block
+
+**Examples:**
+```
+spawnstructure oak_tree
+spawnstructure house
+spawnstructure            - Show all available structures
+```
+
+### Time Commands
+
+#### skytime
+Set the time of day.
+```
+skytime <0-1>
+skytime               - Show current time
+```
+**Time values:**
+- 0.0 = Midnight
+- 0.25 = Sunrise
+- 0.5 = Noon
+- 0.75 = Sunset
+- 1.0 = Next midnight
+
+**Examples:**
+```
+skytime 0.5          - Set to noon
+skytime 0.0          - Set to midnight
+skytime              - Display current time
+```
+
+#### timespeed
+Set time progression speed.
+```
+timespeed <value>
+timespeed            - Show current speed
+```
+**Speed values:**
+- 0 = Paused (time frozen)
+- 1 = Normal (20 minutes per day cycle)
+- 10 = 10x faster
+- 100 = 100x faster
+
+**Examples:**
+```
+timespeed 0          - Pause time
+timespeed 1          - Normal speed
+timespeed 10         - Fast forward 10x
+```
+
+### Console Variables (ConVars)
+
+#### set
+Set a ConVar value.
+```
+set <name> <value>
+```
+**Example:**
+```
+set fov 90
+set renderDistance 10
+```
+
+#### get
+Get a ConVar value and description.
+```
+get <name>
+```
+**Example:**
+```
+get fov
+```
+
+#### list
+List all console variables with their values and flags.
+```
+list
+```
+**Flags:**
+- [ARCHIVE] - Saved to config.ini
+- [CHEAT] - Requires cheats enabled
+
+### Command Autocomplete
+
+Press **Tab** to autocomplete commands and arguments:
+- Command names
+- Block names (for api, brush, etc.)
+- Structure names (for spawnstructure)
+- ConVar names (for set, get)
+
+**Example workflow:**
+```
+api pl<Tab>          → api place
+api place sto<Tab>   → api place stone
+```
+
+## 6.6 YAML Scripting (Future Feature)
+
+The event system is designed to support YAML-based block behavior scripting. This feature is currently in development.
+
+### Planned YAML Event Syntax
+
+Block definitions will support event handlers directly in YAML:
+
+```yaml
+id: 42
+name: "Pressure Plate"
+cube_map:
+  top: "pressure_plate.png"
+  bottom: "stone.png"
+  sides: "stone.png"
+durability: 5
+transparency: 0.0
+
+# Event handlers (planned feature)
+events:
+  - type: BLOCK_STEP
+    actions:
+      - action: EMIT_REDSTONE_SIGNAL
+        strength: 15
+        duration: 10
+      - action: PLAY_SOUND
+        sound: "click.wav"
+        volume: 1.0
+      - action: SPAWN_PARTICLES
+        particle_type: "redstone"
+        count: 10
+
+  - type: BLOCK_INTERACT
+    actions:
+      - action: TOGGLE_STATE
+        metadata_bit: 0
+      - action: PLAY_SOUND
+        sound: "lever.wav"
+```
+
+### Planned Action Types
+
+**EMIT_REDSTONE_SIGNAL** - Activate redstone
+```yaml
+- action: EMIT_REDSTONE_SIGNAL
+  strength: 15        # Signal strength (0-15)
+  duration: 10        # Duration in ticks
+```
+
+**PLAY_SOUND** - Play sound effect
+```yaml
+- action: PLAY_SOUND
+  sound: "click.wav"
+  volume: 1.0
+  pitch: 1.0
+```
+
+**SPAWN_PARTICLES** - Create particle effects
+```yaml
+- action: SPAWN_PARTICLES
+  particle_type: "smoke"
+  count: 20
+  velocity: [0, 0.1, 0]
+```
+
+**TOGGLE_STATE** - Toggle block state bit
+```yaml
+- action: TOGGLE_STATE
+  metadata_bit: 0     # Which bit to toggle (0-7)
+```
+
+**SPAWN_ENTITY** - Spawn an entity
+```yaml
+- action: SPAWN_ENTITY
+  entity_type: "item"
+  properties:
+    item_id: 5
+    count: 1
+```
+
+**RUN_COMMAND** - Execute console command
+```yaml
+- action: RUN_COMMAND
+  command: "api place stone {x} {y+1} {z}"
+```
+
+**SEND_MESSAGE** - Send message to player
+```yaml
+- action: SEND_MESSAGE
+  message: "You activated the pressure plate!"
+  color: "yellow"
+```
+
+### Event Filtering (Planned)
+
+Conditional event handling:
+
+```yaml
+events:
+  - type: BLOCK_BREAK
+    conditions:
+      - condition: TOOL_TYPE
+        value: "pickaxe"
+      - condition: PLAYER_PERMISSION
+        value: "can_break_bedrock"
+    actions:
+      - action: DROP_ITEM
+        item_id: 1
+        count: 1
+```
+
+### Best Practices (When Implemented)
+
+1. **Keep events simple** - Complex logic belongs in C++ code
+2. **Use descriptive action names** - Make YAML readable
+3. **Test thoroughly** - Event interactions can be complex
+4. **Document custom events** - Add comments to YAML files
+5. **Performance awareness** - High-frequency events (BLOCK_UPDATE) should be lightweight
+
+## 6.7 Threading Model
+
+Understanding the engine's threading model is crucial for proper event handling and API usage.
+
+### Thread Architecture
+
+The voxel engine uses a multi-threaded architecture with distinct thread responsibilities:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Main Thread                          │
+│  • Game loop                                                │
+│  • Input processing                                         │
+│  • Player physics                                           │
+│  • Vulkan rendering                                         │
+│  • GPU buffer uploads                                       │
+│  • ImGui UI                                                 │
+│  • Main thread event queue processing                       │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ├─────────────────────┐
+                              │                     │
+┌─────────────────────────────▼─┐   ┌───────────────▼──────────┐
+│   Event Handler Thread        │   │  World Streaming Threads  │
+│  • Async event queue          │   │  • Chunk generation       │
+│  • Event dispatch             │   │  • Chunk decoration       │
+│  • Listener invocation        │   │  • Parallel meshing       │
+│  • Event filtering            │   │  • Lighting propagation   │
+└───────────────────────────────┘   └──────────────────────────┘
+```
+
+### Main Thread
+
+**Responsibilities:**
+- Game loop at 60 FPS target
+- Vulkan rendering commands
+- GPU buffer creation and uploads
+- ImGui rendering
+- Input handling
+- Main thread event processing
+
+**Thread Safety:**
+- All Vulkan operations MUST run on main thread
+- GPU buffer operations (create, upload, destroy) are main-thread only
+- ImGui calls are main-thread only
+
+**Main Thread Event Queue:**
+```cpp
+// Queue event for main thread processing
+auto event = std::make_unique<ChunkLoadEvent>(0, 0, 0, true);
+EventDispatcher::instance().queueForMainThread(std::move(event));
+
+// Process queue (called once per frame in main loop)
+EventDispatcher::instance().processMainThreadQueue();
+```
+
+**Use cases for main thread queue:**
+- GPU buffer creation after chunk mesh generation
+- Vulkan state changes triggered by events
+- ImGui updates from event handlers
+
+### Event Handler Thread
+
+**Responsibilities:**
+- Process async event queue
+- Invoke event listeners in priority order
+- Handle event cancellation
+- Filter events
+
+**Lifecycle:**
+```cpp
+// Start event handler thread (during engine initialization)
+EventDispatcher::instance().start();
+
+// Stop event handler thread (during engine shutdown)
+EventDispatcher::instance().stop();  // Processes remaining events before stopping
+```
+
+**Thread Safety:**
+- Event queue is protected by mutex
+- Listener list is protected by mutex
+- Events are processed sequentially on handler thread
+- Multiple listeners can process same event
+
+**Event Processing Flow:**
+1. Event queued via `dispatch()`
+2. Handler thread dequeues event
+3. Listeners invoked in priority order (HIGHEST → LOWEST)
+4. MONITOR listeners called last (cannot cancel)
+5. Event marked as processed
+
+### World Streaming Threads
+
+**Responsibilities:**
+- Parallel chunk generation (multiple chunks simultaneously)
+- Parallel chunk decoration (trees, structures)
+- Parallel mesh generation (thread-safe with shared_lock)
+- Lighting propagation (batched for performance)
+
+**Thread Safety:**
+- World chunk map uses `std::shared_mutex` for concurrent reads
+- Mesh generation uses `shared_lock` (multiple readers, one writer)
+- Chunk decoration spawns thread per chunk
+- Staging buffer pool is mutex-protected
+
+**Performance Optimizations:**
+- **Parallel decorations** - All chunks decorated simultaneously (3× faster)
+- **Parallel mesh generation** - All chunks meshed simultaneously (5× faster)
+- **Batched GPU uploads** - Single vkQueueSubmit for multiple chunks (90% overhead reduction)
+
+### Thread Safety Guidelines
+
+#### Safe Operations from Any Thread
+
+✅ **EngineAPI methods** - All thread-safe with internal locking:
+```cpp
+// Safe to call from any thread
+api.placeBlock(10, 20, 30, 5);
+api.fillSphere(center, radius, blockID);
+auto result = api.raycast(origin, direction);
+```
+
+✅ **Event dispatching**:
+```cpp
+// Safe to dispatch from any thread
+dispatcher.dispatch(std::make_unique<BlockBreakEvent>(...));
+dispatcher.dispatchImmediate(event);  // Processes on calling thread
+```
+
+✅ **World queries** (read-only):
+```cpp
+// Safe with shared_lock
+int blockID = world->getBlockAt(x, y, z);
+```
+
+#### Main Thread Only
+
+❌ **Vulkan operations**:
+```cpp
+// MUST be on main thread
+renderer->createVertexBuffer(...);
+renderer->beginFrame();
+renderer->renderChunk(chunk);
+renderer->endFrame();
+```
+
+❌ **ImGui calls**:
+```cpp
+// MUST be on main thread
+ImGui::Begin("Window");
+ImGui::Text("Hello");
+ImGui::End();
+```
+
+❌ **GPU buffer management**:
+```cpp
+// MUST be on main thread
+chunk->createVertexBuffer(renderer);
+chunk->destroyBuffers();
+```
+
+### Event Handling Patterns
+
+#### Pattern 1: Async Event, Main Thread Action
+
+Event triggered on any thread, action requires main thread:
+
+```cpp
+// Event triggered from any thread
+dispatcher.subscribe(EventType::CHUNK_LOAD, [](Event& e) {
+    auto& chunkEvent = static_cast<ChunkLoadEvent&>(e);
+
+    // Do non-GPU work here (safe on event thread)
+    processChunkData(chunkEvent.chunkX, chunkEvent.chunkY, chunkEvent.chunkZ);
+
+    // Queue GPU work for main thread
+    auto gpuEvent = std::make_unique<CustomEvent>("chunk_gpu_upload");
+    gpuEvent->data = std::make_any<ChunkCoord>(chunkEvent.chunkX,
+                                                chunkEvent.chunkY,
+                                                chunkEvent.chunkZ);
+    EventDispatcher::instance().queueForMainThread(std::move(gpuEvent));
+}, EventPriority::NORMAL, "chunk_loader");
+
+// Main thread handler for GPU upload
+dispatcher.subscribe(EventType::CUSTOM, [](Event& e) {
+    auto& customEvent = static_cast<CustomEvent&>(e);
+    if (customEvent.eventName == "chunk_gpu_upload") {
+        auto coord = std::any_cast<ChunkCoord>(customEvent.data);
+        // Safe to do GPU work here (main thread)
+        uploadChunkToGPU(coord);
+    }
+}, EventPriority::NORMAL, "gpu_uploader");
+```
+
+#### Pattern 2: Immediate Event for Time-Sensitive Operations
+
+When event must be processed synchronously:
+
+```cpp
+// Create and dispatch immediately (blocks until all listeners processed)
+BlockBreakEvent event(position, blockID, BreakCause::PLAYER, playerID);
+dispatcher.dispatchImmediate(event);
+
+// Check if any listener cancelled the event
+if (!event.isCancelled()) {
+    // Proceed with breaking the block
+    world->setBlockAt(position.x, position.y, position.z, 0);
+}
+```
+
+#### Pattern 3: High-Frequency Events with Filtering
+
+Avoid processing every event when only specific cases matter:
+
+```cpp
+// Only process grass block breaks
+dispatcher.subscribeFiltered(
+    EventType::BLOCK_BREAK,
+    [](Event& e) {
+        auto& breakEvent = static_cast<BlockBreakEvent&>(e);
+        // This only runs for grass blocks
+        dropGrassSeeds(breakEvent.position);
+    },
+    [](const Event& e) {
+        auto& breakEvent = static_cast<const BlockBreakEvent&>(e);
+        return breakEvent.blockID == 3;  // Grass block ID
+    },
+    EventPriority::NORMAL,
+    "grass_drops"
+);
+```
+
+### Performance Considerations
+
+**Event Dispatch Performance:**
+- Async dispatch: ~100-500 ns (just queue + notify)
+- Sync dispatch: Depends on listener count and complexity
+- Main thread queue: Processed once per frame (16.7ms budget @ 60 FPS)
+
+**Listener Count Impact:**
+- Each listener adds overhead to event processing
+- Use filtered listeners to reduce unnecessary invocations
+- MONITOR priority adds minimal overhead (no cancellation checks)
+
+**Memory Usage:**
+- Event queue dynamically sized
+- Listeners stored in hash map (O(1) lookup by event type)
+- Filtered listeners have separate storage
+
+**Best Practices:**
+1. **Use async dispatch** when possible (better performance)
+2. **Use filtered listeners** for high-frequency events
+3. **Keep listeners fast** - Offload heavy work to separate threads
+4. **Queue GPU work** - Never block event thread on GPU operations
+5. **Use MONITOR** - For logging/stats that shouldn't affect gameplay
+6. **Unsubscribe properly** - Clean up listeners when systems shut down
+
 ---
 
 # 7. Performance & Optimization
@@ -3240,6 +4793,6 @@ See `THIRD-PARTY-LICENSES.md` for complete license information.
 
 For latest updates and detailed documentation, see the `docs/` directory.
 
-**Version:** 1.0
-**Last Updated:** 2025-11-20
+**Version:** 2.1
+**Last Updated:** 2025-11-26
 **Maintained by:** Voxel Engine Team

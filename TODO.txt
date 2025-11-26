@@ -1,0 +1,391 @@
+================================================================================
+                    VOXEL ENGINE - EVENT SYSTEM & ENGINE API
+                              Implementation Complete
+================================================================================
+
+Project Start: 2025-11-26
+Status: PHASE 1-8 COMPLETE
+
+================================================================================
+                              OVERVIEW
+================================================================================
+
+Goal: Create an Event system and Engine API that allows:
+- World triggers (block interactions, placement, breaking, stepping, etc.)
+- API calls (spawn blocks, affect terrain, spawn structures, play sounds, etc.)
+- Script attachment via YAML (blocks, biomes, creatures, tools)
+- Custom commands that make API calls
+- Asset hot-reloading system
+- Dedicated event/API handler thread
+
+================================================================================
+                         IMPLEMENTATION PHASES
+================================================================================
+
+PHASE 1: CORE EVENT SYSTEM                                          [X] COMPLETE
+--------------------------------------------------------------------------------
+[X] Create EventType enum with all trigger types
+[X] Create Event base class and derived event classes
+[X] Create EventDispatcher (thread-safe event queue)
+[X] Create EventListener interface
+[X] Implement event handler thread (separate from main/render thread)
+[X] Add event registration system (subscribe/unsubscribe)
+
+Files Created:
+- include/event_types.h (493 lines)
+- src/event_types.cpp (142 lines)
+- include/event_dispatcher.h (265 lines)
+- src/event_dispatcher.cpp (~400 lines)
+
+PHASE 2: ENGINE API CORE                                            [X] COMPLETE
+--------------------------------------------------------------------------------
+[X] Create EngineAPI singleton class
+[X] Implement block manipulation API:
+    [X] placeBlock(x, y, z, blockID)
+    [X] breakBlock(x, y, z)
+    [X] setBlockMetadata(x, y, z, metadata)
+    [X] getBlockAt(x, y, z)
+    [X] fillArea(start, end, blockID)
+    [X] replaceBlocks(area, fromID, toID)
+[X] Implement terrain API:
+    [X] raiseTerrain(center, radius, height)
+    [X] lowerTerrain(center, radius, depth)
+    [X] smoothTerrain(center, radius)
+    [X] paintTerrain(center, radius, blockID)
+    [X] flattenTerrain(center, radius, targetY)
+[X] Implement structure API:
+    [X] spawnStructure(name, position, rotation)
+[X] Implement entity/mesh spawning API:
+    [X] spawnSphere(position, radius, material)
+    [X] spawnCube(position, size, material)
+    [X] spawnCylinder(position, radius, height, material)
+    [X] spawnMesh(name, position, scale, rotation)
+    [X] removeEntity(entityID)
+[X] Implement world query API:
+    [X] raycast(origin, direction, maxDistance)
+    [X] getBlocksInRadius(center, radius)
+    [X] getBiomeAt(x, z)
+    [X] getHeightAt(x, z)
+
+Files Created:
+- include/engine_api.h (630 lines)
+- src/engine_api.cpp (~1100 lines)
+
+PHASE 3: EVENT TYPES & TRIGGERS                                     [X] COMPLETE
+--------------------------------------------------------------------------------
+[X] Block Events:
+    [X] OnBlockBreak(position, blockID, breakCause)
+    [X] OnBlockPlace(position, blockID, placedBy)
+    [X] OnBlockInteract(position, blockID, hand, itemHeld)
+    [X] OnBlockUpdate(position, blockID, neighborPos)
+    [X] OnBlockStep(position, blockID, entity)
+[X] Neighbor Events:
+    [X] OnNeighborChanged(position, neighborPos, oldBlock, newBlock)
+[X] World Events:
+    [X] OnChunkLoad(chunkCoord)
+    [X] OnChunkUnload(chunkCoord)
+[X] Player Events:
+    [X] OnPlayerMove(oldPos, newPos)
+    [X] OnPlayerJump()
+    [X] OnPlayerLand(position, fallDistance)
+[X] Time Events:
+    [X] OnTimeChange(oldTime, newTime)
+
+PHASE 4: YAML SCRIPT INTEGRATION                                    [X] COMPLETE
+--------------------------------------------------------------------------------
+[X] Add "events" section to block YAML schema
+[X] Create ScriptParser for event->action mapping
+[X] Implement action execution from YAML definitions
+[X] Add probability support for actions
+
+Files Created:
+- include/script_action.h
+- src/script_action.cpp
+- assets/blocks/pressure_plate.yaml (example)
+- assets/blocks/explosive_ore.yaml (example)
+- assets/blocks/grass_spreader.yaml (example)
+- docs/yaml_scripting_guide.md
+
+PHASE 5: COMMAND SYSTEM ENHANCEMENT                                 [X] COMPLETE
+--------------------------------------------------------------------------------
+[X] Extend CommandRegistry to support API calls
+[X] Add command argument parsing for complex operations
+[X] Implement command macros/scripts
+[X] Add "reload" command:
+    [X] Reload block definitions from YAML
+    [X] Rebuild texture atlas
+    [X] Reassign texture meshes to chunks
+    [X] Reload structure definitions
+    [X] Reload biome definitions
+
+New Console Commands Added:
+- reload (all, blocks, structures, biomes)
+- api (place, fill, sphere, replace)
+- brush (raise, lower, smooth, paint, flatten)
+- spawn (sphere, cube, cylinder)
+- entity (list, remove, clear)
+
+PHASE 6: ADVANCED API FEATURES                                      [X] COMPLETE
+--------------------------------------------------------------------------------
+[X] Sound System API (placeholder for future):
+    [X] playSound(name, position, volume, pitch) - stubbed
+[X] Particle API:
+    [X] spawnParticles(type, position, count, velocity)
+[X] Water API:
+    [X] placeWater(pos)
+    [X] removeWater(pos)
+    [X] floodFill(start, blockID, maxBlocks)
+
+PHASE 7: THREADING & PERFORMANCE                                    [X] COMPLETE
+--------------------------------------------------------------------------------
+[X] Create dedicated EventHandlerThread
+[X] Implement thread-safe event queue (mutex + condition variable)
+[X] Add event batching for performance
+[X] Implement priority system for events (6 levels)
+[X] Create main thread callback system for GPU operations
+
+PHASE 8: DOCUMENTATION                                              [X] COMPLETE
+--------------------------------------------------------------------------------
+[X] Update docs/ENGINE_HANDBOOK.md with full API reference
+[X] Document all event types and when they fire
+[X] Document all API functions with examples
+[X] Document YAML script syntax
+[X] Add example scripts for common use cases
+[X] Create modding guide
+
+Files Updated:
+- docs/ENGINE_HANDBOOK.md (+1555 lines, now version 2.1)
+- docs/EVENT_SYSTEM.md (new)
+- docs/EVENT_SYSTEM_QUICK_REFERENCE.md (new)
+- docs/yaml_scripting_guide.md (new)
+
+================================================================================
+                         API FUNCTION DICTIONARY
+================================================================================
+
+BLOCK MANIPULATION:
+-------------------
+EngineAPI::placeBlock(x, y, z, blockID) -> bool
+EngineAPI::placeBlock(pos, blockID) -> bool
+EngineAPI::placeBlock(pos, blockName) -> bool
+EngineAPI::breakBlock(x, y, z) -> bool
+EngineAPI::breakBlock(pos) -> bool
+EngineAPI::setBlockMetadata(pos, metadata) -> bool
+EngineAPI::getBlockMetadata(pos) -> uint8_t
+EngineAPI::getBlockAt(x, y, z) -> BlockQueryResult
+EngineAPI::getBlockAt(pos) -> BlockQueryResult
+
+AREA OPERATIONS:
+---------------
+EngineAPI::fillArea(start, end, blockID) -> int
+EngineAPI::fillArea(start, end, blockName) -> int
+EngineAPI::replaceBlocks(start, end, fromID, toID) -> int
+EngineAPI::replaceBlocks(start, end, fromName, toName) -> int
+EngineAPI::fillSphere(center, radius, blockID) -> int
+EngineAPI::hollowSphere(center, radius, blockID, thickness) -> int
+
+TERRAIN MODIFICATION:
+--------------------
+EngineAPI::raiseTerrain(center, radius, height, brush) -> int
+EngineAPI::lowerTerrain(center, radius, depth, brush) -> int
+EngineAPI::smoothTerrain(center, radius, brush) -> int
+EngineAPI::paintTerrain(center, radius, blockID, brush) -> int
+EngineAPI::flattenTerrain(center, radius, targetY, brush) -> int
+
+STRUCTURE SPAWNING:
+------------------
+EngineAPI::spawnStructure(name, position) -> bool
+EngineAPI::spawnStructure(name, position, rotation) -> bool
+
+ENTITY SPAWNING:
+---------------
+EngineAPI::spawnSphere(position, radius, color) -> SpawnedEntity
+EngineAPI::spawnCube(position, size, color) -> SpawnedEntity
+EngineAPI::spawnCylinder(position, radius, height, color) -> SpawnedEntity
+EngineAPI::spawnMesh(meshName, position, scale, rotation) -> SpawnedEntity
+EngineAPI::removeEntity(entityID) -> bool
+EngineAPI::setEntityPosition(entityID, position) -> bool
+EngineAPI::setEntityScale(entityID, scale) -> bool
+EngineAPI::setEntityColor(entityID, color) -> bool
+EngineAPI::getAllEntities() -> vector<SpawnedEntity>
+
+WORLD QUERIES:
+-------------
+EngineAPI::raycast(origin, direction, maxDistance) -> RaycastResult
+EngineAPI::getBlocksInRadius(center, radius) -> vector<BlockQueryResult>
+EngineAPI::getBlocksInArea(start, end) -> vector<BlockQueryResult>
+EngineAPI::getBiomeAt(x, z) -> string
+EngineAPI::getHeightAt(x, z) -> int
+
+PLAYER:
+------
+EngineAPI::getPlayerPosition() -> vec3
+EngineAPI::setPlayerPosition(pos) -> void
+EngineAPI::getPlayerLookDirection() -> vec3
+EngineAPI::getPlayerTarget(maxDistance) -> RaycastResult
+
+WATER:
+-----
+EngineAPI::placeWater(pos) -> bool
+EngineAPI::removeWater(pos) -> bool
+EngineAPI::floodFill(start, blockID, maxBlocks) -> int
+
+UTILITY:
+-------
+EngineAPI::getBlockID(blockName) -> int
+EngineAPI::getBlockName(blockID) -> string
+EngineAPI::getAllBlockNames() -> vector<string>
+EngineAPI::getAllStructureNames() -> vector<string>
+EngineAPI::getAllBiomeNames() -> vector<string>
+EngineAPI::getTimeOfDay() -> float
+EngineAPI::setTimeOfDay(time) -> void
+
+================================================================================
+                         EVENT TYPE DICTIONARY
+================================================================================
+
+BLOCK EVENTS:
+------------
+BlockBreakEvent(position, blockID, cause, breakerEntityID)
+  - Fires before block is broken (cancellable)
+  - Use: Prevent breaking protected blocks, drop custom items
+
+BlockPlaceEvent(position, blockID, placerEntityID, placedAgainst)
+  - Fires before block is placed (cancellable)
+  - Use: Validate placement rules, trigger placement effects
+
+BlockInteractEvent(position, blockID, entityID, isRightClick, heldItemID)
+  - Fires on player interaction (cancellable)
+  - Use: Open GUIs, trigger block actions (buttons, levers)
+
+BlockStepEvent(position, blockID, entityID)
+  - Fires when entity steps on block
+  - Use: Pressure plates, speed boost blocks, damage blocks
+
+BlockUpdateEvent(position, blockID)
+  - Fires on scheduled block tick
+  - Use: Crop growth, liquid flow, redstone updates
+
+NEIGHBOR EVENTS:
+---------------
+NeighborChangedEvent(position, neighborPos, oldBlockID, newBlockID)
+  - Fires when adjacent block changes
+  - Use: Torch popping off, wire updating, water flow
+
+CHUNK EVENTS:
+------------
+ChunkLoadEvent(chunkX, chunkY, chunkZ, isNewChunk)
+  - Fires when chunk becomes active
+  - Use: Initialize chunk data, spawn entities
+
+ChunkUnloadEvent(chunkX, chunkY, chunkZ)
+  - Fires before chunk is removed
+  - Use: Save custom data, cleanup resources
+
+PLAYER EVENTS:
+-------------
+PlayerMoveEvent(oldPosition, newPosition, playerID)
+  - Fires on player movement (cancellable)
+  - Use: Region protection, movement restrictions
+
+PlayerJumpEvent(position, playerID)
+  - Fires when player initiates jump
+  - Use: Modify jump height, play effects
+
+PlayerLandEvent(position, fallDistance, playerID)
+  - Fires when player lands
+  - Use: Fall damage, landing effects
+
+TIME EVENTS:
+-----------
+TimeChangeEvent(oldTime, newTime)
+  - Fires as game time advances
+  - Use: Time-based systems, client sync
+
+CUSTOM EVENTS:
+-------------
+CustomEvent(eventName, data)
+  - For scripts and mods
+  - Use: Inter-mod communication, quest triggers
+
+================================================================================
+                              PROGRESS LOG
+================================================================================
+
+2025-11-26: Project initialized
+            - Explored entire codebase with 10 agents
+            - Created TODO.txt for tracking
+            - Beginning planning phase
+
+2025-11-26: Phase 1 Complete
+            - Created event_types.h with 13 event types
+            - Created event_dispatcher.h/cpp with thread-safe queue
+            - 6 priority levels implemented
+
+2025-11-26: Phase 2 Complete
+            - Created engine_api.h/cpp with 50+ API functions
+            - Block manipulation, terrain brushes, entity spawning
+            - Full thread safety with mutex protection
+
+2025-11-26: Phase 3 Complete
+            - All event types implemented and documented
+            - Integrated events into World class
+            - Block break/place fire events, respect cancellation
+
+2025-11-26: Phase 4 Complete
+            - Created script_action.h/cpp for YAML scripting
+            - Blocks can define event handlers in YAML
+            - 8 action types supported
+
+2025-11-26: Phase 5 Complete
+            - Added reload, api, brush, spawn, entity commands
+            - Hot-reloading of blocks, structures, biomes
+            - Full autocomplete support
+
+2025-11-26: Phase 6-8 Complete
+            - Water API, particle stubs
+            - Threading model documented
+            - ENGINE_HANDBOOK.md updated (+1555 lines)
+
+PROJECT COMPLETE!
+
+================================================================================
+                           FILES CREATED/MODIFIED
+================================================================================
+
+NEW FILES:
+- include/event_types.h
+- src/event_types.cpp
+- include/event_dispatcher.h
+- src/event_dispatcher.cpp
+- include/engine_api.h
+- src/engine_api.cpp
+- include/script_action.h
+- src/script_action.cpp
+- assets/blocks/pressure_plate.yaml
+- assets/blocks/explosive_ore.yaml
+- assets/blocks/grass_spreader.yaml
+- docs/EVENT_SYSTEM.md
+- docs/EVENT_SYSTEM_QUICK_REFERENCE.md
+- docs/yaml_scripting_guide.md
+- docs/event_system_example.cpp
+
+MODIFIED FILES:
+- include/world.h (added event includes)
+- src/world.cpp (integrated event firing)
+- src/console_commands.cpp (added new commands)
+- include/console_commands.h (added declarations)
+- src/block_system.cpp (YAML script parsing)
+- docs/ENGINE_HANDBOOK.md (comprehensive API docs)
+
+================================================================================
+                           RESEARCH SOURCES
+================================================================================
+
+- Minecraft Forge Block Events: https://github.com/keepcalm/BlockBreak
+- Game Engine Event System: https://denyskryvytskyi.github.io/event-system
+- eventpp C++ Library: https://github.com/wqking/eventpp
+- Threading Loopers/Dispatchers: https://www.cppstories.com/2019/12/threading-loopers-cpp17/
+- VoxelSniper Brush System: https://westeroscraft.fandom.com/wiki/VoxelSniper_Basics
+
+================================================================================

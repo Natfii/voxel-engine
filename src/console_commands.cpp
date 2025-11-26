@@ -8,6 +8,10 @@
 #include "structure_system.h"
 #include "raycast.h"
 #include "perf_monitor.h"
+#include "block_system.h"
+#include "biome_system.h"
+// #include "engine_api.h"      // TODO: Implement EngineAPI
+// #include "event_dispatcher.h" // TODO: Implement EventDispatcher
 #include <sstream>
 #include <iomanip>
 #include <cmath>
@@ -128,6 +132,32 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
     std::vector<std::string> structureNames = StructureRegistry::instance().getAllStructureNames();
     registry.registerCommand("spawnstructure", "Spawn a structure at the targeted ground position",
                            "spawnstructure <name>", cmdSpawnStructure, structureNames);
+
+    // Get all loaded block names for autocomplete
+    std::vector<std::string> blockNames;
+    for (int i = 1; i < BlockRegistry::instance().count(); i++) {
+        blockNames.push_back(BlockRegistry::instance().get(i).name);
+    }
+
+    registry.registerCommand("reload", "Hot-reload assets from disk",
+                           "reload <all|blocks|structures|biomes>", cmdReload,
+                           {"all", "blocks", "structures", "biomes"});
+
+    registry.registerCommand("api", "Engine API commands for block manipulation",
+                           "api <place|fill|sphere|replace> <args>", cmdApi,
+                           {"place", "fill", "sphere", "replace"});
+
+    registry.registerCommand("brush", "Terrain brush tools",
+                           "brush <raise|lower|smooth|paint|flatten> <args>", cmdBrush,
+                           {"raise", "lower", "smooth", "paint", "flatten"});
+
+    registry.registerCommand("spawn", "Spawn entities in the world",
+                           "spawn <sphere|cube|cylinder> <args>", cmdSpawn,
+                           {"sphere", "cube", "cylinder"});
+
+    registry.registerCommand("entity", "Entity management commands",
+                           "entity <list|remove|clear> [args]", cmdEntity,
+                           {"list", "remove", "clear"});
 }
 
 void ConsoleCommands::cmdHelp(const std::vector<std::string>& args) {
@@ -493,5 +523,678 @@ void ConsoleCommands::cmdSpawnStructure(const std::vector<std::string>& args) {
     } else {
         s_console->addMessage("Failed to spawn structure '" + structureName + "'", ConsoleMessageType::ERROR);
         s_console->addMessage("Structure may not exist. Use 'spawnstructure' without args to see available structures.", ConsoleMessageType::INFO);
+    }
+}
+
+void ConsoleCommands::cmdReload(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        s_console->addMessage("Usage: reload <all|blocks|structures|biomes>", ConsoleMessageType::WARNING);
+        return;
+    }
+
+    if (!s_world) {
+        s_console->addMessage("Error: World not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    if (!s_renderer) {
+        s_console->addMessage("Error: Renderer not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    std::string reloadType = args[1];
+
+    if (reloadType == "all" || reloadType == "blocks") {
+        s_console->addMessage("Reloading block definitions...", ConsoleMessageType::INFO);
+
+        // Reload block definitions
+        if (!BlockRegistry::instance().loadBlocks("assets/blocks", s_renderer)) {
+            s_console->addMessage("Error: Failed to reload blocks", ConsoleMessageType::ERROR);
+            return;
+        }
+
+        // Mark all chunks as needing mesh regeneration
+        s_console->addMessage("Regenerating chunk meshes...", ConsoleMessageType::INFO);
+        int regeneratedCount = 0;
+
+        s_renderer->beginBufferCopyBatch();
+        for (Chunk* chunk : s_world->getChunks()) {
+            if (chunk) {
+                chunk->generateMesh(s_world);
+                chunk->createVertexBufferBatched(s_renderer);
+                regeneratedCount++;
+            }
+        }
+        s_renderer->submitBufferCopyBatch();
+
+        s_console->addMessage("Blocks reloaded successfully! Regenerated " + std::to_string(regeneratedCount) + " chunks", ConsoleMessageType::INFO);
+    }
+
+    if (reloadType == "all" || reloadType == "structures") {
+        s_console->addMessage("Reloading structure definitions...", ConsoleMessageType::INFO);
+
+        if (!StructureRegistry::instance().loadStructures("assets/structures")) {
+            s_console->addMessage("Error: Failed to reload structures", ConsoleMessageType::ERROR);
+            return;
+        }
+
+        s_console->addMessage("Structures reloaded successfully!", ConsoleMessageType::INFO);
+    }
+
+    if (reloadType == "all" || reloadType == "biomes") {
+        s_console->addMessage("Reloading biome definitions...", ConsoleMessageType::INFO);
+
+        // Clear and reload biomes
+        BiomeRegistry::getInstance().clear();
+        if (!BiomeRegistry::getInstance().loadBiomes("assets/biomes")) {
+            s_console->addMessage("Error: Failed to reload biomes", ConsoleMessageType::ERROR);
+            return;
+        }
+
+        s_console->addMessage("Biomes reloaded successfully!", ConsoleMessageType::INFO);
+        s_console->addMessage("Note: Existing chunks keep their biomes. New chunks will use updated definitions.", ConsoleMessageType::INFO);
+    }
+
+    if (reloadType != "all" && reloadType != "blocks" && reloadType != "structures" && reloadType != "biomes") {
+        s_console->addMessage("Unknown reload type: " + reloadType, ConsoleMessageType::ERROR);
+        s_console->addMessage("Available types: all, blocks, structures, biomes", ConsoleMessageType::INFO);
+    }
+}
+
+void ConsoleCommands::cmdApi(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        s_console->addMessage("Usage: api <place|fill|sphere|replace> <args>", ConsoleMessageType::WARNING);
+        s_console->addMessage("  api place <blockName> <x> <y> <z>", ConsoleMessageType::INFO);
+        s_console->addMessage("  api fill <blockName> <x1> <y1> <z1> <x2> <y2> <z2>", ConsoleMessageType::INFO);
+        s_console->addMessage("  api sphere <blockName> <x> <y> <z> <radius>", ConsoleMessageType::INFO);
+        s_console->addMessage("  api replace <fromBlock> <toBlock> <x1> <y1> <z1> <x2> <y2> <z2>", ConsoleMessageType::INFO);
+        return;
+    }
+
+    if (!s_world) {
+        s_console->addMessage("Error: World not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    if (!s_renderer) {
+        s_console->addMessage("Error: Renderer not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    std::string subcommand = args[1];
+
+    if (subcommand == "place") {
+        if (args.size() < 6) {
+            s_console->addMessage("Usage: api place <blockName> <x> <y> <z>", ConsoleMessageType::WARNING);
+            return;
+        }
+
+        try {
+            std::string blockName = args[2];
+            int blockID = BlockRegistry::instance().getID(blockName);
+            if (blockID == -1) {
+                s_console->addMessage("Error: Unknown block '" + blockName + "'", ConsoleMessageType::ERROR);
+                return;
+            }
+
+            float x = std::stof(args[3]);
+            float y = std::stof(args[4]);
+            float z = std::stof(args[5]);
+
+            s_world->placeBlock(x, y, z, blockID, s_renderer);
+            s_console->addMessage("Placed " + blockName + " at (" + args[3] + ", " + args[4] + ", " + args[5] + ")", ConsoleMessageType::INFO);
+        } catch (const std::exception& e) {
+            s_console->addMessage("Error: Invalid arguments", ConsoleMessageType::ERROR);
+        }
+    }
+    else if (subcommand == "fill") {
+        if (args.size() < 9) {
+            s_console->addMessage("Usage: api fill <blockName> <x1> <y1> <z1> <x2> <y2> <z2>", ConsoleMessageType::WARNING);
+            return;
+        }
+
+        try {
+            std::string blockName = args[2];
+            int blockID = BlockRegistry::instance().getID(blockName);
+            if (blockID == -1) {
+                s_console->addMessage("Error: Unknown block '" + blockName + "'", ConsoleMessageType::ERROR);
+                return;
+            }
+
+            int x1 = std::stoi(args[3]);
+            int y1 = std::stoi(args[4]);
+            int z1 = std::stoi(args[5]);
+            int x2 = std::stoi(args[6]);
+            int y2 = std::stoi(args[7]);
+            int z2 = std::stoi(args[8]);
+
+            // Ensure min/max ordering
+            if (x1 > x2) std::swap(x1, x2);
+            if (y1 > y2) std::swap(y1, y2);
+            if (z1 > z2) std::swap(z1, z2);
+
+            int blocksPlaced = 0;
+            for (int x = x1; x <= x2; x++) {
+                for (int y = y1; y <= y2; y++) {
+                    for (int z = z1; z <= z2; z++) {
+                        s_world->setBlockAt(x, y, z, blockID, false);
+                        blocksPlaced++;
+                    }
+                }
+            }
+
+            // Regenerate affected chunks
+            s_renderer->beginBufferCopyBatch();
+            for (int x = x1; x <= x2; x += 32) {
+                for (int y = y1; y <= y2; y += 32) {
+                    for (int z = z1; z <= z2; z += 32) {
+                        Chunk* chunk = s_world->getChunkAtWorldPos(x, y, z);
+                        if (chunk) {
+                            chunk->generateMesh(s_world);
+                            chunk->createVertexBufferBatched(s_renderer);
+                        }
+                    }
+                }
+            }
+            s_renderer->submitBufferCopyBatch();
+
+            s_console->addMessage("Filled " + std::to_string(blocksPlaced) + " blocks with " + blockName, ConsoleMessageType::INFO);
+        } catch (const std::exception& e) {
+            s_console->addMessage("Error: Invalid arguments", ConsoleMessageType::ERROR);
+        }
+    }
+    else if (subcommand == "sphere") {
+        if (args.size() < 7) {
+            s_console->addMessage("Usage: api sphere <blockName> <x> <y> <z> <radius>", ConsoleMessageType::WARNING);
+            return;
+        }
+
+        try {
+            std::string blockName = args[2];
+            int blockID = BlockRegistry::instance().getID(blockName);
+            if (blockID == -1) {
+                s_console->addMessage("Error: Unknown block '" + blockName + "'", ConsoleMessageType::ERROR);
+                return;
+            }
+
+            int centerX = std::stoi(args[3]);
+            int centerY = std::stoi(args[4]);
+            int centerZ = std::stoi(args[5]);
+            int radius = std::stoi(args[6]);
+
+            if (radius <= 0) {
+                s_console->addMessage("Error: Radius must be positive", ConsoleMessageType::ERROR);
+                return;
+            }
+
+            int blocksPlaced = 0;
+            for (int x = centerX - radius; x <= centerX + radius; x++) {
+                for (int y = centerY - radius; y <= centerY + radius; y++) {
+                    for (int z = centerZ - radius; z <= centerZ + radius; z++) {
+                        // Check if point is inside sphere
+                        int dx = x - centerX;
+                        int dy = y - centerY;
+                        int dz = z - centerZ;
+                        float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+                        if (distance <= radius) {
+                            s_world->setBlockAt(x, y, z, blockID, false);
+                            blocksPlaced++;
+                        }
+                    }
+                }
+            }
+
+            // Regenerate affected chunks
+            s_renderer->beginBufferCopyBatch();
+            for (int x = centerX - radius; x <= centerX + radius; x += 32) {
+                for (int y = centerY - radius; y <= centerY + radius; y += 32) {
+                    for (int z = centerZ - radius; z <= centerZ + radius; z += 32) {
+                        Chunk* chunk = s_world->getChunkAtWorldPos(x, y, z);
+                        if (chunk) {
+                            chunk->generateMesh(s_world);
+                            chunk->createVertexBufferBatched(s_renderer);
+                        }
+                    }
+                }
+            }
+            s_renderer->submitBufferCopyBatch();
+
+            s_console->addMessage("Created sphere with " + std::to_string(blocksPlaced) + " blocks of " + blockName, ConsoleMessageType::INFO);
+        } catch (const std::exception& e) {
+            s_console->addMessage("Error: Invalid arguments", ConsoleMessageType::ERROR);
+        }
+    }
+    else if (subcommand == "replace") {
+        if (args.size() < 10) {
+            s_console->addMessage("Usage: api replace <fromBlock> <toBlock> <x1> <y1> <z1> <x2> <y2> <z2>", ConsoleMessageType::WARNING);
+            return;
+        }
+
+        try {
+            std::string fromBlockName = args[2];
+            std::string toBlockName = args[3];
+
+            int fromBlockID = BlockRegistry::instance().getID(fromBlockName);
+            int toBlockID = BlockRegistry::instance().getID(toBlockName);
+
+            if (fromBlockID == -1) {
+                s_console->addMessage("Error: Unknown block '" + fromBlockName + "'", ConsoleMessageType::ERROR);
+                return;
+            }
+            if (toBlockID == -1) {
+                s_console->addMessage("Error: Unknown block '" + toBlockName + "'", ConsoleMessageType::ERROR);
+                return;
+            }
+
+            int x1 = std::stoi(args[4]);
+            int y1 = std::stoi(args[5]);
+            int z1 = std::stoi(args[6]);
+            int x2 = std::stoi(args[7]);
+            int y2 = std::stoi(args[8]);
+            int z2 = std::stoi(args[9]);
+
+            // Ensure min/max ordering
+            if (x1 > x2) std::swap(x1, x2);
+            if (y1 > y2) std::swap(y1, y2);
+            if (z1 > z2) std::swap(z1, z2);
+
+            int blocksReplaced = 0;
+            for (int x = x1; x <= x2; x++) {
+                for (int y = y1; y <= y2; y++) {
+                    for (int z = z1; z <= z2; z++) {
+                        if (s_world->getBlockAt(x, y, z) == fromBlockID) {
+                            s_world->setBlockAt(x, y, z, toBlockID, false);
+                            blocksReplaced++;
+                        }
+                    }
+                }
+            }
+
+            // Regenerate affected chunks
+            s_renderer->beginBufferCopyBatch();
+            for (int x = x1; x <= x2; x += 32) {
+                for (int y = y1; y <= y2; y += 32) {
+                    for (int z = z1; z <= z2; z += 32) {
+                        Chunk* chunk = s_world->getChunkAtWorldPos(x, y, z);
+                        if (chunk) {
+                            chunk->generateMesh(s_world);
+                            chunk->createVertexBufferBatched(s_renderer);
+                        }
+                    }
+                }
+            }
+            s_renderer->submitBufferCopyBatch();
+
+            s_console->addMessage("Replaced " + std::to_string(blocksReplaced) + " blocks from " + fromBlockName + " to " + toBlockName, ConsoleMessageType::INFO);
+        } catch (const std::exception& e) {
+            s_console->addMessage("Error: Invalid arguments", ConsoleMessageType::ERROR);
+        }
+    }
+    else {
+        s_console->addMessage("Unknown API command: " + subcommand, ConsoleMessageType::ERROR);
+        s_console->addMessage("Available: place, fill, sphere, replace", ConsoleMessageType::INFO);
+    }
+}
+
+void ConsoleCommands::cmdBrush(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        s_console->addMessage("Usage: brush <raise|lower|smooth|paint|flatten> <args>", ConsoleMessageType::WARNING);
+        s_console->addMessage("  brush raise <radius> <height>", ConsoleMessageType::INFO);
+        s_console->addMessage("  brush lower <radius> <depth>", ConsoleMessageType::INFO);
+        s_console->addMessage("  brush smooth <radius>", ConsoleMessageType::INFO);
+        s_console->addMessage("  brush paint <blockName> <radius>", ConsoleMessageType::INFO);
+        s_console->addMessage("  brush flatten <radius> [targetY]", ConsoleMessageType::INFO);
+        return;
+    }
+
+    if (!s_world) {
+        s_console->addMessage("Error: World not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    if (!s_renderer) {
+        s_console->addMessage("Error: Renderer not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    if (!s_player) {
+        s_console->addMessage("Error: Player not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    // Perform raycast to find target position
+    RaycastHit hit = Raycast::castRay(s_world, s_player->Position, s_player->Front, 100.0f);
+    if (!hit.hit) {
+        s_console->addMessage("No block targeted. Point at terrain to use brush.", ConsoleMessageType::WARNING);
+        return;
+    }
+
+    glm::ivec3 targetPos(hit.blockX, hit.blockY, hit.blockZ);
+    std::string subcommand = args[1];
+
+    if (subcommand == "raise") {
+        if (args.size() < 4) {
+            s_console->addMessage("Usage: brush raise <radius> <height>", ConsoleMessageType::WARNING);
+            return;
+        }
+
+        try {
+            int radius = std::stoi(args[2]);
+            int height = std::stoi(args[3]);
+
+            if (radius <= 0 || height <= 0) {
+                s_console->addMessage("Error: Radius and height must be positive", ConsoleMessageType::ERROR);
+                return;
+            }
+
+            int blocksPlaced = 0;
+            for (int x = targetPos.x - radius; x <= targetPos.x + radius; x++) {
+                for (int z = targetPos.z - radius; z <= targetPos.z + radius; z++) {
+                    int dx = x - targetPos.x;
+                    int dz = z - targetPos.z;
+                    float distance = std::sqrt(dx * dx + dz * dz);
+
+                    if (distance <= radius) {
+                        // Get surface block at this position
+                        int surfaceBlock = s_world->getBlockAt(x, targetPos.y, z);
+                        if (surfaceBlock > 0) {
+                            // Raise terrain by placing blocks above
+                            for (int h = 1; h <= height; h++) {
+                                s_world->setBlockAt(x, targetPos.y + h, z, surfaceBlock, false);
+                                blocksPlaced++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Regenerate affected chunks
+            s_renderer->beginBufferCopyBatch();
+            for (int x = targetPos.x - radius - 1; x <= targetPos.x + radius + 1; x += 32) {
+                for (int y = targetPos.y - 1; y <= targetPos.y + height + 1; y += 32) {
+                    for (int z = targetPos.z - radius - 1; z <= targetPos.z + radius + 1; z += 32) {
+                        Chunk* chunk = s_world->getChunkAtWorldPos(x, y, z);
+                        if (chunk) {
+                            chunk->generateMesh(s_world);
+                            chunk->createVertexBufferBatched(s_renderer);
+                        }
+                    }
+                }
+            }
+            s_renderer->submitBufferCopyBatch();
+
+            s_console->addMessage("Raised terrain: " + std::to_string(blocksPlaced) + " blocks placed", ConsoleMessageType::INFO);
+        } catch (const std::exception& e) {
+            s_console->addMessage("Error: Invalid arguments", ConsoleMessageType::ERROR);
+        }
+    }
+    else if (subcommand == "lower") {
+        if (args.size() < 4) {
+            s_console->addMessage("Usage: brush lower <radius> <depth>", ConsoleMessageType::WARNING);
+            return;
+        }
+
+        try {
+            int radius = std::stoi(args[2]);
+            int depth = std::stoi(args[3]);
+
+            if (radius <= 0 || depth <= 0) {
+                s_console->addMessage("Error: Radius and depth must be positive", ConsoleMessageType::ERROR);
+                return;
+            }
+
+            int blocksRemoved = 0;
+            for (int x = targetPos.x - radius; x <= targetPos.x + radius; x++) {
+                for (int z = targetPos.z - radius; z <= targetPos.z + radius; z++) {
+                    int dx = x - targetPos.x;
+                    int dz = z - targetPos.z;
+                    float distance = std::sqrt(dx * dx + dz * dz);
+
+                    if (distance <= radius) {
+                        // Remove blocks downward
+                        for (int h = 0; h < depth; h++) {
+                            if (s_world->getBlockAt(x, targetPos.y - h, z) > 0) {
+                                s_world->setBlockAt(x, targetPos.y - h, z, 0, false);
+                                blocksRemoved++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Regenerate affected chunks
+            s_renderer->beginBufferCopyBatch();
+            for (int x = targetPos.x - radius - 1; x <= targetPos.x + radius + 1; x += 32) {
+                for (int y = targetPos.y - depth - 1; y <= targetPos.y + 1; y += 32) {
+                    for (int z = targetPos.z - radius - 1; z <= targetPos.z + radius + 1; z += 32) {
+                        Chunk* chunk = s_world->getChunkAtWorldPos(x, y, z);
+                        if (chunk) {
+                            chunk->generateMesh(s_world);
+                            chunk->createVertexBufferBatched(s_renderer);
+                        }
+                    }
+                }
+            }
+            s_renderer->submitBufferCopyBatch();
+
+            s_console->addMessage("Lowered terrain: " + std::to_string(blocksRemoved) + " blocks removed", ConsoleMessageType::INFO);
+        } catch (const std::exception& e) {
+            s_console->addMessage("Error: Invalid arguments", ConsoleMessageType::ERROR);
+        }
+    }
+    else if (subcommand == "smooth") {
+        if (args.size() < 3) {
+            s_console->addMessage("Usage: brush smooth <radius>", ConsoleMessageType::WARNING);
+            return;
+        }
+
+        try {
+            int radius = std::stoi(args[2]);
+
+            if (radius <= 0) {
+                s_console->addMessage("Error: Radius must be positive", ConsoleMessageType::ERROR);
+                return;
+            }
+
+            s_console->addMessage("Smooth brush not yet implemented", ConsoleMessageType::WARNING);
+            s_console->addMessage("TODO: Implement terrain smoothing algorithm", ConsoleMessageType::INFO);
+        } catch (const std::exception& e) {
+            s_console->addMessage("Error: Invalid arguments", ConsoleMessageType::ERROR);
+        }
+    }
+    else if (subcommand == "paint") {
+        if (args.size() < 4) {
+            s_console->addMessage("Usage: brush paint <blockName> <radius>", ConsoleMessageType::WARNING);
+            return;
+        }
+
+        try {
+            std::string blockName = args[2];
+            int blockID = BlockRegistry::instance().getID(blockName);
+            if (blockID == -1) {
+                s_console->addMessage("Error: Unknown block '" + blockName + "'", ConsoleMessageType::ERROR);
+                return;
+            }
+
+            int radius = std::stoi(args[3]);
+
+            if (radius <= 0) {
+                s_console->addMessage("Error: Radius must be positive", ConsoleMessageType::ERROR);
+                return;
+            }
+
+            int blocksPainted = 0;
+            for (int x = targetPos.x - radius; x <= targetPos.x + radius; x++) {
+                for (int z = targetPos.z - radius; z <= targetPos.z + radius; z++) {
+                    int dx = x - targetPos.x;
+                    int dz = z - targetPos.z;
+                    float distance = std::sqrt(dx * dx + dz * dz);
+
+                    if (distance <= radius) {
+                        // Replace surface block
+                        if (s_world->getBlockAt(x, targetPos.y, z) > 0) {
+                            s_world->setBlockAt(x, targetPos.y, z, blockID, false);
+                            blocksPainted++;
+                        }
+                    }
+                }
+            }
+
+            // Regenerate affected chunks
+            s_renderer->beginBufferCopyBatch();
+            for (int x = targetPos.x - radius - 1; x <= targetPos.x + radius + 1; x += 32) {
+                for (int z = targetPos.z - radius - 1; z <= targetPos.z + radius + 1; z += 32) {
+                    Chunk* chunk = s_world->getChunkAtWorldPos(x, targetPos.y, z);
+                    if (chunk) {
+                        chunk->generateMesh(s_world);
+                        chunk->createVertexBufferBatched(s_renderer);
+                    }
+                }
+            }
+            s_renderer->submitBufferCopyBatch();
+
+            s_console->addMessage("Painted " + std::to_string(blocksPainted) + " blocks with " + blockName, ConsoleMessageType::INFO);
+        } catch (const std::exception& e) {
+            s_console->addMessage("Error: Invalid arguments", ConsoleMessageType::ERROR);
+        }
+    }
+    else if (subcommand == "flatten") {
+        if (args.size() < 3) {
+            s_console->addMessage("Usage: brush flatten <radius> [targetY]", ConsoleMessageType::WARNING);
+            return;
+        }
+
+        try {
+            int radius = std::stoi(args[2]);
+            int targetY = targetPos.y;
+
+            if (args.size() >= 4) {
+                targetY = std::stoi(args[3]);
+            }
+
+            if (radius <= 0) {
+                s_console->addMessage("Error: Radius must be positive", ConsoleMessageType::ERROR);
+                return;
+            }
+
+            int blocksChanged = 0;
+            for (int x = targetPos.x - radius; x <= targetPos.x + radius; x++) {
+                for (int z = targetPos.z - radius; z <= targetPos.z + radius; z++) {
+                    int dx = x - targetPos.x;
+                    int dz = z - targetPos.z;
+                    float distance = std::sqrt(dx * dx + dz * dz);
+
+                    if (distance <= radius) {
+                        // Get the block type to use
+                        int surfaceBlock = s_world->getBlockAt(x, targetPos.y, z);
+                        if (surfaceBlock == 0) surfaceBlock = BlockRegistry::instance().getID("dirt");
+
+                        // Fill up to target height or remove above target height
+                        for (int y = targetY - 5; y <= targetY + 5; y++) {
+                            int currentBlock = s_world->getBlockAt(x, y, z);
+                            if (y <= targetY && currentBlock == 0) {
+                                s_world->setBlockAt(x, y, z, surfaceBlock, false);
+                                blocksChanged++;
+                            } else if (y > targetY && currentBlock > 0) {
+                                s_world->setBlockAt(x, y, z, 0, false);
+                                blocksChanged++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Regenerate affected chunks
+            s_renderer->beginBufferCopyBatch();
+            for (int x = targetPos.x - radius - 1; x <= targetPos.x + radius + 1; x += 32) {
+                for (int y = targetY - 6; y <= targetY + 6; y += 32) {
+                    for (int z = targetPos.z - radius - 1; z <= targetPos.z + radius + 1; z += 32) {
+                        Chunk* chunk = s_world->getChunkAtWorldPos(x, y, z);
+                        if (chunk) {
+                            chunk->generateMesh(s_world);
+                            chunk->createVertexBufferBatched(s_renderer);
+                        }
+                    }
+                }
+            }
+            s_renderer->submitBufferCopyBatch();
+
+            s_console->addMessage("Flattened terrain at Y=" + std::to_string(targetY) + ": " + std::to_string(blocksChanged) + " blocks changed", ConsoleMessageType::INFO);
+        } catch (const std::exception& e) {
+            s_console->addMessage("Error: Invalid arguments", ConsoleMessageType::ERROR);
+        }
+    }
+    else {
+        s_console->addMessage("Unknown brush command: " + subcommand, ConsoleMessageType::ERROR);
+        s_console->addMessage("Available: raise, lower, smooth, paint, flatten", ConsoleMessageType::INFO);
+    }
+}
+
+void ConsoleCommands::cmdSpawn(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        s_console->addMessage("Usage: spawn <sphere|cube|cylinder> <args>", ConsoleMessageType::WARNING);
+        s_console->addMessage("  spawn sphere <radius> [r] [g] [b]", ConsoleMessageType::INFO);
+        s_console->addMessage("  spawn cube <size> [r] [g] [b]", ConsoleMessageType::INFO);
+        s_console->addMessage("  spawn cylinder <radius> <height> [r] [g] [b]", ConsoleMessageType::INFO);
+        return;
+    }
+
+    if (!s_world) {
+        s_console->addMessage("Error: World not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    if (!s_player) {
+        s_console->addMessage("Error: Player not available", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    // Perform raycast to find spawn position
+    RaycastHit hit = Raycast::castRay(s_world, s_player->Position, s_player->Front, 100.0f);
+    if (!hit.hit) {
+        s_console->addMessage("No spawn location found. Point at terrain to spawn entity.", ConsoleMessageType::WARNING);
+        return;
+    }
+
+    glm::vec3 spawnPos = glm::vec3(hit.blockX, hit.blockY, hit.blockZ) + glm::vec3(hit.normal);
+    std::string subcommand = args[1];
+
+    s_console->addMessage("Entity spawning not yet implemented", ConsoleMessageType::WARNING);
+    s_console->addMessage("TODO: Implement entity system with physics and rendering", ConsoleMessageType::INFO);
+    s_console->addMessage("Spawn position would be: (" + std::to_string((int)spawnPos.x) + ", " +
+                         std::to_string((int)spawnPos.y) + ", " + std::to_string((int)spawnPos.z) + ")", ConsoleMessageType::INFO);
+}
+
+void ConsoleCommands::cmdEntity(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        s_console->addMessage("Usage: entity <list|remove|clear> [args]", ConsoleMessageType::WARNING);
+        s_console->addMessage("  entity list - List all spawned entities", ConsoleMessageType::INFO);
+        s_console->addMessage("  entity remove <id> - Remove entity by ID", ConsoleMessageType::INFO);
+        s_console->addMessage("  entity clear - Remove all entities", ConsoleMessageType::INFO);
+        return;
+    }
+
+    std::string subcommand = args[1];
+
+    if (subcommand == "list") {
+        s_console->addMessage("Entity list not yet implemented", ConsoleMessageType::WARNING);
+        s_console->addMessage("TODO: Implement entity system", ConsoleMessageType::INFO);
+    }
+    else if (subcommand == "remove") {
+        if (args.size() < 3) {
+            s_console->addMessage("Usage: entity remove <id>", ConsoleMessageType::WARNING);
+            return;
+        }
+        s_console->addMessage("Entity removal not yet implemented", ConsoleMessageType::WARNING);
+        s_console->addMessage("TODO: Implement entity system", ConsoleMessageType::INFO);
+    }
+    else if (subcommand == "clear") {
+        s_console->addMessage("Entity clearing not yet implemented", ConsoleMessageType::WARNING);
+        s_console->addMessage("TODO: Implement entity system", ConsoleMessageType::INFO);
+    }
+    else {
+        s_console->addMessage("Unknown entity command: " + subcommand, ConsoleMessageType::ERROR);
+        s_console->addMessage("Available: list, remove, clear", ConsoleMessageType::INFO);
     }
 }

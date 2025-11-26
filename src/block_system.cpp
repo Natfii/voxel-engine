@@ -20,6 +20,7 @@
 #include "structure_system.h"
 #include "vulkan_renderer.h"
 #include "logger.h"
+#include "script_action.h"
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -79,6 +80,43 @@ static LoadedTexture loadAndResizeTexture(const std::string& texturePath, const 
     }
 
     return tex;
+}
+
+// Helper function to parse and register event handlers from YAML
+static void parseAndRegisterEventHandlers(int blockID, const std::string& blockName, const YAML::Node& doc) {
+    // Check if the block has an "events" section
+    if (!doc["events"]) {
+        return; // No events defined
+    }
+
+    YAML::Node eventsNode = doc["events"];
+    if (!eventsNode.IsMap()) {
+        std::cerr << "Warning: 'events' section in block '" << blockName << "' is not a map; skipping." << '\n';
+        return;
+    }
+
+    std::vector<ScriptEventHandler> handlers;
+
+    // Parse each event type
+    for (auto it = eventsNode.begin(); it != eventsNode.end(); ++it) {
+        std::string eventType = it->first.as<std::string>();
+        YAML::Node actionsNode = it->second;
+
+        try {
+            ScriptEventHandler handler = ScriptEventHandler::fromYAML(eventType, actionsNode);
+            handlers.push_back(handler);
+            std::cout << "  Parsed event handler '" << eventType << "' with "
+                      << handler.actions.size() << " actions" << '\n';
+        } catch (const std::exception& e) {
+            std::cerr << "Error parsing event handler '" << eventType << "' for block '"
+                      << blockName << "': " << e.what() << '\n';
+        }
+    }
+
+    // Register all handlers
+    if (!handlers.empty()) {
+        registerBlockEventHandlers(blockID, handlers);
+    }
 }
 
 BlockRegistry& BlockRegistry::instance() {
@@ -280,6 +318,9 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
         m_defs[def.id] = def;
         m_nameToID[def.name] = def.id;
         std::cout << "  Loaded block: " << def.name << " (ID " << def.id << ")" << '\n';
+
+        // Parse and register event handlers
+        parseAndRegisterEventHandlers(def.id, def.name, doc);
     }
 
     // PASS 2: Load blocks without explicit IDs (auto-assign starting from highestExplicitID + 1)
@@ -397,6 +438,9 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
             m_defs[def.id] = def;
             m_nameToID[def.name] = def.id;
             std::cout << "  Loaded block: " << def.name << " (ID " << def.id << ", auto-assigned)" << '\n';
+
+            // Parse and register event handlers
+            parseAndRegisterEventHandlers(def.id, def.name, doc);
         }
     }
 

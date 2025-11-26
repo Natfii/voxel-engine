@@ -1,0 +1,81 @@
+id: 52
+name: "Grass Spreader"
+texture: "grass_top.png"
+durability: 3
+liquid: false
+affected_by_gravity: false
+flammability: 10
+transparency: 0.0
+
+# Biome compatibility - temperate regions
+min_temperature: 30
+max_temperature: 80
+min_moisture: 20
+max_moisture: 100
+
+# Special grass block that actively spreads to nearby dirt
+events:
+  # Periodic updates to spread grass
+  on_update:
+    # Try to spread to neighboring dirt blocks
+    - type: place_block
+      block: "Grass Block"
+      offset: [1, 0, 0]
+      probability: 25
+
+    - type: place_block
+      block: "Grass Block"
+      offset: [-1, 0, 0]
+      probability: 25
+
+    - type: place_block
+      block: "Grass Block"
+      offset: [0, 0, 1]
+      probability: 25
+
+    - type: place_block
+      block: "Grass Block"
+      offset: [0, 0, -1]
+      probability: 25
+
+    # Spawn flowers occasionally
+    - type: place_block
+      block: "Flower"
+      offset: [0, 1, 0]
+      probability: 5
+
+  # When stepped on, spawn particles
+  on_step:
+    - type: spawn_particles
+      particle: "grass_particles"
+      offset: [0, 1, 0]
+      probability: 10
+
+  # When broken, drop seeds
+  on_break:
+    - type: spawn_particles
+      particle: "seeds"
+      offset: [0, 0, 0]
+      probability: 100
+
+    - type: run_command
+      command: "echo Grass block broken, seeds scattered!"
+      probability: 100
+
+  # When placed, trigger nearby grass to update
+  on_place:
+    - type: trigger_update
+      offset: [1, 0, 0]
+      probability: 100
+
+    - type: trigger_update
+      offset: [-1, 0, 0]
+      probability: 100
+
+    - type: trigger_update
+      offset: [0, 0, 1]
+      probability: 100
+
+    - type: trigger_update
+      offset: [0, 0, -1]
+      probability: 100

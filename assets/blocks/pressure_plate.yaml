@@ -1,0 +1,40 @@
+id: 50
+name: "Pressure Plate"
+texture: "pressure_plate.png"
+durability: 1
+liquid: false
+affected_by_gravity: false
+flammability: 0
+transparency: 0.0
+
+# Event-driven behavior defined entirely in YAML
+events:
+  # Trigger when an entity steps on the pressure plate
+  on_step:
+    - type: run_command
+      command: "echo Stepped on pressure plate!"
+      probability: 100
+
+    - type: spawn_particles
+      particle: "redstone_dust"
+      offset: [0, 1, 0]
+      probability: 100
+
+  # When a neighbor block changes (e.g., support block removed)
+  on_neighbor_change:
+    - type: break_block
+      offset: [0, 0, 0]
+      probability: 50  # 50% chance to pop off like a torch
+
+  # When the pressure plate is placed
+  on_place:
+    - type: run_command
+      command: "echo Pressure plate placed!"
+      probability: 100
+
+  # When the pressure plate is broken
+  on_break:
+    - type: spawn_structure
+      structure: "hidden_door"
+      offset: [0, -1, 0]
+      probability: 10  # 10% chance to reveal a hidden door below
