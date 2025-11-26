@@ -117,6 +117,20 @@ public:
      */
     void removeInstance(uint32_t instanceId);
 
+    /**
+     * @brief Set instance visibility
+     * @param instanceId Instance to modify
+     * @param visible Whether the instance should be rendered
+     */
+    void setInstanceVisible(uint32_t instanceId, bool visible);
+
+    /**
+     * @brief Check if instance is visible
+     * @param instanceId Instance to check
+     * @return True if instance is visible
+     */
+    bool isInstanceVisible(uint32_t instanceId) const;
+
     // ========== Rendering ==========
 
     /**
@@ -152,6 +166,7 @@ private:
         VkBuffer instanceBuffer = VK_NULL_HANDLE;
         VkDeviceMemory instanceMemory = VK_NULL_HANDLE;
         bool instanceBufferDirty = false;
+        uint32_t visibleInstanceCount = 0;  // Number of visible instances in buffer
     };
 
     struct MaterialData {
@@ -164,6 +179,7 @@ private:
     struct InstanceInfo {
         uint32_t meshId;
         InstanceData data;
+        bool visible = true;  ///< Whether this instance should be rendered
     };
 
     VulkanRenderer* m_renderer;

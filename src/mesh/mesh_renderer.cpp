@@ -278,25 +278,63 @@ void MeshRenderer::removeInstance(uint32_t instanceId) {
     }
 }
 
+void MeshRenderer::setInstanceVisible(uint32_t instanceId, bool visible) {
+    auto it = m_instances.find(instanceId);
+    if (it == m_instances.end()) {
+        Logger::warning() << "Instance " << instanceId << " not found";
+        return;
+    }
+
+    if (it->second.visible != visible) {
+        it->second.visible = visible;
+
+        // Mark instance buffer as dirty
+        auto meshIt = m_meshes.find(it->second.meshId);
+        if (meshIt != m_meshes.end()) {
+            meshIt->second.instanceBufferDirty = true;
+        }
+    }
+}
+
+bool MeshRenderer::isInstanceVisible(uint32_t instanceId) const {
+    auto it = m_instances.find(instanceId);
+    if (it == m_instances.end()) {
+        return false;
+    }
+    return it->second.visible;
+}
+
 void MeshRenderer::updateInstanceBuffer(MeshData& meshData) {
     if (meshData.instances.empty()) {
         return;
     }
 
-    // Collect instance data
+    // Collect instance data (only visible instances)
     std::vector<InstanceData> instanceDataArray;
     instanceDataArray.reserve(meshData.instances.size());
 
     for (uint32_t instanceId : meshData.instances) {
         auto it = m_instances.find(instanceId);
-        if (it != m_instances.end()) {
+        if (it != m_instances.end() && it->second.visible) {
             instanceDataArray.push_back(it->second.data);
         }
     }
 
     if (instanceDataArray.empty()) {
+        // No visible instances - clean up any existing buffer
+        if (meshData.instanceBuffer != VK_NULL_HANDLE) {
+            m_renderer->destroyMeshBuffers(meshData.instanceBuffer, VK_NULL_HANDLE,
+                                          meshData.instanceMemory, VK_NULL_HANDLE);
+            meshData.instanceBuffer = VK_NULL_HANDLE;
+            meshData.instanceMemory = VK_NULL_HANDLE;
+        }
+        meshData.visibleInstanceCount = 0;
+        meshData.instanceBufferDirty = false;
         return;
     }
+
+    // Store visible count for rendering
+    meshData.visibleInstanceCount = static_cast<uint32_t>(instanceDataArray.size());
 
     // Destroy old instance buffer if it exists
     if (meshData.instanceBuffer != VK_NULL_HANDLE) {
@@ -346,8 +384,8 @@ void MeshRenderer::render(VkCommandBuffer cmd) {
             updateInstanceBuffer(meshData);
         }
 
-        // Skip if no valid instances
-        if (meshData.instanceBuffer == VK_NULL_HANDLE) {
+        // Skip if no visible instances or no buffer
+        if (meshData.instanceBuffer == VK_NULL_HANDLE || meshData.visibleInstanceCount == 0) {
             continue;
         }
 
@@ -371,8 +409,8 @@ void MeshRenderer::render(VkCommandBuffer cmd) {
         // Bind index buffer
         vkCmdBindIndexBuffer(cmd, meshData.mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
-        // Draw instanced
-        uint32_t instanceCount = static_cast<uint32_t>(meshData.instances.size());
+        // Draw instanced (only visible instances)
+        uint32_t instanceCount = meshData.visibleInstanceCount;
         uint32_t indexCount = static_cast<uint32_t>(meshData.mesh.indices.size());
         vkCmdDrawIndexed(cmd, indexCount, instanceCount, 0, 0, 0);
     }

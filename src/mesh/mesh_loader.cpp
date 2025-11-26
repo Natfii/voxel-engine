@@ -11,6 +11,13 @@
 #include <cmath>
 #include <unordered_map>
 
+// tinygltf for GLB/GLTF loading
+#define TINYGLTF_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define TINYGLTF_NO_EXTERNAL_IMAGE
+#include "tiny_gltf.h"
+
 // ========== OBJ Loader ==========
 
 std::vector<Mesh> MeshLoader::loadOBJ(const std::string& filepath,
@@ -243,11 +250,214 @@ int MeshLoader::convertOBJIndex(int index, size_t size) {
     return -1;  // Invalid
 }
 
-// ========== glTF Loader (Stub) ==========
+// ========== glTF/GLB Loader ==========
 
 std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
                                         std::vector<PBRMaterial>& materials) {
-    throw std::runtime_error("glTF loading not yet implemented (Phase 2 feature)");
+    Logger::info() << "Loading glTF/GLB mesh: " << filepath;
+
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    std::string err, warn;
+
+    // Determine if it's a binary GLB or text GLTF
+    bool isBinary = filepath.size() >= 4 &&
+                    (filepath.substr(filepath.size() - 4) == ".glb" ||
+                     filepath.substr(filepath.size() - 4) == ".GLB");
+
+    bool success = false;
+    if (isBinary) {
+        success = loader.LoadBinaryFromFile(&model, &err, &warn, filepath);
+    } else {
+        success = loader.LoadASCIIFromFile(&model, &err, &warn, filepath);
+    }
+
+    if (!warn.empty()) {
+        Logger::warning() << "glTF warning: " << warn;
+    }
+
+    if (!err.empty()) {
+        throw std::runtime_error("glTF error: " + err);
+    }
+
+    if (!success) {
+        throw std::runtime_error("Failed to load glTF file: " + filepath);
+    }
+
+    std::vector<Mesh> meshes;
+
+    // Load materials
+    materials.clear();
+    for (const auto& gltfMat : model.materials) {
+        PBRMaterial mat = PBRMaterial::createDefault();
+
+        // Base color
+        if (gltfMat.pbrMetallicRoughness.baseColorFactor.size() >= 4) {
+            mat.baseColor = glm::vec4(
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[0]),
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[1]),
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[2]),
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[3])
+            );
+        }
+
+        // Metallic and roughness
+        mat.metallic = static_cast<float>(gltfMat.pbrMetallicRoughness.metallicFactor);
+        mat.roughness = static_cast<float>(gltfMat.pbrMetallicRoughness.roughnessFactor);
+
+        // Emissive
+        if (gltfMat.emissiveFactor.size() >= 3) {
+            float emissive = static_cast<float>(
+                (gltfMat.emissiveFactor[0] + gltfMat.emissiveFactor[1] + gltfMat.emissiveFactor[2]) / 3.0
+            );
+            mat.emissive = emissive;
+        }
+
+        materials.push_back(mat);
+    }
+
+    // If no materials, add default
+    if (materials.empty()) {
+        materials.push_back(PBRMaterial::createDefault());
+    }
+
+    // Process each mesh in the model
+    for (const auto& gltfMesh : model.meshes) {
+        for (const auto& primitive : gltfMesh.primitives) {
+            if (primitive.mode != TINYGLTF_MODE_TRIANGLES) {
+                Logger::warning() << "Skipping non-triangle primitive in mesh: " << gltfMesh.name;
+                continue;
+            }
+
+            std::vector<MeshVertex> vertices;
+            std::vector<uint32_t> indices;
+
+            // Get accessors
+            const tinygltf::Accessor* posAccessor = nullptr;
+            const tinygltf::Accessor* normalAccessor = nullptr;
+            const tinygltf::Accessor* uvAccessor = nullptr;
+
+            // Position (required)
+            auto posIt = primitive.attributes.find("POSITION");
+            if (posIt == primitive.attributes.end()) {
+                Logger::warning() << "Mesh primitive has no POSITION attribute, skipping";
+                continue;
+            }
+            posAccessor = &model.accessors[posIt->second];
+
+            // Normal (optional)
+            auto normIt = primitive.attributes.find("NORMAL");
+            if (normIt != primitive.attributes.end()) {
+                normalAccessor = &model.accessors[normIt->second];
+            }
+
+            // UV (optional)
+            auto uvIt = primitive.attributes.find("TEXCOORD_0");
+            if (uvIt != primitive.attributes.end()) {
+                uvAccessor = &model.accessors[uvIt->second];
+            }
+
+            // Get buffer views
+            const tinygltf::BufferView& posView = model.bufferViews[posAccessor->bufferView];
+            const tinygltf::Buffer& posBuffer = model.buffers[posView.buffer];
+
+            // Read vertex data
+            size_t vertexCount = posAccessor->count;
+            vertices.resize(vertexCount);
+
+            for (size_t i = 0; i < vertexCount; ++i) {
+                MeshVertex& vertex = vertices[i];
+
+                // Position
+                const float* posData = reinterpret_cast<const float*>(
+                    &posBuffer.data[posView.byteOffset + posAccessor->byteOffset + i * 12]
+                );
+                vertex.position = glm::vec3(posData[0], posData[1], posData[2]);
+
+                // Normal
+                if (normalAccessor) {
+                    const tinygltf::BufferView& normView = model.bufferViews[normalAccessor->bufferView];
+                    const tinygltf::Buffer& normBuffer = model.buffers[normView.buffer];
+                    const float* normData = reinterpret_cast<const float*>(
+                        &normBuffer.data[normView.byteOffset + normalAccessor->byteOffset + i * 12]
+                    );
+                    vertex.normal = glm::normalize(glm::vec3(normData[0], normData[1], normData[2]));
+                } else {
+                    vertex.normal = glm::vec3(0, 1, 0);
+                }
+
+                // UV
+                if (uvAccessor) {
+                    const tinygltf::BufferView& uvView = model.bufferViews[uvAccessor->bufferView];
+                    const tinygltf::Buffer& uvBuffer = model.buffers[uvView.buffer];
+                    const float* uvData = reinterpret_cast<const float*>(
+                        &uvBuffer.data[uvView.byteOffset + uvAccessor->byteOffset + i * 8]
+                    );
+                    vertex.texCoord = glm::vec2(uvData[0], uvData[1]);
+                } else {
+                    vertex.texCoord = glm::vec2(0, 0);
+                }
+
+                // Default tangent
+                vertex.tangent = glm::vec3(1, 0, 0);
+            }
+
+            // Read indices
+            if (primitive.indices >= 0) {
+                const tinygltf::Accessor& idxAccessor = model.accessors[primitive.indices];
+                const tinygltf::BufferView& idxView = model.bufferViews[idxAccessor.bufferView];
+                const tinygltf::Buffer& idxBuffer = model.buffers[idxView.buffer];
+
+                indices.reserve(idxAccessor.count);
+
+                const uint8_t* dataPtr = &idxBuffer.data[idxView.byteOffset + idxAccessor.byteOffset];
+
+                for (size_t i = 0; i < idxAccessor.count; ++i) {
+                    uint32_t index = 0;
+                    switch (idxAccessor.componentType) {
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                            index = dataPtr[i];
+                            break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                            index = reinterpret_cast<const uint16_t*>(dataPtr)[i];
+                            break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                            index = reinterpret_cast<const uint32_t*>(dataPtr)[i];
+                            break;
+                        default:
+                            Logger::warning() << "Unknown index component type: " << idxAccessor.componentType;
+                            index = 0;
+                    }
+                    indices.push_back(index);
+                }
+            } else {
+                // No indices, generate sequential
+                for (size_t i = 0; i < vertexCount; ++i) {
+                    indices.push_back(static_cast<uint32_t>(i));
+                }
+            }
+
+            // Create mesh
+            std::string meshName = gltfMesh.name.empty() ? "mesh_" + std::to_string(meshes.size()) : gltfMesh.name;
+            Mesh mesh(meshName, vertices, indices);
+            mesh.calculateTangents();
+            mesh.calculateBounds();
+
+            // Set material index
+            if (primitive.material >= 0) {
+                mesh.materialIndex = static_cast<uint32_t>(primitive.material);
+            }
+
+            meshes.push_back(std::move(mesh));
+        }
+    }
+
+    if (meshes.empty()) {
+        throw std::runtime_error("glTF file contains no valid meshes: " + filepath);
+    }
+
+    Logger::info() << "Loaded glTF: " << meshes.size() << " meshes, " << materials.size() << " materials";
+    return meshes;
 }
 
 // ========== Procedural Mesh Generators ==========

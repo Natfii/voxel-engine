@@ -22,7 +22,8 @@ Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     : Position(position), WorldUp(up), Yaw(yaw), Pitch(pitch),
       MovementSpeed(5.0f), MouseSensitivity(0.1f), m_firstMouse(true),
       m_velocity(0.0f), m_onGround(false), m_inLiquid(false), m_cameraUnderwater(false),
-      m_submergence(0.0f), m_nKeyPressed(false), NoclipMode(false), m_isSprinting(false),
+      m_submergence(0.0f), m_nKeyPressed(false), m_f3KeyPressed(false), NoclipMode(false),
+      ThirdPersonMode(false), ThirdPersonDistance(4.0f), m_isSprinting(false),
       m_sprintKeyPressed(false)
 {
     updateVectors();
@@ -42,6 +43,17 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
         }
     } else {
         m_nKeyPressed = false;
+    }
+
+    // Handle F3 key to toggle third-person mode (only if processing input)
+    if (processInput && glfwGetKey(window, GLFW_KEY_F3) == GLFW_PRESS) {
+        if (!m_f3KeyPressed) {
+            ThirdPersonMode = !ThirdPersonMode;
+            m_f3KeyPressed = true;
+            Logger::info() << "Third-person mode: " << (ThirdPersonMode ? "ON" : "OFF");
+        }
+    } else {
+        m_f3KeyPressed = false;
     }
 
     // Update mouse look (only if processing input)
@@ -849,7 +861,29 @@ bool Player::checkHorizontalCollision(const glm::vec3& position, World* world) {
 }
 
 glm::mat4 Player::getViewMatrix() const {
+    if (ThirdPersonMode) {
+        // Third-person camera: position behind and slightly above player
+        glm::vec3 cameraPos = getCameraPosition();
+        glm::vec3 lookTarget = Position; // Look at eye position
+        return glm::lookAt(cameraPos, lookTarget, WorldUp);
+    }
     return glm::lookAt(Position, Position + Front, Up);
+}
+
+glm::vec3 Player::getBodyPosition() const {
+    // Body position is at feet level
+    return Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+}
+
+glm::vec3 Player::getCameraPosition() const {
+    if (ThirdPersonMode) {
+        // Camera positioned behind player, slightly above
+        // Move back along the opposite of front direction
+        glm::vec3 offset = -Front * ThirdPersonDistance;
+        offset.y += 1.0f; // Slightly above eye level
+        return Position + offset;
+    }
+    return Position;
 }
 
 void Player::updateVectors() {
