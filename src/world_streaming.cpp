@@ -282,18 +282,13 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
     if (!newRequests.empty()) {
         std::lock_guard<std::mutex> lock(m_loadQueueMutex);
 
+        bool enqueued = false;
         for (const auto& request : newRequests) {
-            ChunkCoord coord{request.chunkX, request.chunkY, request.chunkZ};
-
-            // Check if chunk is already in flight (prevents duplicates)
-            if (m_chunksInFlight.find(coord) == m_chunksInFlight.end()) {
-                m_chunksInFlight.insert(coord);
-                m_loadQueue.push(request);
-            }
+            enqueued = enqueueLoadRequestLocked(request) || enqueued;
         }
 
         // Wake up workers if we added any chunks
-        if (!m_loadQueue.empty()) {
+        if (enqueued) {
             m_loadQueueCV.notify_all();
         }
     }
@@ -334,24 +329,22 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
                             ChunkCoord coord{chunkX, chunkY, chunkZ};
                             if (loadedChunks.find(coord) == loadedChunks.end()) {
                                 std::lock_guard<std::mutex> lock(m_loadQueueMutex);
-                                if (m_chunksInFlight.find(coord) == m_chunksInFlight.end()) {
-                                    m_chunksInFlight.insert(coord);
 
-                                    ChunkLoadRequest request;
-                                    request.chunkX = chunkX;
-                                    request.chunkY = chunkY;
-                                    request.chunkZ = chunkZ;
-                                    request.priority = 50.0f;  // High priority for look-ahead
-                                    request.lod = ChunkLOD::FULL;
+                                ChunkLoadRequest request;
+                                request.chunkX = chunkX;
+                                request.chunkY = chunkY;
+                                request.chunkZ = chunkZ;
+                                request.priority = 50.0f;  // High priority for look-ahead
+                                request.lod = ChunkLOD::FULL;
 
-                                    m_loadQueue.push(request);
+                                if (enqueueLoadRequestLocked(request)) {
+                                    m_loadQueueCV.notify_all();
                                 }
                             }
                         }
                     }
                 }
 
-                m_loadQueueCV.notify_all();
             }
         }
     }
@@ -1034,17 +1027,12 @@ void WorldStreaming::retryFailedChunks() {
     if (!retryRequests.empty()) {
         std::lock_guard<std::mutex> lock(m_loadQueueMutex);
 
+        bool enqueued = false;
         for (const auto& request : retryRequests) {
-            ChunkCoord coord{request.chunkX, request.chunkY, request.chunkZ};
-
-            // Only add if not already in flight
-            if (m_chunksInFlight.find(coord) == m_chunksInFlight.end()) {
-                m_chunksInFlight.insert(coord);
-                m_loadQueue.push(request);
-            }
+            enqueued = enqueueLoadRequestLocked(request) || enqueued;
         }
 
-        if (!m_loadQueue.empty()) {
+        if (enqueued) {
             m_loadQueueCV.notify_all();
         }
     }
@@ -1132,19 +1120,100 @@ void WorldStreaming::queueBackgroundGeneration(int centerX, int centerZ, int rad
     // Add to load queue
     if (!backgroundRequests.empty()) {
         std::lock_guard<std::mutex> lock(m_loadQueueMutex);
+        bool enqueued = false;
         for (const auto& request : backgroundRequests) {
-            ChunkCoord coord{request.chunkX, request.chunkY, request.chunkZ};
-            if (m_chunksInFlight.find(coord) == m_chunksInFlight.end()) {
-                m_chunksInFlight.insert(coord);
-                m_loadQueue.push(request);
-            }
+            enqueued = enqueueLoadRequestLocked(request) || enqueued;
         }
 
-        if (!m_loadQueue.empty()) {
+        if (enqueued) {
             m_loadQueueCV.notify_all();
         }
 
         Logger::debug() << "Queued " << backgroundRequests.size()
                        << " chunks for background pre-generation";
     }
+}
+
+bool WorldStreaming::enqueueLoadRequestLocked(const ChunkLoadRequest& request) {
+    ChunkCoord coord{request.chunkX, request.chunkY, request.chunkZ};
+
+    if (m_chunksInFlight.find(coord) != m_chunksInFlight.end()) {
+        return false;  // Duplicate
+    }
+
+    if (m_loadQueue.size() >= MAX_LOAD_QUEUE_SIZE) {
+        auto lowestPriorityRequest = findLowestPriorityRequestLocked();
+
+        if (lowestPriorityRequest && request.priority < lowestPriorityRequest->priority) {
+            if (removeRequestFromLoadQueueLocked(*lowestPriorityRequest)) {
+                Logger::debug() << "Load queue full (" << m_loadQueue.size() << "/" << MAX_LOAD_QUEUE_SIZE
+                                << "), dropped lowest priority chunk (" << lowestPriorityRequest->chunkX << ", "
+                                << lowestPriorityRequest->chunkY << ", " << lowestPriorityRequest->chunkZ
+                                << ") with priority " << lowestPriorityRequest->priority
+                                << " to enqueue chunk (" << request.chunkX << ", " << request.chunkY << ", "
+                                << request.chunkZ << ") priority " << request.priority;
+            }
+        } else {
+            Logger::debug() << "Load queue near capacity (" << m_loadQueue.size() << "/" << MAX_LOAD_QUEUE_SIZE
+                            << "), deferring chunk (" << request.chunkX << ", " << request.chunkY << ", "
+                            << request.chunkZ << ") with priority " << request.priority;
+            return false;
+        }
+    } else if (m_loadQueue.size() > static_cast<size_t>(MAX_LOAD_QUEUE_SIZE * 0.9f)) {
+        Logger::debug() << "Load queue nearing capacity: " << m_loadQueue.size()
+                        << "/" << MAX_LOAD_QUEUE_SIZE;
+    }
+
+    m_chunksInFlight.insert(coord);
+    m_loadQueue.push(request);
+    return true;
+}
+
+std::optional<ChunkLoadRequest> WorldStreaming::findLowestPriorityRequestLocked() const {
+    if (m_loadQueue.empty()) {
+        return std::nullopt;
+    }
+
+    auto tempQueue = m_loadQueue;  // Copy for inspection
+    ChunkLoadRequest lowest = tempQueue.top();
+
+    while (!tempQueue.empty()) {
+        const auto& current = tempQueue.top();
+        if (current.priority > lowest.priority) {
+            lowest = current;  // Higher distance = lower priority
+        }
+        tempQueue.pop();
+    }
+
+    return lowest;
+}
+
+bool WorldStreaming::removeRequestFromLoadQueueLocked(const ChunkLoadRequest& target) {
+    if (m_loadQueue.empty()) {
+        return false;
+    }
+
+    std::priority_queue<ChunkLoadRequest> rebuilt;
+    bool removed = false;
+
+    while (!m_loadQueue.empty()) {
+        auto current = m_loadQueue.top();
+        m_loadQueue.pop();
+
+        if (!removed && current.chunkX == target.chunkX && current.chunkY == target.chunkY &&
+            current.chunkZ == target.chunkZ) {
+            removed = true;
+            continue;  // Skip this entry
+        }
+
+        rebuilt.push(current);
+    }
+
+    m_loadQueue.swap(rebuilt);
+
+    if (removed) {
+        m_chunksInFlight.erase({target.chunkX, target.chunkY, target.chunkZ});
+    }
+
+    return removed;
 }

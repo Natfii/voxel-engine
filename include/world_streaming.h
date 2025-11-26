@@ -34,6 +34,7 @@
 #include <functional>
 #include <unordered_set>
 #include <chrono>
+#include <optional>
 #include <glm/glm.hpp>
 
 // Need full ChunkCoord definition for hash function in unordered_set
@@ -355,12 +356,46 @@ private:
     std::atomic<int> m_activeWorkers;     ///< Number of active workers
 
     // === Load Queue (accessed by main thread + workers) ===
+    static constexpr size_t MAX_LOAD_QUEUE_SIZE = 2048;   ///< Maximum allowed size of m_loadQueue
     std::priority_queue<ChunkLoadRequest> m_loadQueue;  ///< Priority queue of chunks to load
     mutable std::mutex m_loadQueueMutex;                ///< Protects m_loadQueue
     std::condition_variable m_loadQueueCV;              ///< Signals workers when work available
 
     // === Deduplication Tracking ===
     std::unordered_set<ChunkCoord> m_chunksInFlight;   ///< Tracks chunks being generated (prevents duplicates)
+
+    // === Load Queue Helpers ===
+    /**
+     * @brief Attempts to enqueue a load request while honoring the maximum queue size.
+     *
+     * Expects the caller to hold m_loadQueueMutex. Handles deduplication, capacity
+     * enforcement (dropping the lowest-priority request when necessary), and emits
+     * debug logs when requests are deferred.
+     *
+     * @param request The load request to enqueue
+     * @return true if the request was enqueued, false if deferred or duplicate
+     */
+    bool enqueueLoadRequestLocked(const ChunkLoadRequest& request);
+
+    /**
+     * @brief Finds the lowest-priority request currently in the load queue.
+     *
+     * Expects the caller to hold m_loadQueueMutex.
+     *
+     * @return Optional containing the lowest-priority request, or std::nullopt if empty
+     */
+    std::optional<ChunkLoadRequest> findLowestPriorityRequestLocked() const;
+
+    /**
+     * @brief Removes the first matching request from the load queue.
+     *
+     * Expects the caller to hold m_loadQueueMutex. Also removes the matching entry
+     * from m_chunksInFlight when found.
+     *
+     * @param target The request to remove
+     * @return true if a request was removed
+     */
+    bool removeRequestFromLoadQueueLocked(const ChunkLoadRequest& target);
 
     // === Error Tracking and Retry ===
     struct FailedChunk {
