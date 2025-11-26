@@ -31,8 +31,8 @@
 #include <memory>
 #include <cstdint>
 
-// Forward declare Vertex (defined in chunk.h)
-struct Vertex;
+// Forward declare CompressedVertex (defined in chunk.h)
+struct CompressedVertex;
 
 /**
  * @brief Memory pool for reusing mesh data buffers
@@ -70,7 +70,7 @@ public:
      *
      * @return A cleared vertex buffer vector
      */
-    std::vector<Vertex> acquireVertexBuffer();
+    std::vector<CompressedVertex> acquireVertexBuffer();
 
     /**
      * @brief Acquires an index buffer from the pool
@@ -90,7 +90,7 @@ public:
      *
      * @param buffer Vertex buffer to return (moved)
      */
-    void releaseVertexBuffer(std::vector<Vertex>&& buffer);
+    void releaseVertexBuffer(std::vector<CompressedVertex>&& buffer);
 
     /**
      * @brief Returns an index buffer to the pool for reuse
@@ -128,7 +128,7 @@ public:
 
 private:
     /// Pool of available vertex buffers
-    std::vector<std::vector<Vertex>> m_vertexBufferPool;
+    std::vector<std::vector<CompressedVertex>> m_vertexBufferPool;
 
     /// Pool of available index buffers
     std::vector<std::vector<uint32_t>> m_indexBufferPool;

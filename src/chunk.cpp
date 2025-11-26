@@ -426,20 +426,46 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 int worldY = static_cast<int64_t>(m_y) * HEIGHT + y;
                 float worldYf = static_cast<float>(worldY);
 
-                // SOLID STONE GUARANTEE: Y=2 to Y=10 is always stone (no caves)
-                // This prevents giant holes to the void and ensures solid foundation
-                if (worldY >= 2 && worldY <= 10) {
+                // BEDROCK LAYER: Y <= BEDROCK_LAYER_Y (-120) is always bedrock
+                // This creates the absolute bottom of the world, preventing falling into void
+                if (worldY <= BEDROCK_LAYER_Y) {
+                    m_blocks[x][y][z] = BLOCK_BEDROCK;
+                    continue;
+                }
+
+                // SOLID STONE FLOOR: Thin layer just above bedrock (no caves here)
+                // This provides stable floor for deep caves to rest on
+                if (worldY > BEDROCK_LAYER_Y && worldY <= BEDROCK_LAYER_Y + 5) {
                     m_blocks[x][y][z] = BLOCK_STONE;
                     continue;
                 }
 
+                // Minimum Y for caves (just above solid stone floor)
+                const int CAVE_FLOOR_Y = BEDROCK_LAYER_Y + 6;  // Caves start above the solid floor
+
                 // Check if this is inside a cave (extended to deep underground)
                 // Pass terrainHeight to avoid redundant calculation (was 32x per column!)
                 float caveDensity = biomeMap->getCaveDensityAt(worldX, worldYf, worldZ, terrainHeight);
-                bool isCave = (caveDensity < 0.45f) && (worldY > 10);  // Caves above solid foundation layer
+                bool isCave = (caveDensity < 0.45f) && (worldY > CAVE_FLOOR_Y);
 
                 // Check if inside underground biome chamber (extended to deep underground)
-                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ) && (worldY > 10);
+                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ) && (worldY > CAVE_FLOOR_Y);
+
+                // ============================================================================
+                // ENHANCED CAVE SYSTEM (2025-11-26): Maze tunnels, caverns, and aquifers
+                // ============================================================================
+                // Check for maze-like tunnel system (deep underground Y < 0)
+                float mazeDensity = biomeMap->getMazeTunnelDensityAt(worldX, worldYf, worldZ);
+                bool isMazeTunnel = (mazeDensity < 0.3f) && (worldY < 0) && (worldY > CAVE_FLOOR_Y);
+
+                // Check for large open caverns (rare, spectacular underground spaces)
+                bool isLargeCavern = biomeMap->isLargeCavernAt(worldX, worldYf, worldZ) && (worldY > CAVE_FLOOR_Y);
+
+                // Check for aquifer (underground water in caves below water table)
+                bool hasAquifer = biomeMap->hasAquiferAt(worldX, worldYf, worldZ);
+
+                // Combined cave check: any cave system creates air (or water if aquifer)
+                bool isAnyCave = (isCave || isUndergroundChamber || isMazeTunnel || isLargeCavern) && (worldY > CAVE_FLOOR_Y);
 
                 // Determine block placement
                 if (worldY < terrainHeight) {
@@ -471,17 +497,17 @@ void Chunk::generate(BiomeMap* biomeMap) {
                     }
 
                     // LAND BIOME LOGIC (terrain above water level)
-                    // If in cave, create air pocket
-                    // Cave generation handles surface entrances intelligently via noise
+                    // Enhanced cave system: maze tunnels, caverns, and aquifers
                     // Only prevent caves in the very top layer (3 blocks) to avoid ugly surface pockmarks
-                    if (isCave && worldY < terrainHeight - 3) {
-                        m_blocks[x][y][z] = BLOCK_AIR;
-                        continue;
-                    }
-
-                    // If in underground chamber, create large open space (only above Y=15)
-                    if (isUndergroundChamber) {
-                        m_blocks[x][y][z] = BLOCK_AIR;
+                    if (isAnyCave && worldY < terrainHeight - 3) {
+                        // Check if this cave should be flooded (aquifer)
+                        if (hasAquifer) {
+                            // Aquifer: fill with water
+                            m_blocks[x][y][z] = BLOCK_WATER;
+                        } else {
+                            // Regular cave: air
+                            m_blocks[x][y][z] = BLOCK_AIR;
+                        }
                         continue;
                     }
 
@@ -489,11 +515,49 @@ void Chunk::generate(BiomeMap* biomeMap) {
                     int depthFromSurface = terrainHeight - worldY;
 
                     if (depthFromSurface == 1) {
-                        // Top layer - use biome's surface block
-                        m_blocks[x][y][z] = biome->primary_surface_block;
+                        // ================================================================
+                        // ELEVATION-AWARE SURFACE BLOCKS (2025-11-25)
+                        // ================================================================
+                        // - High elevation (>SNOW_LINE): snow
+                        // - Mid elevation (STONE_LINE to SNOW_LINE): exposed stone (mountains)
+                        // - Low elevation: biome's normal surface block (grass/sand/etc)
+                        // ================================================================
+                        constexpr int STONE_LINE = 100;  // Stone starts appearing at Y=100
+
+                        if (worldY >= SNOW_LINE + SNOW_TRANSITION) {
+                            // Fully above snow line - always snow
+                            m_blocks[x][y][z] = BLOCK_SNOW;
+                        } else if (worldY >= SNOW_LINE) {
+                            // Snow transition zone - mix snow and stone using noise
+                            float snowNoise = biomeMap->getTerrainNoise(worldX, worldZ);
+                            float snowChance = static_cast<float>(worldY - SNOW_LINE) / static_cast<float>(SNOW_TRANSITION);
+                            if (snowNoise > (1.0f - snowChance * 2.0f)) {
+                                m_blocks[x][y][z] = BLOCK_SNOW;
+                            } else {
+                                m_blocks[x][y][z] = BLOCK_STONE;  // Exposed stone below snow
+                            }
+                        } else if (worldY >= STONE_LINE && biome->height_multiplier > 1.5f) {
+                            // Mid-elevation mountainous terrain - exposed stone
+                            // Only for biomes with height_multiplier > 1.5 (mountains)
+                            float stoneNoise = biomeMap->getTerrainNoise(worldX + 1000.0f, worldZ);
+                            float stoneChance = static_cast<float>(worldY - STONE_LINE) / static_cast<float>(SNOW_LINE - STONE_LINE);
+                            // Higher = more stone, noise adds variation
+                            if (stoneNoise > (1.0f - stoneChance * 1.5f)) {
+                                m_blocks[x][y][z] = BLOCK_STONE;
+                            } else {
+                                m_blocks[x][y][z] = biome->primary_surface_block;
+                            }
+                        } else {
+                            // Low elevation - use biome's normal surface block
+                            m_blocks[x][y][z] = biome->primary_surface_block;
+                        }
                     } else if (depthFromSurface <= TOPSOIL_DEPTH) {
-                        // Topsoil layer - dirt
-                        m_blocks[x][y][z] = BLOCK_DIRT;
+                        // Topsoil layer - dirt (or snow layer if very high elevation)
+                        if (worldY >= SNOW_LINE + SNOW_TRANSITION && depthFromSurface <= 2) {
+                            m_blocks[x][y][z] = BLOCK_SNOW;  // Snow layer below surface snow
+                        } else {
+                            m_blocks[x][y][z] = BLOCK_DIRT;
+                        }
                     } else {
                         // Deep underground - use biome's stone block
                         m_blocks[x][y][z] = biome->primary_stone_block;
@@ -680,9 +744,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
     }
 
     // Acquire buffers from pool (reuses allocated memory)
-    std::vector<Vertex> verts = pool.acquireVertexBuffer();
+    std::vector<CompressedVertex> verts = pool.acquireVertexBuffer();
     std::vector<uint32_t> indices = pool.acquireIndexBuffer();
-    std::vector<Vertex> transparentVerts = pool.acquireVertexBuffer();
+    std::vector<CompressedVertex> transparentVerts = pool.acquireVertexBuffer();
     std::vector<uint32_t> transparentIndices = pool.acquireIndexBuffer();
 
     // Reserve space for estimated visible faces (roughly 30% of blocks visible, 3 faces each on average)
@@ -697,10 +761,11 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
     int atlasGridSize = registry.getAtlasGridSize();
     float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
 
-    // Max quad size for greedy meshing - prevents UV from crossing integer boundaries
+    // Max quad size for greedy meshing - limited by TWO constraints:
+    // 1. UV constraint: quadSize <= atlasSize (prevents UV from crossing cell boundaries)
+    // 2. Bit constraint: quadSize <= 31 (CompressedVertex uses 5 bits for width/height)
     // For tiled UV encoding, UV = cell + localUV * quadSize / atlasSize
-    // To keep UV in [cell, cell+1), quadSize must be <= atlasSize
-    const int maxQuadSize = (atlasGridSize > 0) ? atlasGridSize : 4;
+    const int maxQuadSize = std::min(31, (atlasGridSize > 0) ? atlasGridSize : 4);
 
     // ============================================================================
     // PERFORMANCE FIX (2025-11-24): Cache neighbor chunks to eliminate hash lookups
@@ -771,6 +836,50 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
 
         // Neighbor doesn't exist (edge of loaded world) - return air
         return 0;
+    };
+
+    // Helper: Fast neighbor metadata query for water levels across chunk boundaries
+    auto getNeighborMetadata = [this, neighborPosX, neighborNegX, neighborPosY, neighborNegY, neighborPosZ, neighborNegZ]
+                               (int x, int y, int z, uint8_t defaultValue = 0) -> uint8_t {
+        // Inside this chunk - direct array access
+        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && z >= 0 && z < DEPTH) {
+            return m_blockMetadata[x][y][z];
+        }
+
+        // Out of bounds - check cached neighbor chunks
+        Chunk* neighbor = nullptr;
+        int localX = x;
+        int localY = y;
+        int localZ = z;
+
+        // Determine which neighbor chunk and convert to local coordinates
+        if (x < 0) {
+            neighbor = neighborNegX;
+            localX = x + WIDTH;  // -1 becomes 31
+        } else if (x >= WIDTH) {
+            neighbor = neighborPosX;
+            localX = x - WIDTH;  // 32 becomes 0
+        } else if (y < 0) {
+            neighbor = neighborNegY;
+            localY = y + HEIGHT;
+        } else if (y >= HEIGHT) {
+            neighbor = neighborPosY;
+            localY = y - HEIGHT;
+        } else if (z < 0) {
+            neighbor = neighborNegZ;
+            localZ = z + DEPTH;
+        } else if (z >= DEPTH) {
+            neighbor = neighborPosZ;
+            localZ = z - DEPTH;
+        }
+
+        // If neighbor exists, get metadata from it (direct array access - fast!)
+        if (neighbor && localX >= 0 && localX < WIDTH && localY >= 0 && localY < HEIGHT && localZ >= 0 && localZ < DEPTH) {
+            return neighbor->m_blockMetadata[localX][localY][localZ];
+        }
+
+        // Neighbor doesn't exist (edge of loaded world) - return default
+        return defaultValue;
     };
 
     // Helper lambda to check if a block is solid (non-air)
@@ -1019,18 +1128,6 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                     float blockX = (startX >= 0) ? float(m_x * WIDTH + startX) : bx;
                     float blockY = (startY >= 0) ? float(m_y * HEIGHT + startY) : by;
                     float blockZ = (startZ >= 0) ? float(m_z * DEPTH + startZ) : bz;
-                    auto [uMin, vMin] = getUVsForFace(faceTexture);
-                    float uvScaleZoomed = uvScale;
-
-                    // For animated textures, scale UVs to cover the full animation area
-                    // e.g., if animatedTiles=2, UVs should span 2x2 cells instead of 1 cell
-                    if (def.animatedTiles > 1) {
-                        uvScaleZoomed = uvScale * def.animatedTiles;
-                    }
-                    // Recalculate uvScaleZoomed if texture variation is enabled (per-face)
-                    else if (faceTexture.variation > 1.0f) {
-                        uvScaleZoomed = uvScale / faceTexture.variation;
-                    }
 
                     // Choose which vectors to use based on transparency
                     auto& targetVerts = useTransparent ? transparentVerts : verts;
@@ -1039,13 +1136,87 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                     // Get the base index for these vertices
                     uint32_t baseIndex = static_cast<uint32_t>(targetVerts.size());
 
-                    // Create 4 vertices for this face (corners of the quad)
-                    // For merged quads, scale vertices based on quadWidth/quadHeight
-                    for (int i = cubeStart, uv = uvStart; i < cubeStart + 12; i += 3, uv += 2) {
-                        Vertex v;
+                    // ========== COMPRESSED VERTEX SETUP ==========
+                    // Determine normal index from face normal
+                    uint8_t normalIndex;
+                    if (faceNormal.x > 0) normalIndex = CompressedVertex::NORMAL_POS_X;
+                    else if (faceNormal.x < 0) normalIndex = CompressedVertex::NORMAL_NEG_X;
+                    else if (faceNormal.y > 0) normalIndex = CompressedVertex::NORMAL_POS_Y;
+                    else if (faceNormal.y < 0) normalIndex = CompressedVertex::NORMAL_NEG_Y;
+                    else if (faceNormal.z > 0) normalIndex = CompressedVertex::NORMAL_POS_Z;
+                    else normalIndex = CompressedVertex::NORMAL_NEG_Z;
 
+                    // Determine if this is a top/bottom face (affects UV corner mapping)
+                    bool isYFace = (faceNormal.y != 0);
+
+                    // Get atlas cell indices (clamp to valid range)
+                    float atlasSize = (uvScale > 0.0f) ? (1.0f / uvScale) : 16.0f;
+                    int maxCell = static_cast<int>(atlasSize) - 1;
+                    uint8_t atlasX = static_cast<uint8_t>(std::clamp(faceTexture.atlasX, 0, maxCell));
+                    uint8_t atlasY = static_cast<uint8_t>(std::clamp(faceTexture.atlasY, 0, maxCell));
+
+                    // Calculate quad dimensions (clamped to 0-31)
+                    uint8_t qw = static_cast<uint8_t>(std::clamp(static_cast<int>(quadWidth), 1, 31));
+                    uint8_t qh = static_cast<uint8_t>(std::clamp(static_cast<int>(quadHeight), 1, 31));
+
+                    // Determine color tint based on block type
+                    // TODO: Add isFoliage/isGrass properties to BlockDefinition for tint support
+                    uint8_t colorTint = CompressedVertex::TINT_WHITE;
+                    if (def.isLiquid) {
+                        colorTint = CompressedVertex::TINT_WATER;
+                    }
+
+                    // Calculate lighting once per face (classic retro style)
+                    uint8_t skyLightInt = 15;
+                    uint8_t blockLightInt = 0;
+                    uint8_t aoInt = 15;  // 15 = full brightness (1.0), no AO darkening
+
+                    if (DebugState::instance().lightingEnabled.getValue()) {
+                        int sampleX = X + faceNormal.x;
+                        int sampleY = Y + faceNormal.y;
+                        int sampleZ = Z + faceNormal.z;
+
+                        if (callerHoldsLock) {
+                            if (sampleX >= 0 && sampleX < WIDTH && sampleY >= 0 && sampleY < HEIGHT && sampleZ >= 0 && sampleZ < DEPTH) {
+                                skyLightInt = static_cast<uint8_t>(calculateSkyLightFromHeightmap(sampleX, sampleY, sampleZ));
+                                blockLightInt = static_cast<uint8_t>(std::clamp(getInterpolatedBlockLight(sampleX, sampleY, sampleZ) * 15.0f, 0.0f, 15.0f));
+                            }
+                        } else {
+                            glm::vec3 sampleWorldPos = localToWorldPos(sampleX, sampleY, sampleZ);
+                            Chunk* chunk = world->getChunkAtWorldPos(sampleWorldPos.x, sampleWorldPos.y, sampleWorldPos.z);
+                            if (chunk) {
+                                int localX = static_cast<int>(sampleWorldPos.x) - (chunk->getChunkX() * WIDTH);
+                                int localY = static_cast<int>(sampleWorldPos.y) - (chunk->getChunkY() * HEIGHT);
+                                int localZ = static_cast<int>(sampleWorldPos.z) - (chunk->getChunkZ() * DEPTH);
+                                skyLightInt = static_cast<uint8_t>(chunk->calculateSkyLightFromHeightmap(localX, localY, localZ));
+                                blockLightInt = static_cast<uint8_t>(std::clamp(chunk->getInterpolatedBlockLight(localX, localY, localZ) * 15.0f, 0.0f, 15.0f));
+                            }
+                        }
+                    }
+
+                    // Corner index mapping for UV calculation
+                    // Vertex order: BL(0), BR(1), TR(2), TL(3)
+                    // Side faces use V-flipped UVs, top/bottom use standard UVs
+                    // Side faces V-flipped: (0,H), (W,H), (W,0), (0,0) -> corners 2,3,1,0
+                    // Top/bottom standard: (0,0), (W,0), (W,H), (0,H) -> corners 0,1,3,2
+                    static constexpr uint8_t sideCorners[4] = {
+                        CompressedVertex::CORNER_HEIGHT,  // Vertex 0: UV(0, H)
+                        CompressedVertex::CORNER_BOTH,    // Vertex 1: UV(W, H)
+                        CompressedVertex::CORNER_WIDTH,   // Vertex 2: UV(W, 0)
+                        CompressedVertex::CORNER_ORIGIN   // Vertex 3: UV(0, 0)
+                    };
+                    static constexpr uint8_t yFaceCorners[4] = {
+                        CompressedVertex::CORNER_ORIGIN,  // Vertex 0: UV(0, 0)
+                        CompressedVertex::CORNER_WIDTH,   // Vertex 1: UV(W, 0)
+                        CompressedVertex::CORNER_BOTH,    // Vertex 2: UV(W, H)
+                        CompressedVertex::CORNER_HEIGHT   // Vertex 3: UV(0, H)
+                    };
+                    const uint8_t* cornerMap = isYFace ? yFaceCorners : sideCorners;
+
+                    // Create 4 vertices for this face (corners of the quad)
+                    int vertexIndex = 0;
+                    for (int i = cubeStart; i < cubeStart + 12; i += 3, vertexIndex++) {
                         // Scale vertex position for merged quads
-                        // Determine which axes to scale based on face normal
                         float vx = cube[i+0];
                         float vy = cube[i+1];
                         float vz = cube[i+2];
@@ -1065,107 +1236,33 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                             if (vy > 0.5f) vy *= quadHeight;
                         }
 
-                        v.x = vx + blockX;
-                        v.z = vz + blockZ;
-
-                        // Apply height adjustment: if adjustTopOnly=true, only adjust top vertices (y>0.5)
+                        // Calculate world position
+                        float worldX = vx + blockX;
+                        float worldZ = vz + blockZ;
+                        float worldY;
                         if (adjustTopOnly) {
-                            v.y = vy + blockY + (vy > 0.4f ? heightAdjust : 0.0f);
+                            worldY = vy + blockY + (vy > 0.4f ? heightAdjust : 0.0f);
                         } else {
-                            v.y = vy + blockY + heightAdjust;
-                        }
-                        v.r = cr; v.g = cg; v.b = cb; v.a = ca;
-
-                        // TILED UV ENCODING for greedy meshing
-                        // Encode UV as: cellIndex + (localUV * quadSize) / atlasSize
-                        // This keeps UV in [cellIndex, cellIndex+1) range
-                        // Shader extracts cell with floor() and tiles with fract()
-                        // NOTE: Liquids use stretched UVs for shader scrolling animation
-                        bool useStretchedUV = (def.animatedTiles > 1) || def.isLiquid || (uvScale <= 0.0f);
-                        if (useStretchedUV) {
-                            // Animated textures and liquids - use stretched UVs (shader has special handling)
-                            v.u = uMin + cubeUVs[uv+0] * uvScaleZoomed;
-                            v.v = vMin + cubeUVs[uv+1] * uvScaleZoomed;
-                        } else {
-                            // Tiled encoding: integer cell + fractional local UV
-                            // Works for both single blocks (1x1 tiling) and merged quads (NxM tiling)
-                            float atlasSize = 1.0f / uvScale;
-                            int maxCell = static_cast<int>(atlasSize) - 1;
-
-                            // Validate atlas indices - log warning if out of bounds (helps debug texture issues)
-                            if (faceTexture.atlasX < 0 || faceTexture.atlasX > maxCell ||
-                                faceTexture.atlasY < 0 || faceTexture.atlasY > maxCell) {
-                                static int warningCount = 0;
-                                if (warningCount < 10) {
-                                    Logger::warning() << "Block ID " << id << " has invalid atlas coords ("
-                                                   << faceTexture.atlasX << ", " << faceTexture.atlasY
-                                                   << ") - max is " << maxCell;
-                                    warningCount++;
-                                }
-                            }
-
-                            // Bounds check atlas indices to prevent invalid values
-                            int cellXi = std::clamp(faceTexture.atlasX, 0, maxCell);
-                            int cellYi = std::clamp(faceTexture.atlasY, 0, maxCell);
-                            float cellX = static_cast<float>(cellXi);
-                            float cellY = static_cast<float>(cellYi);
-                            v.u = cellX + cubeUVs[uv+0] * quadWidth / atlasSize;
-                            v.v = cellY + cubeUVs[uv+1] * quadHeight / atlasSize;
+                            worldY = vy + blockY + heightAdjust;
                         }
 
-                        // CLASSIC RETRO LIGHTING - Per-face uniform lighting
-                        // Sample light from the block adjacent to this face (not per-vertex)
-                        // This gives consistent, blocky lighting like classic Minecraft
-                        if (DebugState::instance().lightingEnabled.getValue()) {
-                            // Sample the light from the block in the direction this face is pointing
-                            // Use the face normal to determine which neighbor to sample
-                            int sampleX = X + faceNormal.x;
-                            int sampleY = Y + faceNormal.y;
-                            int sampleZ = Z + faceNormal.z;
+                        // Get corner index for this vertex
+                        uint8_t cornerIndex = cornerMap[vertexIndex];
 
-                            // Get light at the sampled position (may be in neighboring chunk)
-                            glm::vec3 sampleWorldPos = localToWorldPos(sampleX, sampleY, sampleZ);
-
-                            float skyLight = 15.0f;  // Default full sunlight
-                            float blockLight = 0.0f;  // Default no block light
-
-                            if (callerHoldsLock) {
-                                // Can't query other chunks - use local data if available
-                                if (sampleX >= 0 && sampleX < WIDTH && sampleY >= 0 && sampleY < HEIGHT && sampleZ >= 0 && sampleZ < DEPTH) {
-                                    // PERFORMANCE: Use heightmap for instant sky light (no BFS!)
-                                    skyLight = static_cast<float>(calculateSkyLightFromHeightmap(sampleX, sampleY, sampleZ));
-                                    blockLight = getInterpolatedBlockLight(sampleX, sampleY, sampleZ);
-                                }
-                            } else {
-                                // Query world for neighbor chunks
-                                Chunk* chunk = world->getChunkAtWorldPos(sampleWorldPos.x, sampleWorldPos.y, sampleWorldPos.z);
-                                if (chunk) {
-                                    int localX = static_cast<int>(sampleWorldPos.x) - (chunk->getChunkX() * WIDTH);
-                                    int localY = static_cast<int>(sampleWorldPos.y) - (chunk->getChunkY() * HEIGHT);
-                                    int localZ = static_cast<int>(sampleWorldPos.z) - (chunk->getChunkZ() * DEPTH);
-                                    // PERFORMANCE: Use heightmap for instant sky light (no BFS!)
-                                    skyLight = static_cast<float>(chunk->calculateSkyLightFromHeightmap(localX, localY, localZ));
-                                    blockLight = chunk->getInterpolatedBlockLight(localX, localY, localZ);
-                                }
-                            }
-
-                            // Normalize to 0-1 range
-                            v.skyLight = skyLight / 15.0f;
-                            v.blockLight = blockLight / 15.0f;
-                            v.ao = 1.0f;  // No AO for classic look
-                        } else {
-                            // Lighting disabled - full brightness
-                            v.skyLight = 1.0f;
-                            v.blockLight = 1.0f;
-                            v.ao = 1.0f;
-                        }
-
-                        targetVerts.push_back(v);
+                        // Pack and add compressed vertex
+                        targetVerts.push_back(CompressedVertex::pack(
+                            worldX, worldY, worldZ,
+                            normalIndex,
+                            qw, qh,
+                            atlasX, atlasY,
+                            cornerIndex,
+                            skyLightInt, blockLightInt, aoInt,
+                            colorTint
+                        ));
                     }
 
                     // SIMPLIFIED TRIANGLE SPLIT FOR CLASSIC LIGHTING
                     // Use consistent diagonal (0-2) for all faces
-                    // This ensures adjacent blocks have matching gradients (retro aesthetic)
                     targetIndices.push_back(baseIndex + 0);
                     targetIndices.push_back(baseIndex + 1);
                     targetIndices.push_back(baseIndex + 2);
@@ -1197,14 +1294,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
 
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            // Water: render if neighbor is not water, OR if water at different level
-                            if (neighborIsLiquid) {
-                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                                uint8_t neighborLevel = (Z > 0) ? m_blockMetadata[X][Y][Z-1] : 0;
-                                shouldRender = (currentLevel != neighborLevel);
-                            } else {
-                                shouldRender = true;
-                            }
+                            // Water: ONLY render side faces against air (neighborBlockID == 0)
+                            // Don't render against solid blocks (looks weird) or other water (z-fighting)
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             // Transparent blocks (leaves, glass): render unless neighbor is same block type
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
@@ -1264,13 +1356,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X, Y, Z + 1);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            if (neighborIsLiquid) {
-                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                                uint8_t neighborLevel = (Z < DEPTH-1) ? m_blockMetadata[X][Y][Z+1] : 0;
-                                shouldRender = (currentLevel != neighborLevel);
-                            } else {
-                                shouldRender = true;
-                            }
+                            // Water: ONLY render side faces against air (neighborBlockID == 0)
+                            // Don't render against solid blocks (looks weird) or other water (z-fighting)
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
@@ -1328,13 +1416,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X - 1, Y, Z);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            if (neighborIsLiquid) {
-                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                                uint8_t neighborLevel = (X > 0) ? m_blockMetadata[X-1][Y][Z] : 0;
-                                shouldRender = (currentLevel != neighborLevel);
-                            } else {
-                                shouldRender = true;
-                            }
+                            // Water: ONLY render side faces against air (neighborBlockID == 0)
+                            // Don't render against solid blocks (looks weird) or other water (z-fighting)
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
@@ -1392,13 +1476,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X + 1, Y, Z);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            if (neighborIsLiquid) {
-                                uint8_t currentLevel = m_blockMetadata[X][Y][Z];
-                                uint8_t neighborLevel = (X < WIDTH-1) ? m_blockMetadata[X+1][Y][Z] : 0;
-                                shouldRender = (currentLevel != neighborLevel);
-                            } else {
-                                shouldRender = true;
-                            }
+                            // Water: ONLY render side faces against air (neighborBlockID == 0)
+                            // Don't render against solid blocks (looks weird) or other water (z-fighting)
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
@@ -1456,7 +1536,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X, Y + 1, Z);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            shouldRender = !neighborIsLiquid;
+                            // Water: ONLY render top face against air (neighborBlockID == 0)
+                            // Don't render against solid blocks or other water
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
@@ -1518,9 +1600,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X, Y - 1, Z);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            // Water: render bottom if not water below
-                            // Render against both air AND solid blocks (visible from below)
-                            shouldRender = !neighborIsLiquid;
+                            // Water: ONLY render bottom face against air (neighborBlockID == 0)
+                            // Don't render against solid blocks or other water
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
@@ -1602,7 +1684,7 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
     // ========== CREATE OPAQUE BUFFERS ==========
     if (m_vertexCount > 0) {
         // Create vertex buffer with exception safety
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_vertices.size();
 
         VkBuffer stagingBuffer = VK_NULL_HANDLE;
         VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
@@ -1701,7 +1783,7 @@ void Chunk::createVertexBuffer(VulkanRenderer* renderer) {
     // ========== CREATE TRANSPARENT BUFFERS ==========
     if (m_transparentVertexCount > 0) {
         // Create transparent vertex buffer
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_transparentVertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_transparentVertices.size();
 
         VkBuffer stagingBuffer = VK_NULL_HANDLE;
         VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
@@ -1858,7 +1940,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
 
     // ========== ALLOCATE AND UPLOAD OPAQUE GEOMETRY ==========
     if (m_vertexCount > 0) {
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_vertices.size();
         VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_indices.size();
 
         // OPTIMIZATION: Only allocate new space if we don't already have space
@@ -1875,7 +1957,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
             }
 
             // Calculate base vertex for indexed drawing
-            m_megaBufferBaseVertex = static_cast<uint32_t>(m_megaBufferVertexOffset / sizeof(Vertex));
+            m_megaBufferBaseVertex = static_cast<uint32_t>(m_megaBufferVertexOffset / sizeof(CompressedVertex));
         }
         // else: Reuse existing allocation (chunk is updating its mesh)
 
@@ -1909,7 +1991,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
 
     // ========== ALLOCATE AND UPLOAD TRANSPARENT GEOMETRY ==========
     if (m_transparentVertexCount > 0) {
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_transparentVertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_transparentVertices.size();
         VkDeviceSize indexBufferSize = sizeof(uint32_t) * m_transparentIndices.size();
 
         // OPTIMIZATION: Only allocate new space if we don't already have space
@@ -1928,7 +2010,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
             }
 
             // Calculate base vertex for transparent indexed drawing
-            m_megaBufferTransparentBaseVertex = static_cast<uint32_t>(m_megaBufferTransparentVertexOffset / sizeof(Vertex));
+            m_megaBufferTransparentBaseVertex = static_cast<uint32_t>(m_megaBufferTransparentVertexOffset / sizeof(CompressedVertex));
         }
         // else: Reuse existing allocation (chunk is updating its mesh)
 
@@ -1981,7 +2063,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
     // ========== CREATE OPAQUE BUFFERS (BATCHED) ==========
     if (m_vertexCount > 0) {
         // Create vertex staging buffer and device buffer
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_vertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_vertices.size();
 
         renderer->createBuffer(vertexBufferSize,
                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -2025,7 +2107,7 @@ void Chunk::createVertexBufferBatched(VulkanRenderer* renderer) {
     // ========== CREATE TRANSPARENT BUFFERS (BATCHED) ==========
     if (m_transparentVertexCount > 0) {
         // Create transparent vertex staging buffer and device buffer
-        VkDeviceSize vertexBufferSize = sizeof(Vertex) * m_transparentVertices.size();
+        VkDeviceSize vertexBufferSize = sizeof(CompressedVertex) * m_transparentVertices.size();
 
         renderer->createBuffer(vertexBufferSize,
                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,

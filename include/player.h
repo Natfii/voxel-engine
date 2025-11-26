@@ -213,6 +213,18 @@ private:
     bool checkCollision(const glm::vec3& position, World* world);
 
     /**
+     * @brief Checks only if player's feet are stuck in a solid block
+     *
+     * Used by unstuck mechanism to avoid triggering on head/ceiling collisions.
+     * Only checks the bottom 0.5 blocks of the player hitbox.
+     *
+     * @param position Position to test (eye level)
+     * @param world World to query
+     * @return True if feet are stuck in solid block
+     */
+    bool checkFeetCollision(const glm::vec3& position, World* world);
+
+    /**
      * @brief Checks horizontal (XZ plane) collision only
      *
      * Used for horizontal movement resolution without affecting vertical motion.

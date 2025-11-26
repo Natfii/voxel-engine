@@ -9,6 +9,7 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 liquidFogColor;  // .rgb = fog color, .a = fog density
     vec4 liquidFogDist;   // .x = fog start, .y = fog end, .zw = unused
     vec4 liquidTint;      // .rgb = tint color, .a = darken factor
+    vec4 atlasInfo;       // .x = atlas width in cells, .y = height, .z = cell size (1/width), .w = unused
 } ubo;
 
 layout(binding = 1) uniform sampler2D texSampler;
@@ -24,40 +25,45 @@ layout(location = 6) in float fragAO;          // Ambient occlusion from vertex 
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    const float atlasSize = 4.0;  // 4x4 atlas
-    const float cellSize = 1.0 / atlasSize;
+    // Get atlas size from UBO (dynamic, not hardcoded)
+    float atlasSize = max(ubo.atlasInfo.x, 1.0);
+    float cellSize = 1.0 / atlasSize;
     vec2 texCoord = fragTexCoord;
 
     // Parallax scrolling ONLY for water (not ice or other transparent blocks)
-    // Water has transparency=0.25 (alpha=0.75), ice has transparency=0.4 (alpha=0.6)
-    // NOTE: Water uses OLD stretched UV encoding (animatedTiles > 1 in mesh gen)
-    if (fragColor.a > 0.7 && fragColor.a < 0.8) {  // Only water blocks
-        // Find which atlas cell we're in (old encoding: UVs in 0-1 atlas space)
-        vec2 cellIndex = floor(texCoord * atlasSize);
+    // Water has alpha=0.7 from TINT_PALETTE in vertex shader
+    // Uses TILED UV encoding: integer part = atlas cell, fractional part = tiled position
+    if (fragColor.a >= 0.65 && fragColor.a < 0.75) {  // Only water blocks (alpha=0.7)
+        // TILED UV DECODING for water (same as other blocks but with parallax)
+        vec2 cell = floor(fragTexCoord);                   // Which atlas cell
+        vec2 localUV = fract(fragTexCoord) * atlasSize;    // Position scaled by quad size
 
-        // Convert to cell-local coordinates (0-1 within cell)
-        vec2 localUV = fract(texCoord * atlasSize);
-
-        // Apply diagonal scrolling to local coordinates
+        // Apply parallax scrolling BEFORE tiling
         float scrollSpeed = 250.0;  // Fast, smooth flow
-        localUV.y -= ubo.skyTimeData.x * scrollSpeed;        // Downward (subtract to flow down)
+        localUV.y -= ubo.skyTimeData.x * scrollSpeed;        // Downward flow
         localUV.x += ubo.skyTimeData.x * scrollSpeed * 0.5;  // Diagonal drift
 
-        // Wrap within cell (seamless tiling)
-        localUV = fract(localUV);
+        // Tile within 0-1 (handles both scrolling wrap and greedy mesh tiling)
+        vec2 tiledUV = mod(localUV, 1.0);
+        tiledUV = clamp(tiledUV, 0.001, 0.999);
 
-        // Convert back to global atlas coordinates
-        texCoord = (cellIndex + localUV) * cellSize;
+        // Convert back to atlas space
+        texCoord = (cell + tiledUV) * cellSize;
     }
     else {
         // TILED UV DECODING for greedy meshing
         // UV encoding: cellIndex + (localUV * quadSize) / atlasSize
         // - Integer part = atlas cell index (0-3 for 4x4 atlas)
         // - Fractional part * atlasSize = local position (0 to quadSize)
-        // Using fract() on local position gives automatic tiling
+        // Using mod() for tiling to handle edge case where fract(1.0) = 0.0
         vec2 cell = floor(fragTexCoord);                   // Which atlas cell
         vec2 localUV = fract(fragTexCoord) * atlasSize;    // Position scaled by quad size
-        vec2 tiledUV = fract(localUV);                     // Tile within 0-1
+        // Use mod() instead of fract() to properly tile - handles exact integer values
+        // For single blocks: localUV goes from 0 to 1, we sample 0 to 0.999...
+        // For merged quads: localUV goes from 0 to N, texture tiles N times
+        vec2 tiledUV = mod(localUV, 1.0);                  // Tile within 0-1
+        // Clamp to avoid sampling neighboring cells at exact boundary
+        tiledUV = clamp(tiledUV, 0.001, 0.999);
         texCoord = (cell + tiledUV) * cellSize;            // Convert back to atlas space
     }
 
@@ -68,7 +74,7 @@ void main() {
     vec3 baseColor = texColor.rgb * fragColor.rgb;
 
     // Darken and tint water to reduce bright patches (not too dark)
-    if (fragColor.a > 0.7 && fragColor.a < 0.8) {  // Only liquid blocks (water/lava)
+    if (fragColor.a >= 0.65 && fragColor.a < 0.75) {  // Only water blocks (alpha=0.7)
         baseColor *= 0.65;  // Darken by 35% (less aggressive)
         baseColor *= vec3(0.75, 0.9, 1.0);  // Subtle blue tint
     }

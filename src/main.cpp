@@ -67,6 +67,7 @@ enum class GameState {
 // Global variables
 VulkanRenderer* g_renderer = nullptr;
 Inventory* g_inventory = nullptr;
+bool g_debugMode = false;  // Quick-start mode for development (-debug flag)
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     if (g_renderer) {
@@ -91,7 +92,18 @@ static void check_vk_result(VkResult err) {
         abort();
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    // Parse command line arguments
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "-debug" || arg == "--debug") {
+            g_debugMode = true;
+            std::cout << "=== DEBUG MODE ENABLED ===" << '\n';
+            std::cout << "Skipping main menu, using reduced world size for quick iteration" << '\n';
+            std::cout << "=========================" << '\n';
+        }
+    }
+
     try {
         // Load configuration first
         Config& config = Config::instance();
@@ -307,6 +319,19 @@ int main() {
         int seed = config.getInt("World", "seed", 1124345);  // Default seed
         bool shouldQuit = false;
         MenuResult menuResult;  // Declared here so it's accessible in both menu and game blocks
+
+        // DEBUG MODE: Skip main menu, use default settings for quick iteration
+        if (g_debugMode) {
+            std::cout << "Debug mode: Skipping main menu, generating small test world..." << '\n';
+            gameState = GameState::IN_GAME;
+            seed = 12345;  // Fixed debug seed for reproducibility
+            menuResult.action = MenuAction::NEW_GAME;
+            menuResult.seed = seed;
+            menuResult.temperatureBias = 0.0f;  // No biome modifiers
+            menuResult.moistureBias = 0.0f;
+            menuResult.ageBias = 0.0f;
+            menuResult.worldPath = "";
+        }
 
         while (!shouldQuit && !glfwWindowShouldClose(window)) {
             if (gameState == GameState::MAIN_MENU) {
@@ -599,7 +624,8 @@ int main() {
             // Minecraft generates ~19×19 chunk "spawn chunks" that stay loaded
             // We generate: inner=6 (decorated), outer=12 (terrain buffer)
             // This creates a solid starting area with pre-loaded terrain buffer
-            const int SPAWN_RADIUS = 6;  // Inner decorated area (13×13×13 = 2197 chunks)
+            // DEBUG MODE: Use smaller radius (3 instead of 6) for faster iteration
+            const int SPAWN_RADIUS = g_debugMode ? 3 : 6;
             int spawnRadius = SPAWN_RADIUS;
 
             std::cout << "Generating " << spawnRadius << " chunk radius ("
@@ -941,7 +967,9 @@ int main() {
 
         // SPAWN ANCHOR (2025-11-25): Keep spawn chunks permanently loaded (like Minecraft)
         // Uses same radius as spawn generation - these chunks never unload
-        worldStreaming.setSpawnAnchor(0, 2, 0, 6);  // chunk (0,2,0) = world origin surface, radius=6
+        // DEBUG MODE: Use smaller anchor (3 instead of 6) for faster iteration
+        const int ANCHOR_RADIUS = g_debugMode ? 3 : 6;
+        worldStreaming.setSpawnAnchor(0, 2, 0, ANCHOR_RADIUS);  // chunk (0,2,0) = world origin surface
 
         worldStreaming.start();  // Starts worker threads (default: CPU cores - 1)
 
@@ -1259,10 +1287,13 @@ int main() {
             //   v4: ASYNC (detached threads) → ZERO main thread blocking!
             // Can now process more chunks per frame since we never wait
 #if USE_INDIRECT_DRAWING
-            // GPU upload bottleneck - keep at 1 chunk to prevent command queue overflow
-            worldStreaming.processCompletedChunks(1, 3.0f);  // Max 1 chunk, 3ms budget
+            // PERFORMANCE FIX (2025-11-26): Increased from 1 to 8 chunks per frame
+            // Phase 1 (add to world + queue mesh) is CPU-only and fast
+            // Phase 2 (GPU upload) has its own rate limiting via getRecommendedUploadCount()
+            // This 8x increase dramatically reduces "invisible chunk" lag
+            worldStreaming.processCompletedChunks(8, 5.0f);  // Max 8 chunks, 5ms budget
 #else
-            worldStreaming.processCompletedChunks(1, 6.0f);   // Conservative for legacy path
+            worldStreaming.processCompletedChunks(4, 6.0f);   // Conservative for legacy path
 #endif
             auto afterChunkProcess = std::chrono::high_resolution_clock::now();
 

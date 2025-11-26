@@ -11,6 +11,7 @@
 #include <string>
 #include <mutex>
 #include <atomic>
+#include <algorithm>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include "voxelmath.h"
@@ -75,10 +76,161 @@ inline const char* chunkStateToString(ChunkState state) {
 }
 
 /**
- * @brief Vertex structure for voxel rendering with position, color, and texture
+ * @brief Compressed vertex structure for voxel rendering (12 bytes vs 48 bytes)
+ *
+ * Based on Vercidium's voxel optimization technique:
+ * https://vercidium.com/blog/voxel-world-optimisations/
+ *
+ * Uses world coordinates (signed 16-bit) to support mega-buffer indirect drawing.
+ *
+ * Memory layout (12 bytes total, using universally supported Vulkan formats):
+ *   posXY (uint32_t = 4 bytes): Packed position X and Y
+ *     Bits 0-15:  Position X (int16, range ±32767)
+ *     Bits 16-31: Position Y (int16, range ±32767)
+ *   posZAtlas (uint32_t = 4 bytes): Packed position Z and atlas coords
+ *     Bits 0-15:  Position Z (int16, range ±32767)
+ *     Bits 16-23: Atlas X cell (0-255)
+ *     Bits 24-31: Atlas Y cell (0-255)
+ *   packedB (uint32_t = 4 bytes): All other vertex data
+ *     Bits 0-2:   Normal direction (0-5: +X, -X, +Y, -Y, +Z, -Z)
+ *     Bits 3-7:   Quad width for UV tiling (0-31)
+ *     Bits 8-12:  Quad height for UV tiling (0-31)
+ *     Bits 13-14: Corner index (0-3)
+ *     Bits 15-18: Sky light level (0-15)
+ *     Bits 19-22: Block light level (0-15)
+ *     Bits 23-26: Ambient occlusion (0-15)
+ *     Bits 27-28: Color tint index (0-3)
+ *     Bits 29-31: Reserved
+ *
+ * Memory savings: 48 bytes -> 12 bytes = 4x reduction!
+ */
+struct CompressedVertex {
+    uint32_t posXY;      ///< Position X (low 16) + Position Y (high 16)
+    uint32_t posZAtlas;  ///< Position Z (low 16) + Atlas X (bits 16-23) + Atlas Y (bits 24-31)
+    uint32_t packedB;    ///< Normal + QuadSize + Corner + Lighting + Tint
+
+    // Normal direction constants
+    static constexpr uint8_t NORMAL_POS_X = 0;
+    static constexpr uint8_t NORMAL_NEG_X = 1;
+    static constexpr uint8_t NORMAL_POS_Y = 2;
+    static constexpr uint8_t NORMAL_NEG_Y = 3;
+    static constexpr uint8_t NORMAL_POS_Z = 4;
+    static constexpr uint8_t NORMAL_NEG_Z = 5;
+
+    // Corner indices for UV calculation (matches cubeUVs order)
+    // Side faces (V-flipped): vertex 0=CORNER_HEIGHT, 1=CORNER_BOTH, 2=CORNER_WIDTH, 3=CORNER_ORIGIN
+    // Top/bottom faces: vertex 0=CORNER_ORIGIN, 1=CORNER_WIDTH, 2=CORNER_BOTH, 3=CORNER_HEIGHT
+    static constexpr uint8_t CORNER_ORIGIN = 0;      // UV (0, 0)
+    static constexpr uint8_t CORNER_WIDTH = 1;       // UV (quadWidth, 0)
+    static constexpr uint8_t CORNER_HEIGHT = 2;      // UV (0, quadHeight)
+    static constexpr uint8_t CORNER_BOTH = 3;        // UV (quadWidth, quadHeight)
+
+    // Color tint palette indices (shader will lookup actual colors)
+    static constexpr uint8_t TINT_WHITE = 0;       // Default (1,1,1,1)
+    static constexpr uint8_t TINT_WATER = 1;       // Water blue tint
+    static constexpr uint8_t TINT_FOLIAGE = 2;     // Foliage green
+    static constexpr uint8_t TINT_GRASS = 3;       // Grass/leaves green
+
+    /**
+     * @brief Pack vertex data into compressed format
+     * @param worldX World X position (stored as int16)
+     * @param worldY World Y position (stored as int16)
+     * @param worldZ World Z position (stored as int16)
+     * @param normalIndex Normal direction (0-5)
+     * @param quadWidth Width of quad for UV tiling (0-31)
+     * @param quadHeight Height of quad for UV tiling (0-31)
+     * @param atlasX Texture atlas X cell (0-255)
+     * @param atlasY Texture atlas Y cell (0-255)
+     * @param cornerIndex Which corner of the quad (0-3)
+     * @param skyLight Sky light level (0-15)
+     * @param blockLight Block light level (0-15)
+     * @param ao Ambient occlusion (0-15)
+     * @param colorTint Color tint index (0-3)
+     */
+    static inline CompressedVertex pack(
+        float worldX, float worldY, float worldZ,
+        uint8_t normalIndex,
+        uint8_t quadWidth, uint8_t quadHeight,
+        uint8_t atlasX, uint8_t atlasY,
+        uint8_t cornerIndex,
+        uint8_t skyLight, uint8_t blockLight, uint8_t ao,
+        uint8_t colorTint
+    ) {
+        CompressedVertex cv;
+
+        // Store world position as signed 16-bit integers packed into uint32s
+        int16_t px = static_cast<int16_t>(std::clamp(worldX, -32767.0f, 32767.0f));
+        int16_t py = static_cast<int16_t>(std::clamp(worldY, -32767.0f, 32767.0f));
+        int16_t pz = static_cast<int16_t>(std::clamp(worldZ, -32767.0f, 32767.0f));
+
+        // Pack posX and posY into posXY (reinterpret int16 as uint16 for bit packing)
+        cv.posXY = (static_cast<uint32_t>(static_cast<uint16_t>(px)))
+                 | (static_cast<uint32_t>(static_cast<uint16_t>(py)) << 16);
+
+        // Pack posZ and atlas coords into posZAtlas
+        cv.posZAtlas = (static_cast<uint32_t>(static_cast<uint16_t>(pz)))
+                     | (static_cast<uint32_t>(atlasX) << 16)
+                     | (static_cast<uint32_t>(atlasY) << 24);
+
+        // Pack remaining data
+        cv.packedB = (static_cast<uint32_t>(normalIndex & 0x7))           // bits 0-2
+                   | (static_cast<uint32_t>(quadWidth & 0x1F) << 3)       // bits 3-7
+                   | (static_cast<uint32_t>(quadHeight & 0x1F) << 8)      // bits 8-12
+                   | (static_cast<uint32_t>(cornerIndex & 0x3) << 13)     // bits 13-14
+                   | (static_cast<uint32_t>(skyLight & 0xF) << 15)        // bits 15-18
+                   | (static_cast<uint32_t>(blockLight & 0xF) << 19)      // bits 19-22
+                   | (static_cast<uint32_t>(ao & 0xF) << 23)              // bits 23-26
+                   | (static_cast<uint32_t>(colorTint & 0x3) << 27);      // bits 27-28
+
+        return cv;
+    }
+
+    /**
+     * @brief Gets Vulkan binding description for compressed vertex
+     */
+    static inline VkVertexInputBindingDescription getBindingDescription() {
+        VkVertexInputBindingDescription bindingDescription{};
+        bindingDescription.binding = 0;
+        bindingDescription.stride = sizeof(CompressedVertex);
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        return bindingDescription;
+    }
+
+    /**
+     * @brief Gets Vulkan attribute descriptions for compressed vertex
+     * @return Array of 3 attribute descriptions (posXY, posZAtlas, packedB)
+     */
+    static inline std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
+
+        // posXY (location = 0) - packed posX and posY as uint32
+        attributeDescriptions[0].binding = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format = VK_FORMAT_R32_UINT;
+        attributeDescriptions[0].offset = offsetof(CompressedVertex, posXY);
+
+        // posZAtlas (location = 1) - packed posZ and atlas coords as uint32
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = VK_FORMAT_R32_UINT;
+        attributeDescriptions[1].offset = offsetof(CompressedVertex, posZAtlas);
+
+        // packedB (location = 2) - everything else as uint32
+        attributeDescriptions[2].binding = 0;
+        attributeDescriptions[2].location = 2;
+        attributeDescriptions[2].format = VK_FORMAT_R32_UINT;
+        attributeDescriptions[2].offset = offsetof(CompressedVertex, packedB);
+
+        return attributeDescriptions;
+    }
+};
+
+/**
+ * @brief Legacy vertex structure for voxel rendering (kept for compatibility)
  *
  * This structure defines the layout of vertex data sent to the GPU.
  * Matches the GLSL vertex shader input layout.
+ * @deprecated Use CompressedVertex for new code - 6x smaller
  */
 struct Vertex {
     float x, y, z;      ///< Position in world space
@@ -834,11 +986,11 @@ private:
      */
     void ensureInterpolatedLightingAllocated();
 
-    // ========== Mesh Data ==========
-    std::vector<Vertex> m_vertices;         ///< CPU-side vertex data (opaque)
-    std::vector<uint32_t> m_indices;        ///< CPU-side index data (opaque)
-    std::vector<Vertex> m_transparentVertices;   ///< CPU-side vertex data (transparent)
-    std::vector<uint32_t> m_transparentIndices;  ///< CPU-side index data (transparent)
+    // ========== Mesh Data (Compressed Vertices for 6x memory savings) ==========
+    std::vector<CompressedVertex> m_vertices;         ///< CPU-side vertex data (opaque) - 8 bytes/vertex
+    std::vector<uint32_t> m_indices;                  ///< CPU-side index data (opaque)
+    std::vector<CompressedVertex> m_transparentVertices;   ///< CPU-side vertex data (transparent) - 8 bytes/vertex
+    std::vector<uint32_t> m_transparentIndices;       ///< CPU-side index data (transparent)
 
     // ========== Vulkan Buffers (Opaque) ==========
     VkBuffer m_vertexBuffer;                ///< GPU vertex buffer (opaque) [LEGACY - will be replaced by mega-buffer]

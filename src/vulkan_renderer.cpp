@@ -19,6 +19,7 @@
 #include "chunk.h"
 #include "mesh/mesh.h"
 #include "logger.h"
+#include "block_system.h"
 #include <stdexcept>
 #include <iostream>
 #include <set>
@@ -190,8 +191,8 @@ static std::vector<char> readFile(const std::string& filename) {
     return buffer;
 }
 
-// Note: Vertex::getBindingDescription() and Vertex::getAttributeDescriptions()
-// are defined in chunk.cpp to avoid duplicate symbol linker errors
+// Note: CompressedVertex::getBindingDescription() and CompressedVertex::getAttributeDescriptions()
+// are defined inline in chunk.h
 
 // Constructor
 VulkanRenderer::VulkanRenderer(GLFWwindow* window) : m_window(window) {
@@ -210,6 +211,7 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : m_window(window) {
     createLinePipeline();
     createSkyboxPipeline();
     createMeshPipeline();
+    createSpherePipeline();
     createCommandPool();
     createDepthResources();
     createFramebuffers();
@@ -557,8 +559,8 @@ void VulkanRenderer::createGraphicsPipeline() {
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto bindingDescription = CompressedVertex::getBindingDescription();
+    auto attributeDescriptions = CompressedVertex::getAttributeDescriptions();
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -691,8 +693,8 @@ void VulkanRenderer::createTransparentPipeline() {
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto bindingDescription = CompressedVertex::getBindingDescription();
+    auto attributeDescriptions = CompressedVertex::getAttributeDescriptions();
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -825,8 +827,8 @@ void VulkanRenderer::createWireframePipeline() {
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto bindingDescription = CompressedVertex::getBindingDescription();
+    auto attributeDescriptions = CompressedVertex::getAttributeDescriptions();
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -950,15 +952,30 @@ void VulkanRenderer::createLinePipeline() {
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    // Line shader uses simple vertex format: vec3 position + vec3 color (24 bytes per vertex)
+    VkVertexInputBindingDescription lineBindingDescription{};
+    lineBindingDescription.binding = 0;
+    lineBindingDescription.stride = 6 * sizeof(float);  // 3 floats position + 3 floats color
+    lineBindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    std::array<VkVertexInputAttributeDescription, 2> lineAttributeDescriptions{};
+    // Position (location 0): vec3 at offset 0
+    lineAttributeDescriptions[0].binding = 0;
+    lineAttributeDescriptions[0].location = 0;
+    lineAttributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    lineAttributeDescriptions[0].offset = 0;
+    // Color (location 1): vec3 at offset 12 (after position)
+    lineAttributeDescriptions[1].binding = 0;
+    lineAttributeDescriptions[1].location = 1;
+    lineAttributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    lineAttributeDescriptions[1].offset = 3 * sizeof(float);
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertexInputInfo.vertexBindingDescriptionCount = 1;
-    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+    vertexInputInfo.pVertexBindingDescriptions = &lineBindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(lineAttributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = lineAttributeDescriptions.data();
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -1339,6 +1356,124 @@ void VulkanRenderer::createMeshPipeline() {
     vkDestroyShaderModule(m_device, vertShaderModule, nullptr);
 
     Logger::info() << "Mesh rendering pipeline created successfully";
+}
+
+// Create sphere pipeline (uses old Vertex format for loading screen)
+void VulkanRenderer::createSpherePipeline() {
+    auto vertShaderCode = readFile("shaders/sphere_vert.spv");
+    auto fragShaderCode = readFile("shaders/sphere_frag.spv");
+
+    VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+    VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = vertShaderModule;
+    vertShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = fragShaderModule;
+    fragShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+    // Use old Vertex format (48 bytes)
+    auto bindingDescription = Vertex::getBindingDescription();
+    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(m_swapChainExtent.width);
+    viewport.height = static_cast<float>(m_swapChainExtent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = m_swapChainExtent;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = nullptr;
+    pipelineInfo.layout = m_pipelineLayout;  // Reuse main pipeline layout
+    pipelineInfo.renderPass = m_renderPass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_spherePipeline) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create sphere pipeline!");
+    }
+
+    vkDestroyShaderModule(m_device, fragShaderModule, nullptr);
+    vkDestroyShaderModule(m_device, vertShaderModule, nullptr);
+
+    Logger::info() << "Sphere pipeline created successfully";
 }
 
 // Create framebuffers
@@ -1872,6 +2007,14 @@ void VulkanRenderer::updateUniformBuffer(uint32_t currentImage, const glm::mat4&
     ubo.liquidFogColor = glm::vec4(liquidFogColor, 1.0f);  // RGB + unused alpha
     ubo.liquidFogDist = glm::vec4(liquidFogStart, liquidFogEnd, 0.0f, 0.0f);  // Start, end, unused, unused
     ubo.liquidTint = glm::vec4(liquidTintColor, liquidDarkenFactor);  // RGB tint + darken factor
+
+    // Atlas info for compressed vertex UV reconstruction
+    // .x = atlas grid size (number of cells per row/column)
+    // .y = same as .x (square atlas)
+    // .z = cell size (1.0 / gridSize, for UV normalization)
+    // .w = unused
+    float atlasGridSize = static_cast<float>(BlockRegistry::instance().getAtlasGridSize());
+    ubo.atlasInfo = glm::vec4(atlasGridSize, atlasGridSize, 1.0f / atlasGridSize, 0.0f);
 
     memcpy(m_uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
@@ -2784,18 +2927,22 @@ size_t VulkanRenderer::getRecommendedUploadCount() const {
     size_t pending = m_pendingUploads.size();
 
     // ADAPTIVE UPLOAD RATE based on GPU backlog:
-    // - Severely backlogged (>30): Stop uploading entirely to let GPU catch up
-    // - Backlogged (20-30): Upload 1 chunk max
-    // - Moderate (10-20): Upload 2 chunks
-    // - Light (<10): Upload up to 4 chunks for fast streaming
+    // PERFORMANCE FIX (2025-11-26): Increased rates for faster chunk visibility
+    // - Severely backlogged (>30): Upload 1 chunk to make progress
+    // - Backlogged (20-30): Upload 2 chunks
+    // - Moderate (10-20): Upload 4 chunks
+    // - Light (5-10): Upload 6 chunks
+    // - Very light (<5): Upload up to 10 chunks for fast streaming
     if (pending >= 30) {
-        return 0;  // GPU severely overloaded - defer all uploads
+        return 1;  // GPU heavily loaded but still make progress
     } else if (pending >= 20) {
-        return 1;  // Backlogged - trickle uploads
+        return 2;  // Backlogged - slow uploads
     } else if (pending >= 10) {
-        return 2;  // Moderate load
+        return 4;  // Moderate load
+    } else if (pending >= 5) {
+        return 6;  // Light load
     } else {
-        return 4;  // GPU keeping up - stream faster
+        return 10; // GPU keeping up - stream fast to eliminate invisible chunks
     }
 }
 
@@ -2948,6 +3095,7 @@ void VulkanRenderer::recreateSwapChain() {
     createLinePipeline();
     createSkyboxPipeline();
     createMeshPipeline();
+    createSpherePipeline();
 }
 
 // ========== Mesh Buffer Management ==========
@@ -3070,6 +3218,7 @@ void VulkanRenderer::cleanupSwapChain() {
     vkDestroyPipeline(m_device, m_transparentPipeline, nullptr);
     vkDestroyPipeline(m_device, m_wireframePipeline, nullptr);
     vkDestroyPipeline(m_device, m_linePipeline, nullptr);
+    vkDestroyPipeline(m_device, m_spherePipeline, nullptr);
     vkDestroyPipeline(m_device, m_skyboxPipeline, nullptr);
     vkDestroyPipeline(m_device, m_meshPipeline, nullptr);
 

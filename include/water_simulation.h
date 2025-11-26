@@ -4,22 +4,11 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <set>
 #include <queue>
-#include <random>
 #include <mutex>
 
 class World;
 class Chunk;
-
-// Custom comparator for glm::ivec3 to use in std::set
-struct Ivec3Compare {
-    bool operator()(const glm::ivec3& a, const glm::ivec3& b) const {
-        if (a.x != b.x) return a.x < b.x;
-        if (a.y != b.y) return a.y < b.y;
-        return a.z < b.z;
-    }
-};
 
 // Hash function for glm::ivec3 to use in unordered_map
 namespace std {
@@ -34,137 +23,171 @@ namespace std {
     };
 }
 
+/**
+ * @brief Minecraft-style BFS water simulation
+ *
+ * Water mechanics:
+ * - Source blocks (level 8) are placed by players or world gen
+ * - Water spreads using BFS, decreasing 1 level per block
+ * - Water falls infinitely (falling water is always level 8)
+ * - Removal uses BFS to instantly clear dependent water
+ * - Path-to-drop: water flows preferentially toward edges
+ */
 class WaterSimulation {
 public:
-    // Water cell data stored per voxel
-    struct WaterCell {
-        uint8_t level;          // 0-255 water amount (0 = empty, 255 = full)
-        glm::vec2 flowVector;   // XZ flow direction
-        uint8_t fluidType;      // 0=none, 1=water, 2=lava
-        uint8_t shoreCounter;   // Adjacent empty/solid cells for foam effect
+    // Water levels (Minecraft-style)
+    static constexpr uint8_t LEVEL_SOURCE = 8;   // Source block (full water)
+    static constexpr uint8_t LEVEL_MAX_FLOW = 7; // Maximum flowing level
+    static constexpr uint8_t LEVEL_MIN_FLOW = 1; // Minimum flowing level
+    static constexpr uint8_t LEVEL_EMPTY = 0;    // No water
 
-        WaterCell() : level(0), flowVector(0.0f, 0.0f), fluidType(0), shoreCounter(0) {}
-    };
-
-    // Water source that continuously generates water
-    struct WaterSource {
-        glm::ivec3 position;
-        uint8_t outputLevel;    // Water level to maintain (usually 255)
-        float flowRate;         // Units added per second
-        uint8_t fluidType;      // 1=water, 2=lava
-
-        WaterSource(const glm::ivec3& pos, uint8_t type = 1)
-            : position(pos), outputLevel(255), flowRate(128.0f), fluidType(type) {}
-    };
-
-    // Large body of water (ocean/lake)
-    struct WaterBody {
-        std::unordered_set<glm::ivec3> cells;  // OPTIMIZATION: O(1) lookups vs O(log n)
-        bool isInfinite;        // True for oceans/lakes (don't evaporate)
-        uint8_t minLevel;       // Minimum water level to maintain
-
-        WaterBody() : isInfinite(true), minLevel(200) {}
-    };
+    // BFS search radius for path-to-drop
+    static constexpr int DROP_SEARCH_RADIUS = 4;
 
     WaterSimulation();
     ~WaterSimulation();
 
-    // Main update loop
+    // ========== Main Update ==========
+
+    /**
+     * @brief Process pending water updates
+     * Called each frame to process BFS queues
+     */
     void update(float deltaTime, World* world, const glm::vec3& playerPos, float renderDistance);
 
-    // Water manipulation
-    void setWaterLevel(int x, int y, int z, uint8_t level, uint8_t fluidType = 1);
+    // ========== Water Placement/Removal ==========
+
+    /**
+     * @brief Place a water source block
+     * Triggers BFS spread from this position
+     */
+    void placeWaterSource(int x, int y, int z, World* world);
+
+    /**
+     * @brief Remove a water source block
+     * Triggers BFS removal of all dependent water
+     */
+    void removeWaterSource(int x, int y, int z, World* world);
+
+    /**
+     * @brief Trigger water flow from adjacent water when a block is broken
+     * This handles natural water (oceans/lakes) by treating water at/below sea level as infinite sources
+     * @param lockHeld If true, caller already holds World's chunk mutex - use unsafe methods
+     */
+    void triggerWaterFlow(int brokenX, int brokenY, int brokenZ, World* world, bool lockHeld = false);
+
+    /**
+     * @brief Check if position has a source block
+     */
+    bool isSource(int x, int y, int z) const;
+
+    /**
+     * @brief Check if water at position is "natural" (at or below sea level)
+     * Natural water is treated as infinite source
+     */
+    bool isNaturalWater(int y) const;
+
+    /**
+     * @brief Get water level at position (0-8)
+     */
     uint8_t getWaterLevel(int x, int y, int z) const;
+
+    // ========== Queries ==========
+
     uint8_t getFluidType(int x, int y, int z) const;
     glm::vec2 getFlowVector(int x, int y, int z) const;
-    uint8_t getShoreCounter(int x, int y, int z) const;
+    uint8_t getShoreCounter(int x, int y, int z) const { return 0; } // Unused in new system
 
-    // Water sources
-    void addWaterSource(const glm::ivec3& position, uint8_t fluidType = 1);
-    void removeWaterSource(const glm::ivec3& position);
-    bool hasWaterSource(const glm::ivec3& position) const;
+    // ========== Dirty Chunks ==========
 
-    // Water bodies
-    void markAsWaterBody(const std::unordered_set<glm::ivec3>& cells, bool infinite = true);
-
-    // Query active chunks
-    const std::unordered_set<glm::ivec3>& getActiveWaterChunks() const { return m_activeChunks; }
-
-    // Query and manage dirty chunks (chunks needing mesh regeneration)
     const std::unordered_set<glm::ivec3>& getDirtyChunks() const { return m_dirtyChunks; }
     void clearDirtyChunks() { m_dirtyChunks.clear(); }
     void markChunkDirty(const glm::ivec3& chunkPos) { m_dirtyChunks.insert(chunkPos); }
 
-    // Chunk lifecycle
-    void notifyChunkUnload(int chunkX, int chunkY, int chunkZ);
+    // ========== Chunk Lifecycle ==========
 
-    /**
-     * @brief Batch unload notification for multiple chunks (50× faster)
-     *
-     * Iterates water cells once and checks against all chunks in batch.
-     * Much more efficient than calling notifyChunkUnload() for each chunk individually.
-     *
-     * @param chunks Vector of chunk coordinates to unload (x, y, z)
-     */
+    void notifyChunkUnload(int chunkX, int chunkY, int chunkZ);
     void notifyChunkUnloadBatch(const std::vector<std::tuple<int, int, int>>& chunks);
 
-    // Configuration
-    void setEvaporationEnabled(bool enabled) { m_enableEvaporation = enabled; }
-    void setFlowSpeed(float speed) { m_flowSpeed = speed; }
-    void setLavaFlowMultiplier(float mult) { m_lavaFlowMultiplier = mult; }
+    // ========== Legacy API (for compatibility) ==========
+
+    void setWaterLevel(int x, int y, int z, uint8_t level, uint8_t fluidType = 1);
+    void addWaterSource(const glm::ivec3& position, uint8_t fluidType = 1);
+    void removeWaterSource(const glm::ivec3& position);
+    bool hasWaterSource(const glm::ivec3& position) const;
+    void markAsWaterBody(const std::unordered_set<glm::ivec3>& cells, bool infinite = true);
+    const std::unordered_set<glm::ivec3>& getActiveWaterChunks() const { return m_activeChunks; }
+
+    // Configuration (mostly unused in new system)
+    void setEvaporationEnabled(bool enabled) { (void)enabled; }
+    void setFlowSpeed(float speed) { (void)speed; }
+    void setLavaFlowMultiplier(float mult) { (void)mult; }
 
 private:
-    // Per-voxel water data
+    // ========== Water Data ==========
+
+    struct WaterCell {
+        uint8_t level;          // 0-8 (0=empty, 8=source)
+        uint8_t fluidType;      // 1=water, 2=lava
+        bool isSource;          // True if this is a source block
+        glm::vec2 flowDir;      // Flow direction for rendering
+
+        WaterCell() : level(0), fluidType(1), isSource(false), flowDir(0.0f) {}
+    };
+
     std::unordered_map<glm::ivec3, WaterCell> m_waterCells;
+    std::unordered_set<glm::ivec3> m_sourceBlocks;  // Fast source lookup
 
-    // Water sources
-    std::vector<WaterSource> m_waterSources;
+    // ========== BFS Queues ==========
 
-    // Water bodies
-    std::vector<WaterBody> m_waterBodies;
+    // Spread queue: positions that need to spread water to neighbors
+    std::queue<glm::ivec3> m_spreadQueue;
+    std::unordered_set<glm::ivec3> m_spreadQueued;  // Dedup
 
-    // Chunks with active water (for optimization)
-    // OPTIMIZATION: unordered_set for O(1) lookups instead of O(log n)
+    // Removal queue: positions to check for removal
+    std::queue<glm::ivec3> m_removeQueue;
+    std::unordered_set<glm::ivec3> m_removeQueued;  // Dedup
+
+    // ========== Dirty Tracking ==========
+
+    std::unordered_set<glm::ivec3> m_dirtyChunks;
     std::unordered_set<glm::ivec3> m_activeChunks;
 
-    // Dirty tracking - only update cells that have changed
-    std::unordered_set<glm::ivec3> m_dirtyCells;
+    // ========== BFS Methods ==========
 
-    // Dirty chunks - chunks that need mesh regeneration due to water changes
-    std::unordered_set<glm::ivec3> m_dirtyChunks;
+    /**
+     * @brief BFS spread water from a position
+     * Spreads to neighbors at (current_level - 1)
+     */
+    void bfsSpread(World* world, int maxIterations);
 
-    // Configuration
-    bool m_enableEvaporation;
-    float m_flowSpeed;
-    float m_lavaFlowMultiplier;
-    uint8_t m_evaporationThreshold;
+    /**
+     * @brief BFS remove water that lost its source
+     * Removes all water not connected to a source
+     */
+    void bfsRemove(World* world, int maxIterations);
 
-    // Frame counter for spreading updates
-    int m_frameOffset;
+    /**
+     * @brief Find path to drop using BFS (Minecraft optimization)
+     * Returns direction to flow toward a drop, or (0,0) if none found
+     */
+    glm::ivec2 findPathToDrop(const glm::ivec3& pos, World* world);
 
-    std::mt19937 m_rng;
-    std::mutex m_rngMutex;
+    /**
+     * @brief Check if water at position can flow (has valid upstream)
+     */
+    bool hasValidUpstream(const glm::ivec3& pos) const;
 
-    // OPTIMIZATION: Flow weight cache to avoid redundant BFS calculations
-    // Cache key: source position, Cache value: map of (destination -> weight)
-    // Cleared each frame to avoid stale data when terrain changes
-    std::unordered_map<glm::ivec3, std::unordered_map<glm::ivec3, int>> m_flowWeightCache;
-    mutable std::mutex m_flowCacheMutex;  // Thread safety for cache access
+    // ========== Helper Methods ==========
 
-    // Internal simulation methods
-    void updateWaterCell(const glm::ivec3& pos, WaterCell& cell, World* world, float deltaTime);
-    void applyGravity(const glm::ivec3& pos, WaterCell& cell, World* world);
-    void spreadHorizontally(const glm::ivec3& pos, WaterCell& cell, World* world);
-    int calculateFlowWeight(const glm::ivec3& from, const glm::ivec3& to, World* world);
-    void updateShoreCounter(const glm::ivec3& pos, WaterCell& cell, World* world);
-    void updateWaterSources(float deltaTime);
-    void updateWaterBodies();
-    void updateActiveChunks();
-    void markDirty(const glm::ivec3& pos);  // Mark a cell as dirty (needs update)
-    void syncWaterLevelToChunk(const glm::ivec3& pos, uint8_t level, World* world);  // Sync level to chunk metadata
+    void queueSpread(const glm::ivec3& pos);
+    void queueRemove(const glm::ivec3& pos);
+    void setWaterCell(const glm::ivec3& pos, uint8_t level, bool isSource, World* world);
+    void removeWaterCell(const glm::ivec3& pos, World* world);
+    void syncToChunk(const glm::ivec3& pos, uint8_t level, World* world, bool lockHeld = false);
+    void markChunkDirtyAt(const glm::ivec3& pos);
 
-    // Helper methods
     bool isBlockSolid(int x, int y, int z, World* world) const;
-    bool isBlockLiquid(int x, int y, int z, World* world) const;
+    bool canWaterFlowTo(int x, int y, int z, World* world) const;
     glm::ivec3 worldToChunk(const glm::ivec3& worldPos) const;
 };

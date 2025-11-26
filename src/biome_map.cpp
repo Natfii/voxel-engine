@@ -39,14 +39,26 @@ BiomeMap::BiomeMap(int seed, float tempBias, float moistBias, float ageBias,
     m_moistureVariation->SetFractalOctaves(2);
     m_moistureVariation->SetFrequency(0.004f);  // Very subtle local variation
 
-    // Terrain height noise - controlled by biome age
+    // Terrain height noise - SMOOTHER for gradual landscapes
+    // UPDATED (2025-11-25): Lower frequency for less valleys, more gradual terrain
     m_terrainNoise = std::make_unique<FastNoiseLite>(seed + 200);
     m_terrainNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
     m_terrainNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
-    m_terrainNoise->SetFractalOctaves(5);
+    m_terrainNoise->SetFractalOctaves(6);       // Was 5 - more octaves = smoother blending
     m_terrainNoise->SetFractalLacunarity(2.0f);
-    m_terrainNoise->SetFractalGain(0.5f);
-    m_terrainNoise->SetFrequency(0.015f);
+    m_terrainNoise->SetFractalGain(0.45f);      // Was 0.5 - lower = less harsh detail
+    m_terrainNoise->SetFrequency(0.006f);       // Was 0.015 - MUCH lower for grand terrain
+                                                 // 0.006 = ~167-block features (gradual hills)
+
+    // Mountain range noise - creates VERY wide mountain ranges
+    // Lower frequency = wider mountain ranges (0.0004 = ~2500 block features)
+    m_mountainRangeNoise = std::make_unique<FastNoiseLite>(seed + 500);
+    m_mountainRangeNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_mountainRangeNoise->SetFractalType(FastNoiseLite::FractalType_Ridged);  // Ridged for range shapes
+    m_mountainRangeNoise->SetFractalOctaves(4);
+    m_mountainRangeNoise->SetFractalLacunarity(2.0f);
+    m_mountainRangeNoise->SetFractalGain(0.5f);
+    m_mountainRangeNoise->SetFrequency(0.0004f);  // Even lower - mountains 2000+ blocks wide
 
     // Cave noise - 3D cellular noise for chamber-style caves
     m_caveNoise = std::make_unique<FastNoiseLite>(seed + 300);
@@ -70,6 +82,25 @@ BiomeMap::BiomeMap(int seed, float tempBias, float moistBias, float ageBias,
     m_undergroundChamberNoise->SetCellularDistanceFunction(FastNoiseLite::CellularDistanceFunction_Euclidean);
     m_undergroundChamberNoise->SetCellularReturnType(FastNoiseLite::CellularReturnType_Distance2);
     m_undergroundChamberNoise->SetFrequency(0.006f);  // Contained chambers (3x smaller than surface biomes)
+
+    // Maze tunnel noise - creates interconnected maze-like passages
+    m_mazeTunnelNoise = std::make_unique<FastNoiseLite>(seed + 500);
+    m_mazeTunnelNoise->SetNoiseType(FastNoiseLite::NoiseType_Cellular);
+    m_mazeTunnelNoise->SetCellularDistanceFunction(FastNoiseLite::CellularDistanceFunction_Manhattan);
+    m_mazeTunnelNoise->SetCellularReturnType(FastNoiseLite::CellularReturnType_Distance2Div);
+    m_mazeTunnelNoise->SetFrequency(0.04f);  // Tighter maze pattern
+
+    // Large cavern noise - creates occasional huge open spaces
+    m_largeCavernNoise = std::make_unique<FastNoiseLite>(seed + 600);
+    m_largeCavernNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_largeCavernNoise->SetFractalType(FastNoiseLite::FractalType_Ridged);
+    m_largeCavernNoise->SetFractalOctaves(2);
+    m_largeCavernNoise->SetFrequency(0.008f);  // Large, rare caverns
+
+    // Aquifer noise - determines water table variation and aquifer locations
+    m_aquiferNoise = std::make_unique<FastNoiseLite>(seed + 700);
+    m_aquiferNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_aquiferNoise->SetFrequency(0.01f);  // Large-scale water table variation
 }
 
 float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
@@ -200,50 +231,71 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     // FastNoiseLite is thread-safe for reads - no mutex needed
     float noise = m_terrainNoise->GetNoise(worldX, worldZ);
 
-    // Use biome's age to control terrain roughness
-    // Age 0 (young) = very rough, mountainous (high variation)
-    // Age 100 (old) = very flat, plains-like (low variation)
+    // ============================================================================
+    // TERRAIN OVERHAUL (2025-11-25): Smoother, more natural terrain
+    // ============================================================================
+    // - Reduced base height variation for flatter landscapes
+    // - Power curve to flatten valleys while keeping gentle peaks
+    // - Mountain range noise for wide, gradual mountain slopes
+    // ============================================================================
 
-    // Calculate height variation based on age
-    // ADJUSTED (2025-11-23): Reduced from 30→20 to prevent extreme mountains
-    // Young terrain (age=0): variation = 20 blocks (was 30)
-    // Old terrain (age=100): variation = 5 blocks
+    // Use biome's age to control terrain roughness
+    // Age 0 (young) = moderate variation
+    // Age 100 (old) = very flat, plains-like (minimal variation)
     float ageNormalized = biome->age / 100.0f;  // 0.0 to 1.0
 
     // Apply age bias from menu (-1.0 = flatter, +1.0 = more mountainous)
     ageNormalized = std::clamp(ageNormalized - m_ageBias, 0.0f, 1.0f);
 
-    float heightVariation = 20.0f - (ageNormalized * 15.0f);  // 20 to 5 (was 30 to 5)
+    // UPDATED: Reduced base variation for flatter terrain
+    // Young terrain (age=0): variation = 12 blocks (was 20)
+    // Old terrain (age=100): variation = 2 blocks (was 5)
+    float heightVariation = 12.0f - (ageNormalized * 10.0f);  // Range: 12 to 2
 
     // Apply biome's height multiplier for special terrain (mountains, etc.)
     float baseHeightMultiplier = biome->height_multiplier;
 
-    // BIOME SIZE-BASED SCALING: Mountains grow taller based on biome extent
-    // Sample surrounding area to determine mountain biome density
-    if (baseHeightMultiplier > 1.5f) {  // Only for mountainous biomes
+    // NEW: For mountainous biomes, use mountain range noise for gradual slopes
+    if (baseHeightMultiplier > 1.5f) {
+        // Sample mountain range noise for gradual, wide mountains
+        float rangeNoise = m_mountainRangeNoise->GetNoise(worldX, worldZ);
+        rangeNoise = (rangeNoise + 1.0f) * 0.5f;  // Map to [0, 1]
+
+        // Mountains only rise where range noise is high
+        // This creates sharper peaks with steeper slopes
+        // Lower power = sharper transition from plains to peaks (was 1.5, now 0.9)
+        float mountainInfluence = std::pow(rangeNoise, 0.9f);
+
+        // Scale the height multiplier by mountain influence
+        // At mountain edges: multiplier ~1.0 (normal terrain)
+        // At mountain centers/peaks: multiplier = full height_multiplier
+        baseHeightMultiplier = 1.0f + (baseHeightMultiplier - 1.0f) * mountainInfluence;
+
+        // Also apply biome size-based scaling for extra tall central peaks
         // Cache mountain density at 32-block resolution to avoid expensive sampling
-        // PERFORMANCE: Use bit shift instead of division (24-39x faster)
-        int mountainRegionX = static_cast<int>(worldX) >> 5;  // Equivalent to worldX / 32
-        int mountainRegionZ = static_cast<int>(worldZ) >> 5;  // Equivalent to worldZ / 32
+        int mountainRegionX = static_cast<int>(worldX) >> 5;
+        int mountainRegionZ = static_cast<int>(worldZ) >> 5;
         uint64_t mountainKey = coordsToKey(mountainRegionX, mountainRegionZ);
 
         float sizeScaling = 1.0f;
+        bool needsCompute = false;
 
-        // Check mountain density cache first
+        // Check mountain density cache first (read lock only)
         {
             std::shared_lock<std::shared_mutex> lock(m_mountainCacheMutex);
             auto it = m_mountainDensityCache.find(mountainKey);
             if (it != m_mountainDensityCache.end()) {
                 sizeScaling = it->second;
-                baseHeightMultiplier *= sizeScaling;
-                goto skip_mountain_sampling;  // Cache hit - skip expensive sampling
+            } else {
+                needsCompute = true;
             }
         }
+        // shared_lock released here before any computation
 
-        // Cache miss - sample surrounding area
-        {
-            // Sample 8 points in a 500-block radius to check mountain biome extent
-            const float sampleRadius = 500.0f;
+        // Cache miss - compute outside the lock to avoid deadlock
+        if (needsCompute) {
+            // Sample larger area to detect wide mountain ranges (was 500, now 800)
+            const float sampleRadius = 800.0f;
             int mountainCount = 0;
             const int totalSamples = 8;
 
@@ -253,35 +305,34 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
                 float sampleZ = worldZ + std::sin(angle) * sampleRadius;
 
                 const Biome* sampleBiome = getBiomeAt(sampleX, sampleZ);
-                // Count how many samples are also mountainous (height_multiplier > 1.5)
                 if (sampleBiome && sampleBiome->height_multiplier > 1.5f) {
                     mountainCount++;
                 }
             }
 
-            // Calculate mountain density (0.0 = isolated peak, 1.0 = large mountain range)
             float mountainDensity = mountainCount / float(totalSamples);
+            // Increased scaling range: small mountain patches = 0.7x, large mountain ranges = 1.6x
+            // This allows for much taller peaks in wide mountain areas
+            sizeScaling = 0.7f + (mountainDensity * 0.9f);  // Range: 0.7x to 1.6x
 
-            // Scale height multiplier based on mountain range size
-            // ADJUSTED (2025-11-23): Reduced from 2.0x→1.5x max to prevent extreme mountains
-            // Small isolated mountains: 0.7x multiplier (slightly shorter)
-            // Large mountain ranges: up to 1.5x multiplier (was 2.0x)
-            sizeScaling = 0.7f + (mountainDensity * 0.8f);  // Range: 0.7x to 1.5x (was 0.5x to 2.0x)
-
-            // Store in cache
-            {
-                std::unique_lock<std::shared_mutex> lock(m_mountainCacheMutex);
-                if (m_mountainDensityCache.size() < MAX_CACHE_SIZE) {
-                    m_mountainDensityCache[mountainKey] = sizeScaling;
-                }
+            // Store in cache (write lock, no other locks held)
+            std::unique_lock<std::shared_mutex> writeLock(m_mountainCacheMutex);
+            if (m_mountainDensityCache.size() < MAX_CACHE_SIZE) {
+                m_mountainDensityCache[mountainKey] = sizeScaling;
             }
-
-            baseHeightMultiplier *= sizeScaling;
         }
+
+        baseHeightMultiplier *= sizeScaling;
     }
-    skip_mountain_sampling:
 
     heightVariation *= baseHeightMultiplier;
+
+    // NEW: Apply power curve to flatten valleys while keeping gentle peaks
+    // Power > 1.0 pushes middle values down, creating flatter lowlands
+    // This reduces the "choppy" look of constant hills/valleys
+    float normalizedNoise = (noise + 1.0f) * 0.5f;  // Map [-1, 1] to [0, 1]
+    normalizedNoise = std::pow(normalizedNoise, 1.3f);  // Gentle flattening curve
+    noise = normalizedNoise * 2.0f - 1.0f;  // Map back to [-1, 1]
 
     // Calculate final height
     int height = BASE_HEIGHT + static_cast<int>(noise * heightVariation);
@@ -299,6 +350,11 @@ int BiomeMap::getTerrainHeightAt(float worldX, float worldZ) {
     // We must always generate terrain from Y=0 upward to avoid gaps.
 
     return height;
+}
+
+float BiomeMap::getTerrainNoise(float worldX, float worldZ) {
+    // Return raw terrain noise for snow line variation and other effects
+    return m_terrainNoise->GetNoise(worldX, worldZ);
 }
 
 float BiomeMap::getCaveDensityAt(float worldX, float worldY, float worldZ, int terrainHeight) {
@@ -406,6 +462,37 @@ bool BiomeMap::isUndergroundBiomeAt(float worldX, float worldY, float worldZ) {
     return value > 0.6f;
 }
 
+float BiomeMap::getMazeTunnelDensityAt(float worldX, float worldY, float worldZ) {
+    // Only generate maze tunnels in deep underground (Y < 0)
+    if (worldY > 0) return 1.0f;  // No tunnels above Y=0
+
+    // Maze tunnels are more common deeper down
+    float depthFactor = std::min(1.0f, std::abs(worldY) / 50.0f);  // Full density at Y=-50
+
+    // Get maze noise - Manhattan distance creates grid-like patterns
+    float mazeNoise = m_mazeTunnelNoise->GetNoise(worldX, worldY * 0.5f, worldZ);
+
+    // Map to 0-1 range
+    float density = mapNoiseTo01(mazeNoise);
+
+    // Apply depth factor - fewer tunnels near surface
+    density = density + (1.0f - depthFactor) * (1.0f - density) * 0.5f;
+
+    return density;
+}
+
+bool BiomeMap::isLargeCavernAt(float worldX, float worldY, float worldZ) {
+    // Only in underground (Y < 20)
+    if (worldY > 20) return false;
+
+    // Get cavern noise
+    float cavernNoise = m_largeCavernNoise->GetNoise(worldX, worldY * 0.3f, worldZ);
+
+    // Ridged noise creates interesting cavern shapes
+    // Only create caverns where noise > 0.7 (rare, ~15% of underground)
+    return cavernNoise > 0.7f;
+}
+
 // ==================== Private Helper Functions ====================
 
 uint64_t BiomeMap::coordsToKey(int x, int z) const {
@@ -495,4 +582,33 @@ float BiomeMap::mapNoiseToRange(float noise, float min, float max) {
     // Map from [-1, 1] to [min, max]
     float normalized = (noise + 1.0f) * 0.5f;  // [0, 1]
     return min + (normalized * (max - min));
+}
+
+int BiomeMap::getWaterTableAt(float worldX, float worldZ) {
+    using namespace TerrainGeneration;
+
+    // Get noise for water table variation
+    float noise = m_aquiferNoise->GetNoise(worldX * 0.5f, worldZ * 0.5f);
+
+    // Map noise to water table variation
+    int variation = static_cast<int>(noise * AQUIFER_VARIATION);
+
+    return AQUIFER_LEVEL + variation;  // Returns Y level of water table
+}
+
+bool BiomeMap::hasAquiferAt(float worldX, float worldY, float worldZ) {
+    using namespace TerrainGeneration;
+
+    // Get local water table level
+    int waterTable = getWaterTableAt(worldX, worldZ);
+
+    // Only consider positions at or below water table
+    if (worldY > waterTable) return false;
+
+    // Use separate noise to determine if this specific area has water
+    float aquiferNoise = m_aquiferNoise->GetNoise(worldX, worldY * 2.0f, worldZ);
+    float chance = mapNoiseTo01(aquiferNoise);
+
+    // AQUIFER_CHANCE (25%) of underground caves below water table have water
+    return chance < AQUIFER_CHANCE;
 }

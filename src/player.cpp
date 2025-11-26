@@ -423,14 +423,17 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
                         << " movement.y=" << movement.y << " velocity.y=" << m_velocity.y;
     }
 
-    // CRITICAL FIX: If player is ALREADY stuck inside a block, push them out
-    // But only if they're SIGNIFICANTLY stuck (not just barely touching)
+    // CRITICAL FIX: If player's FEET are stuck inside a block, push them out
+    // BUG FIX (2025-11-26): Only check FEET collision, not full body
+    // Previously, hitting a ceiling with your head would trigger this and push you UP
+    // Now we only push up when feet are genuinely stuck (e.g., after chunk load)
     // OPTIMIZATION: Only check every 10 frames (unstuck is rare, this saves 90% of these checks)
     using namespace PhysicsConstants;
     static int unstuckCheckCounter = 0;
     if (++unstuckCheckCounter % 10 == 0) {
-        if (checkCollision(Position, world)) {
-            // Player is currently inside a block - calculate correction
+        // Use checkFeetCollision instead of checkCollision to avoid ceiling false positives
+        if (checkFeetCollision(Position, world)) {
+            // Player's feet are stuck inside a block - calculate correction
             glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
             float blockGridY = std::floor(feetPos.y) + 1.0f;  // Floor + 1 to place on top of block
             float correctionY = (blockGridY + PLAYER_EYE_HEIGHT) - Position.y;
@@ -441,7 +444,7 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
                 m_velocity.y = 0.0f; // Stop vertical velocity when unsticking
 
                 if (shouldDebug && debugCounter % 60 == 0) {
-                    Logger::debug() << "Player stuck in block! Pushing up by " << correctionY;
+                    Logger::debug() << "Player feet stuck in block! Pushing up by " << correctionY;
                 }
             }
         }
@@ -666,6 +669,71 @@ bool Player::checkCollision(const glm::vec3& position, World* world) {
     }
 
     return false;  // No collision
+}
+
+/**
+ * @brief Feet-only collision detection for unstuck mechanism
+ *
+ * This function checks ONLY if the player's feet are stuck inside a solid block.
+ * Unlike checkCollision() which checks the entire body, this only checks the
+ * bottom 0.5 blocks of the player's hitbox.
+ *
+ * Why Separate Feet Check?
+ * ------------------------
+ * The unstuck mechanism should only trigger when feet are stuck in terrain
+ * (e.g., after chunk loading, teleporting, or terrain updates). It should NOT
+ * trigger when the player's head hits a ceiling - that's a normal collision
+ * handled by the Y-axis collision resolution (which stops upward movement).
+ *
+ * BUG FIX (2025-11-26): Previously, bumping your head on a low ceiling would
+ * trigger the unstuck mechanism (because checkCollision returns true for head
+ * collision), which would incorrectly push the player UP through the ceiling.
+ *
+ * @param position Position to test (at eye level)
+ * @param world World instance for block queries
+ * @return true if feet are stuck in solid block, false if clear
+ */
+bool Player::checkFeetCollision(const glm::vec3& position, World* world) {
+    // Player's feet position (position is at eye level)
+    glm::vec3 feetPos = position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+    float halfWidth = PLAYER_WIDTH / 2.0f;
+
+    // Only check the bottom 0.5 blocks of the player (feet area)
+    // This prevents head collisions from triggering the unstuck mechanism
+    const float FEET_CHECK_HEIGHT = 0.5f;
+    glm::vec3 minBound = feetPos - glm::vec3(halfWidth, 0.0f, halfWidth);
+    glm::vec3 maxBound = feetPos + glm::vec3(halfWidth, FEET_CHECK_HEIGHT, halfWidth);
+
+    // Convert to block coordinates
+    int minX = static_cast<int>(std::floor(minBound.x));
+    int minY = static_cast<int>(std::floor(minBound.y));
+    int minZ = static_cast<int>(std::floor(minBound.z));
+    int maxX = static_cast<int>(std::floor(maxBound.x));
+    int maxY = static_cast<int>(std::floor(maxBound.y));
+    int maxZ = static_cast<int>(std::floor(maxBound.z));
+
+    // Check each block in the feet range
+    for (int x = minX; x <= maxX; x++) {
+        for (int y = minY; y <= maxY; y++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                float worldX = static_cast<float>(x);
+                float worldY = static_cast<float>(y);
+                float worldZ = static_cast<float>(z);
+
+                int blockID = world->getBlockAt(worldX, worldY, worldZ);
+
+                // Check if block is solid (not air and not liquid)
+                if (blockID > 0) {
+                    const auto& blockDef = BlockRegistry::instance().get(blockID);
+                    if (!blockDef.isLiquid) {
+                        return true;  // Feet stuck in solid block
+                    }
+                }
+            }
+        }
+    }
+
+    return false;  // Feet not stuck
 }
 
 /**

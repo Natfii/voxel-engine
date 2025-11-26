@@ -38,6 +38,7 @@ struct UniformBufferObject {
     alignas(16) glm::vec4 liquidFogColor;///< Liquid fog color (.rgb) + density (.a)
     alignas(16) glm::vec4 liquidFogDist; ///< Fog distances (.x=start, .y=end) + unused (.zw)
     alignas(16) glm::vec4 liquidTint;    ///< Liquid tint color (.rgb) + darken factor (.a)
+    alignas(16) glm::vec4 atlasInfo;     ///< Texture atlas info (.x=width in cells, .y=height, .z=cell size, .w=unused)
 };
 
 /**
@@ -304,6 +305,7 @@ public:
     VkPipeline getGraphicsPipeline() const { return m_graphicsPipeline; }       ///< Get standard pipeline
     VkPipeline getWireframePipeline() const { return m_wireframePipeline; }     ///< Get wireframe pipeline
     VkPipeline getLinePipeline() const { return m_linePipeline; }               ///< Get line pipeline
+    VkPipeline getSpherePipeline() const { return m_spherePipeline; }               ///< Get line pipeline
     VkPipeline getTransparentPipeline() const { return m_transparentPipeline; } ///< Get transparent pipeline (no depth write)
     VkPipeline getMeshPipeline() const { return m_meshPipeline; }               ///< Get mesh rendering pipeline
     VkPipelineLayout getPipelineLayout() const { return m_pipelineLayout; }     ///< Get pipeline layout
@@ -840,6 +842,7 @@ private:
     void createLinePipeline();
     void createSkyboxPipeline();
     void createMeshPipeline();
+    void createSpherePipeline();
     void createFramebuffers();
     void createCommandPool();
     void createDepthResources();
@@ -927,6 +930,9 @@ private:
     VkPipelineLayout m_meshPipelineLayout;
     VkPipeline m_meshPipeline;
 
+    // Sphere pipeline for loading screen (uses uncompressed Vertex format)
+    VkPipeline m_spherePipeline;
+
     // Command buffers
     VkCommandPool m_commandPool;
     VkCommandPool m_transferCommandPool;  ///< PERF (2025-11-24): Separate command pool for transfer queue
@@ -1012,8 +1018,8 @@ private:
     // Mega-buffers: Single large buffers containing all chunk geometry
     // This reduces draw calls from 300+ per frame to just 2 (opaque + transparent)
 
-    static constexpr VkDeviceSize MEGA_BUFFER_VERTEX_SIZE = 1024 * 1024 * 1024;  // 1 GB for vertices (increased from 256MB)
-    static constexpr VkDeviceSize MEGA_BUFFER_INDEX_SIZE = 1024 * 1024 * 1024;   // 1 GB for indices (increased from 256MB)
+    static constexpr VkDeviceSize MEGA_BUFFER_VERTEX_SIZE = 2ULL * 1024 * 1024 * 1024;  // 2 GB for vertices (terrain changes need more space)
+    static constexpr VkDeviceSize MEGA_BUFFER_INDEX_SIZE = 2ULL * 1024 * 1024 * 1024;   // 2 GB for indices (terrain changes need more space)
 
     // Opaque geometry mega-buffers
     VkBuffer m_megaVertexBuffer = VK_NULL_HANDLE;

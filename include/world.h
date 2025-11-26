@@ -622,6 +622,31 @@ public:
      */
     int getBlockAtUnsafe(float worldX, float worldY, float worldZ);
 
+    /**
+     * @brief Internal chunk lookup by world position without locking (PUBLIC for WaterSimulation)
+     * @warning UNSAFE: Caller must hold m_chunkMapMutex!
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @return Pointer to chunk, or nullptr if not found
+     */
+    Chunk* getChunkAtWorldPosUnsafe(float worldX, float worldY, float worldZ);
+
+    /**
+     * @brief Internal block setter without locking (PUBLIC for WaterSimulation)
+     * @warning UNSAFE: Caller must hold m_chunkMapMutex!
+     * @param worldX World X coordinate
+     * @param worldY World Y coordinate
+     * @param worldZ World Z coordinate
+     * @param blockID Block ID to set
+     */
+    void setBlockAtUnsafe(float worldX, float worldY, float worldZ, int blockID);
+
+    /**
+     * @brief Internal metadata setter without locking (PUBLIC for WaterSimulation)
+     */
+    void setBlockMetadataAtUnsafe(float worldX, float worldY, float worldZ, uint8_t metadata);
+
     // ============================================================================
     // PERFORMANCE MONITORING (2025-11-24): Queue size accessors
     // ============================================================================
@@ -665,24 +690,6 @@ private:
     Chunk* getChunkAtUnsafe(int chunkX, int chunkY, int chunkZ);
 
     /**
-     * @brief Internal chunk lookup by world position without locking
-     * @param worldX World X coordinate
-     * @param worldY World Y coordinate
-     * @param worldZ World Z coordinate
-     * @return Pointer to chunk, or nullptr if not found
-     */
-    Chunk* getChunkAtWorldPosUnsafe(float worldX, float worldY, float worldZ);
-
-    /**
-     * @brief Internal block setter without locking (caller must hold lock)
-     * @param worldX World X coordinate
-     * @param worldY World Y coordinate
-     * @param worldZ World Z coordinate
-     * @param blockID Block ID to set
-     */
-    void setBlockAtUnsafe(float worldX, float worldY, float worldZ, int blockID);
-
-    /**
      * @brief Internal metadata getter without locking (caller must hold lock)
      * @param worldX World X coordinate
      * @param worldY World Y coordinate
@@ -690,15 +697,6 @@ private:
      * @return Metadata value
      */
     uint8_t getBlockMetadataAtUnsafe(float worldX, float worldY, float worldZ);
-
-    /**
-     * @brief Internal metadata setter without locking (caller must hold lock)
-     * @param worldX World X coordinate
-     * @param worldY World Y coordinate
-     * @param worldZ World Z coordinate
-     * @param metadata Metadata value to set
-     */
-    void setBlockMetadataAtUnsafe(float worldX, float worldY, float worldZ, uint8_t metadata);
 
     int m_width, m_height, m_depth;      ///< World dimensions in chunks
     int m_seed;                          ///< World generation seed

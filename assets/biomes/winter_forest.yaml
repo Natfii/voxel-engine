@@ -10,7 +10,7 @@ activity: 45            # Moderate structure spawning
 
 # Vegetation
 trees_spawn: true       # Spruce trees
-tree_density: 60        # Moderate forest density
+tree_density: 35        # Lower density (was 60)
 vegetation_density: 20  # Low undergrowth (snow coverage)
 
 # Spawning
