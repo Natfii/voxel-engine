@@ -11,11 +11,11 @@
 #include "water_simulation.h"
 #include "world.h"
 #include "world_utils.h"
-#include <iostream>
 #include "block_system.h"
 #include "chunk.h"
 #include "terrain_constants.h"
 #include "logger.h"
+#include "debug_state.h"
 #include <algorithm>
 #include <array>
 
@@ -69,11 +69,15 @@ void WaterSimulation::update(float deltaTime, World* world, const glm::vec3& pla
             break;
         }
 
-        // Debug: Show active water cells count periodically
+        // Debug: Show active water cells count periodically (debug builds only)
+#ifndef NDEBUG
         static int frameCount = 0;
-        if (++frameCount % 60 == 0) {
-            std::cerr << "[DEBUG] Water simulation: " << m_activeQueue.size() << " active cells" << std::endl;
+        ++frameCount;
+
+        if (DebugState::instance().debugWater.getValue() && frameCount % 60 == 0) {
+            Logger::debug() << "Water simulation: " << cellsToProcess.size() << " active cells";
         }
+#endif
 
         size_t cellsThisIteration = m_activeQueue.size();
         bool anyChanges = false;
