@@ -21,6 +21,7 @@
 #include "vulkan_renderer.h"
 #include "logger.h"
 #include <iostream>
+#include <fstream>
 #include <filesystem>
 #include <algorithm>
 #include <cctype>
@@ -439,6 +440,23 @@ bool BlockRegistry::loadBlocks(const std::string& directory, VulkanRenderer* ren
             }
             std::cout << '\n';
         }
+    }
+
+    // Write Block_ID_Index.md file with all registered block IDs and names
+    std::string indexPath = directory + "/Block_ID_Index.md";
+    std::ofstream indexFile(indexPath);
+    if (indexFile.is_open()) {
+        indexFile << "#Index of all IDs and the associtaed block to not accidently use the same ID for two blocks.\n";
+        for (size_t i = 1; i < m_defs.size(); i++) {  // Skip Air (ID 0)
+            const BlockDefinition& def = m_defs[i];
+            if (!def.name.empty() && def.id == static_cast<int>(i)) {
+                indexFile << def.id << " = " << def.name << "\n";
+            }
+        }
+        indexFile.close();
+        std::cout << "\nBlock ID Index written to: " << indexPath << '\n';
+    } else {
+        std::cerr << "WARNING: Failed to write Block_ID_Index.md to " << indexPath << '\n';
     }
 
     return true;
