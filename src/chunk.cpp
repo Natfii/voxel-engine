@@ -426,9 +426,16 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 int worldY = static_cast<int64_t>(m_y) * HEIGHT + y;
                 float worldYf = static_cast<float>(worldY);
 
-                // SOLID STONE GUARANTEE: Y=2 to Y=10 is always stone (no caves)
-                // This prevents giant holes to the void and ensures solid foundation
-                if (worldY >= 2 && worldY <= 10) {
+                // BEDROCK LAYER: Y <= -98 is always bedrock (indestructible bottom layer)
+                // This creates the absolute bottom of the world, preventing falling into void
+                if (worldY <= BEDROCK_LAYER_Y) {
+                    m_blocks[x][y][z] = BLOCK_BEDROCK;
+                    continue;
+                }
+
+                // SOLID STONE FOUNDATION: Y=-97 to Y=10 is always stone (no caves)
+                // This provides a solid foundation above bedrock and ensures stability
+                if (worldY >= -97 && worldY <= 10) {
                     m_blocks[x][y][z] = BLOCK_STONE;
                     continue;
                 }

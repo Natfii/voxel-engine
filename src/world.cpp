@@ -30,6 +30,7 @@
 #include <glm/glm.hpp>
 #include <thread>
 #include <future>
+#include <atomic>
 #include <chrono>
 #include <algorithm>
 #include <cmath>
@@ -120,19 +121,24 @@ World::~World() {
 
 void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerChunkZ, int radius) {
     /**
-     * OPTIMIZED SPAWN GENERATION (2025-11-25)
+     * COOPERATIVE THREADING MODEL (2025-11-26)
      *
      * Two-tier generation for faster streaming startup:
      * 1. Inner radius (spawn area): Full decoration + lighting + mesh
      * 2. Outer radius (terrain buffer): Terrain only, no decoration/mesh
      *
-     * Two-thread generation for better parallelism:
-     * - Surface thread: Generates Y >= 0 chunks (terrain + biomes)
-     * - Underground thread: Generates Y < 0 chunks (caves + ores)
+     * PHASE 1: Surface Generation (both threads with work-stealing)
+     * - Thread A: Terrain generation for surface chunks
+     * - Thread B: Decoration for surface chunks
+     * - Work-stealing: If Thread A finishes terrain, it helps with decoration
+     *                  If Thread B finishes decoration, it helps with remaining terrain
+     *
+     * PHASE 2: Underground Generation (both threads with work-stealing)
+     * - Both threads work on underground chunks together (simpler, mostly stone)
+     * - Work-stealing: threads pull from shared queue using atomic index
      */
 
     // Calculate outer radius for terrain-only pre-generation
-    // Double the spawn radius for terrain buffer - player can wait for smoother gameplay
     const int TERRAIN_BUFFER_RADIUS = radius * 2;  // 2x spawn radius for terrain buffer
 
     Logger::info() << "Generating spawn chunks: inner=" << radius << " (decorated), outer="
@@ -142,6 +148,7 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
     std::vector<Chunk*> surfaceChunks;      // Y >= 0
     std::vector<Chunk*> undergroundChunks;  // Y < 0
     std::vector<Chunk*> innerChunks;        // Within spawn radius (for decoration)
+    std::vector<Chunk*> innerSurfaceChunks; // Inner surface chunks needing decoration
 
     // THREAD SAFETY: Acquire unique lock for chunk creation
     {
@@ -176,6 +183,9 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
                     bool isInner = std::abs(dx) <= radius && std::abs(dy) <= radius && std::abs(dz) <= radius;
                     if (isInner) {
                         innerChunks.push_back(chunkPtr);
+                        if (chunkY >= 0) {
+                            innerSurfaceChunks.push_back(chunkPtr);  // Only surface chunks need decoration
+                        }
                     }
                 }
             }
@@ -186,64 +196,93 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
     Logger::info() << "Generating terrain: " << surfaceChunks.size() << " surface + "
                    << undergroundChunks.size() << " underground = " << totalChunks << " total";
 
-    // Step 1: Generate terrain in TWO PARALLEL THREADS (surface + underground)
     BiomeMap* biomeMapPtr = m_biomeMap.get();
 
-    auto generateChunks = [biomeMapPtr](std::vector<Chunk*>& chunks) {
-        // Use all available cores for this batch
-        unsigned int numThreads = std::max(1u, std::thread::hardware_concurrency() / 2);
-        const size_t chunksPerThread = (chunks.size() + numThreads - 1) / numThreads;
+    // ============================================================================
+    // PHASE 1: SURFACE GENERATION WITH COOPERATIVE WORK-STEALING
+    // ============================================================================
+    Logger::info() << "PHASE 1: Surface generation (" << surfaceChunks.size() << " terrain, "
+                   << innerSurfaceChunks.size() << " decoration)";
 
-        std::vector<std::thread> threads;
-        threads.reserve(numThreads);
+    // Atomic indices for work-stealing
+    std::atomic<size_t> terrainIndex{0};
+    std::atomic<size_t> decorationIndex{0};
 
-        for (unsigned int i = 0; i < numThreads; ++i) {
-            size_t startIdx = i * chunksPerThread;
-            size_t endIdx = std::min(startIdx + chunksPerThread, chunks.size());
+    auto surfaceWorker = [&](const char* threadName) {
+        size_t terrainGenerated = 0;
+        size_t decorationsGenerated = 0;
 
-            if (startIdx >= chunks.size()) break;
+        while (true) {
+            // Try to grab terrain work first
+            size_t idx = terrainIndex.fetch_add(1, std::memory_order_relaxed);
+            if (idx < surfaceChunks.size()) {
+                surfaceChunks[idx]->generate(biomeMapPtr);
+                terrainGenerated++;
+                continue;
+            }
 
-            threads.emplace_back([&chunks, biomeMapPtr, startIdx, endIdx]() {
-                for (size_t j = startIdx; j < endIdx; ++j) {
-                    chunks[j]->generate(biomeMapPtr);
-                }
-            });
+            // Terrain done, help with decoration (work-stealing)
+            idx = decorationIndex.fetch_add(1, std::memory_order_relaxed);
+            if (idx < innerSurfaceChunks.size()) {
+                decorateChunk(innerSurfaceChunks[idx]);
+                innerSurfaceChunks[idx]->setNeedsDecoration(false);
+                decorationsGenerated++;
+                continue;
+            }
+
+            // Both queues exhausted
+            break;
         }
 
-        for (auto& thread : threads) {
-            thread.join();
-        }
+        Logger::info() << threadName << " complete: " << terrainGenerated << " terrain, "
+                       << decorationsGenerated << " decorations";
     };
 
-    // Launch surface and underground generation in parallel
-    std::thread surfaceThread([&]() {
-        Logger::info() << "Surface thread: generating " << surfaceChunks.size() << " chunks...";
-        generateChunks(surfaceChunks);
-        Logger::info() << "Surface thread: complete";
-    });
+    // Launch two threads for Phase 1
+    std::thread threadA([&]() { surfaceWorker("Thread A"); });
+    std::thread threadB([&]() { surfaceWorker("Thread B"); });
 
-    std::thread undergroundThread([&]() {
-        Logger::info() << "Underground thread: generating " << undergroundChunks.size() << " chunks...";
-        generateChunks(undergroundChunks);
-        Logger::info() << "Underground thread: complete";
-    });
+    threadA.join();
+    threadB.join();
 
-    surfaceThread.join();
-    undergroundThread.join();
+    Logger::info() << "PHASE 1 complete";
 
-    // Step 2: Decorate ONLY inner chunks (spawn area)
-    // Outer chunks are terrain-only buffer for streaming
-    Logger::info() << "Decorating " << innerChunks.size() << " inner spawn chunks with trees...";
+    // ============================================================================
+    // PHASE 2: UNDERGROUND GENERATION WITH COOPERATIVE WORK-STEALING
+    // ============================================================================
+    Logger::info() << "PHASE 2: Underground generation (" << undergroundChunks.size() << " chunks)";
 
-    for (Chunk* chunk : innerChunks) {
-        if (chunk->getChunkY() >= 0) {  // Only decorate surface chunks
-            decorateChunk(chunk);
-            chunk->setNeedsDecoration(false);  // Mark as decorated
+    // Atomic index for underground work-stealing
+    std::atomic<size_t> undergroundIndex{0};
+
+    auto undergroundWorker = [&](const char* threadName) {
+        size_t chunksGenerated = 0;
+
+        while (true) {
+            size_t idx = undergroundIndex.fetch_add(1, std::memory_order_relaxed);
+            if (idx >= undergroundChunks.size()) {
+                break;
+            }
+
+            undergroundChunks[idx]->generate(biomeMapPtr);
+            chunksGenerated++;
         }
-    }
 
-    // Step 3: Initialize lighting for INNER chunks only
-    // Outer chunks get lighting when they become visible
+        Logger::info() << threadName << " complete: " << chunksGenerated << " chunks";
+    };
+
+    // Launch two threads for Phase 2
+    std::thread threadC([&]() { undergroundWorker("Thread C"); });
+    std::thread threadD([&]() { undergroundWorker("Thread D"); });
+
+    threadC.join();
+    threadD.join();
+
+    Logger::info() << "PHASE 2 complete";
+
+    // ============================================================================
+    // PHASE 3: LIGHTING INITIALIZATION
+    // ============================================================================
     Logger::info() << "Initializing lighting for " << innerChunks.size() << " inner spawn chunks...";
 
     for (Chunk* chunk : innerChunks) {
@@ -251,10 +290,10 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
         chunk->markLightingDirty();  // Let lighting system propagate
     }
 
-    // Mark outer chunks as terrain-only (no decoration needed)
+    // Mark outer surface chunks as terrain-only (no decoration needed)
     for (Chunk* chunk : surfaceChunks) {
         bool isOuter = true;
-        for (Chunk* inner : innerChunks) {
+        for (Chunk* inner : innerSurfaceChunks) {
             if (chunk == inner) {
                 isOuter = false;
                 break;
