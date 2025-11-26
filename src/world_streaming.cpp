@@ -10,9 +10,29 @@
 #include "chunk.h"
 #include "vulkan_renderer.h"
 #include "biome_map.h"
+#include "config.h"
+#include "convar.h"
 #include "logger.h"
 #include <algorithm>
 #include <cmath>
+#include <string>
+
+namespace {
+constexpr int kReservedThreadsForRendering = 2;      // Main + render thread
+constexpr int kMinMeshWorkers = 1;
+constexpr int kMaxMeshWorkers = 8;
+constexpr int kFallbackHardwareConcurrency = 4;      // Sensible default when hardware_concurrency() is unknown
+
+ConVar<int> g_meshWorkerOverride(
+    "mesh_workers",
+    "Override mesh worker pool size (-1 = auto, 0 = disable override)",
+    -1,
+    FCVAR_ARCHIVE | FCVAR_NOTIFY);
+
+int clampMeshWorkerCount(int requested) {
+    return std::clamp(requested, kMinMeshWorkers, kMaxMeshWorkers);
+}
+}  // namespace
 
 WorldStreaming::WorldStreaming(World* world, BiomeMap* biomeMap, VulkanRenderer* renderer)
     : m_world(world)
@@ -44,12 +64,18 @@ void WorldStreaming::start(int numWorkers) {
         return;
     }
 
+    const unsigned int hardwareConcurrency = std::thread::hardware_concurrency();
+    const int hardwareThreads = hardwareConcurrency > 0
+                                   ? static_cast<int>(hardwareConcurrency)
+                                   : kFallbackHardwareConcurrency;
+
     // Determine worker count (default: hardware_concurrency - 1, leaving 1 for main thread)
     if (numWorkers <= 0) {
-        numWorkers = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 1);
+        numWorkers = std::max(1, hardwareThreads - 1);
     }
 
-    Logger::info() << "Starting WorldStreaming with " << numWorkers << " worker threads";
+    Logger::info() << "Starting WorldStreaming with " << numWorkers << " worker threads (hardware threads="
+                   << hardwareThreads << ")";
 
     {
         std::lock_guard<std::mutex> lock(m_playerPosMutex);
@@ -62,6 +88,8 @@ void WorldStreaming::start(int numWorkers) {
 
     m_running.store(true);
     m_activeWorkers.store(0);
+    m_meshQueueHighWatermark.store(0);
+    m_meshThrottleCount.store(0);
 
     // Spawn chunk generation worker threads
     for (int i = 0; i < numWorkers; ++i) {
@@ -70,13 +98,46 @@ void WorldStreaming::start(int numWorkers) {
 
     // PERFORMANCE FIX (2025-11-24): Spawn persistent mesh worker thread pool
     // Eliminates 600+ thread creations/sec from detached thread approach
-    const int NUM_MESH_WORKERS = 4;  // 4 workers for mesh generation
+    //
+    // Worker count rules:
+    //  - Allow runtime override via convar (mesh_workers) or config.ini [Threading] mesh_workers
+    //  - Otherwise, base on hardware_concurrency minus main/render threads and chunk workers
+    //  - Clamp to a safe range to avoid oversubscription
+    Config& config = Config::instance();
+    const int configMeshWorkers = config.getInt("Threading", "mesh_workers", -1);
+
+    int meshWorkerCount = g_meshWorkerOverride.getValue();
+    std::string meshWorkerSource = "convar";
+
+    if (meshWorkerCount <= 0 && configMeshWorkers > 0) {
+        meshWorkerCount = configMeshWorkers;
+        meshWorkerSource = "config.ini";
+    }
+
+    if (meshWorkerCount > 0) {
+        int clamped = clampMeshWorkerCount(meshWorkerCount);
+        if (clamped != meshWorkerCount) {
+            Logger::warning() << "Mesh worker override clamped from " << meshWorkerCount << " to " << clamped
+                              << " (min=" << kMinMeshWorkers << ", max=" << kMaxMeshWorkers << ")";
+        }
+        meshWorkerCount = clamped;
+    } else {
+        meshWorkerSource = "auto";
+
+        // Reserve main + render threads, then split remaining budget between chunk + mesh workers
+        int backgroundBudget = std::max(kMinMeshWorkers, hardwareThreads - kReservedThreadsForRendering);
+        int meshBudgetAfterChunks = std::max(kMinMeshWorkers, backgroundBudget - numWorkers);
+        meshWorkerCount = clampMeshWorkerCount(meshBudgetAfterChunks);
+    }
+
+    Logger::info() << "Mesh worker pool size: " << meshWorkerCount << " (" << meshWorkerSource << " mode)";
+
     m_meshWorkersRunning.store(true);
-    for (int i = 0; i < NUM_MESH_WORKERS; ++i) {
+    for (int i = 0; i < meshWorkerCount; ++i) {
         m_meshWorkers.emplace_back(&WorldStreaming::meshWorkerThreadFunction, this);
     }
 
-    Logger::info() << "WorldStreaming started successfully (" << NUM_MESH_WORKERS << " mesh workers)";
+    Logger::info() << "WorldStreaming started successfully (" << meshWorkerCount << " mesh workers)";
 }
 
 void WorldStreaming::stop() {
@@ -490,6 +551,9 @@ void WorldStreaming::processCompletedChunks(int maxChunksPerFrame, float maxMill
                         {
                             std::lock_guard<std::mutex> lock(m_meshQueueMutex);
                             m_meshWorkQueue.push({chunkX, chunkY, chunkZ});
+                            size_t queueSize = m_meshWorkQueue.size();
+                            m_meshQueueHighWatermark.store(
+                                std::max(m_meshQueueHighWatermark.load(), queueSize));
                         }
 
                         // Wake one mesh worker to process the work
@@ -665,6 +729,9 @@ void WorldStreaming::queueChunkForMeshing(int chunkX, int chunkY, int chunkZ) {
     {
         std::lock_guard<std::mutex> lock(m_meshQueueMutex);
         m_meshWorkQueue.push({chunkX, chunkY, chunkZ});
+        size_t queueSize = m_meshWorkQueue.size();
+        m_meshQueueHighWatermark.store(
+            std::max(m_meshQueueHighWatermark.load(), queueSize));
     }
 
     // Wake one mesh worker to process the work
@@ -788,16 +855,21 @@ void WorldStreaming::meshWorkerThreadFunction() {
                 shouldThrottle = m_chunksReadyForUpload.size() >= THROTTLE_THRESHOLD;
             }
 
-            if (shouldThrottle) {
-                // Queue nearly full - wait for GPU upload to catch up
-                // This prevents wasted mesh generation that would be dropped
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                if (shouldThrottle) {
+                    m_meshThrottleCount.fetch_add(1, std::memory_order_relaxed);
+
+                    // Queue nearly full - wait for GPU upload to catch up
+                    // This prevents wasted mesh generation that would be dropped
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
                 // Put work back in queue for retry
                 // NOTE: Keep chunk in m_chunksBeingMeshed tracking set - it's still in the pipeline
                 {
                     std::lock_guard<std::mutex> lock(m_meshQueueMutex);
                     m_meshWorkQueue.push({chunkX, chunkY, chunkZ});
+                    size_t queueSize = m_meshWorkQueue.size();
+                    m_meshQueueHighWatermark.store(
+                        std::max(m_meshQueueHighWatermark.load(), queueSize));
                 }
 
                 continue;  // Skip to next iteration
