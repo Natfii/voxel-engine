@@ -43,32 +43,57 @@ void WaterSimulation::update(float deltaTime, World* world, const glm::vec3& pla
     // More iterations = more dirty chunks = flashing as chunks can't rebuild fast enough
     constexpr int MAX_ITERATIONS = 2;
 
-    for (int iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-        // Collect cells to update (can't modify while iterating)
-        std::vector<glm::ivec3> cellsToProcess;
-        for (const auto& [pos, cell] : m_waterCells) {
-            if (cell.level > 0) {
-                cellsToProcess.push_back(pos);
-            }
+    auto seedActiveQueue = [&]() {
+        if (!m_activeQueue.empty()) return;
+
+        if (!m_nextActiveQueue.empty()) {
+            std::swap(m_activeQueue, m_nextActiveQueue);
+            return;
         }
 
-        if (cellsToProcess.empty()) break;
+        if (!m_pendingActive.empty()) return;
+
+        for (const auto& [pos, cell] : m_waterCells) {
+            if (cell.level > 0) {
+                m_activeQueue.push(pos);
+                m_pendingActive.insert(pos);
+            }
+        }
+    };
+
+    for (int iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+        seedActiveQueue();
+
+        if (m_activeQueue.empty()) {
+            m_pendingActive.clear();
+            break;
+        }
 
         // Debug: Show active water cells count periodically
         static int frameCount = 0;
         if (++frameCount % 60 == 0) {
-            std::cerr << "[DEBUG] Water simulation: " << cellsToProcess.size() << " active cells" << std::endl;
+            std::cerr << "[DEBUG] Water simulation: " << m_activeQueue.size() << " active cells" << std::endl;
         }
 
-        // Track if any changes occurred this iteration
+        size_t cellsThisIteration = m_activeQueue.size();
         bool anyChanges = false;
 
         // Process each water cell (cellular automata style)
-        for (const auto& pos : cellsToProcess) {
+        for (size_t i = 0; i < cellsThisIteration; ++i) {
+            glm::ivec3 pos = m_activeQueue.front();
+            m_activeQueue.pop();
+            m_pendingActive.erase(pos);
+
             auto it = m_waterCells.find(pos);
             if (it == m_waterCells.end() || it->second.level == 0) continue;
 
             uint8_t currentLevel = it->second.level;
+
+            auto enqueueNext = [&](const glm::ivec3& target) {
+                if (m_pendingActive.insert(target).second) {
+                    m_nextActiveQueue.push(target);
+                }
+            };
 
             // Step 1: Try to flow DOWN (falling water is always full level)
             glm::ivec3 below = pos - glm::ivec3(0, 1, 0);
@@ -90,6 +115,9 @@ void WaterSimulation::update(float deltaTime, World* world, const glm::vec3& pla
                     markChunkDirtyAt(below);
                     markChunkDirtyAt(pos);  // Source chunk also needs update for faces
                     anyChanges = true;
+
+                    enqueueNext(below);
+                    enqueueNext(pos);
                 }
             }
 
@@ -127,12 +155,30 @@ void WaterSimulation::update(float deltaTime, World* world, const glm::vec3& pla
                     markChunkDirtyAt(neighbor);
                     markChunkDirtyAt(pos);  // Source chunk also needs update for faces
                     anyChanges = true;
+
+                    enqueueNext(neighbor);
+                }
+
+                if (anyChanges) {
+                    enqueueNext(pos);
                 }
             }
         }
 
-        // If no changes this iteration, stop early
-        if (!anyChanges) break;
+        if (m_activeQueue.empty()) {
+            std::swap(m_activeQueue, m_nextActiveQueue);
+        }
+
+        if (!anyChanges) {
+            while (!m_activeQueue.empty()) m_activeQueue.pop();
+            while (!m_nextActiveQueue.empty()) m_nextActiveQueue.pop();
+            m_pendingActive.clear();
+            break;
+        }
+    }
+
+    if (m_activeQueue.empty() && m_nextActiveQueue.empty()) {
+        m_pendingActive.clear();
     }
 
     // Update active chunks set
