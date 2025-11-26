@@ -57,7 +57,9 @@ void WaterSimulation::update(float deltaTime, World* world, const glm::vec3& pla
         // Debug: Show active water cells count periodically (debug builds only)
 #ifndef NDEBUG
         static int frameCount = 0;
-        if (DebugState::instance().debugWater.getValue() && ++frameCount % 60 == 0) {
+        ++frameCount;
+
+        if (DebugState::instance().debugWater.getValue() && frameCount % 60 == 0) {
             Logger::debug() << "Water simulation: " << cellsToProcess.size() << " active cells";
         }
 #endif
