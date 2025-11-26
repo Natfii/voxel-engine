@@ -202,6 +202,18 @@ public:
     }
 
     /**
+     * @brief Gets the highest observed mesh queue depth since start()
+     * @return Peak size of the mesh work queue
+     */
+    size_t getMeshQueueHighWatermark() const { return m_meshQueueHighWatermark.load(); }
+
+    /**
+     * @brief Gets how many times mesh workers throttled due to upload backpressure
+     * @return Number of throttle events
+     */
+    size_t getMeshThrottleCount() const { return m_meshThrottleCount.load(); }
+
+    /**
      * @brief Queue a chunk for async mesh generation (used by decoration system)
      *
      * This allows decorated chunks to use the same async mesh pipeline as streamed chunks.
@@ -436,6 +448,8 @@ private:
     std::condition_variable m_meshQueueCV;                  ///< Wake mesh workers when work available
     std::vector<std::thread> m_meshWorkers;                 ///< Mesh worker thread pool
     std::atomic<bool> m_meshWorkersRunning;                 ///< Flag to shutdown mesh workers
+    std::atomic<size_t> m_meshQueueHighWatermark{0};        ///< Peak observed mesh queue depth
+    std::atomic<size_t> m_meshThrottleCount{0};             ///< Times mesh workers throttled on upload backpressure
 
     // === Player Position ===
     glm::vec3 m_lastPlayerPos;              ///< Last known player position

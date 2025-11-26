@@ -148,6 +148,11 @@ private:
     std::queue<glm::ivec3> m_removeQueue;
     std::unordered_set<glm::ivec3> m_removeQueued;  // Dedup
 
+    // Active processing queues for iterative updates
+    std::queue<glm::ivec3> m_activeQueue;
+    std::queue<glm::ivec3> m_nextActiveQueue;
+    std::unordered_set<glm::ivec3> m_pendingActive;  // Tracks cells enqueued in either queue
+
     // ========== Dirty Tracking ==========
 
     std::unordered_set<glm::ivec3> m_dirtyChunks;
