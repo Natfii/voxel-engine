@@ -142,7 +142,7 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
     const int TERRAIN_BUFFER_RADIUS = radius * 2;  // 2x spawn radius for terrain buffer
 
     // Underground extends deeper than surface (uses constant from terrain_constants.h)
-    const int UNDERGROUND_DEPTH = UNDERGROUND_DEPTH_CHUNKS;  // How many chunks below Y=0
+    const int UNDERGROUND_DEPTH = TerrainGeneration::UNDERGROUND_DEPTH_CHUNKS;  // How many chunks below Y=0
 
     Logger::info() << "Generating spawn chunks: inner=" << radius << " (decorated), outer="
                    << TERRAIN_BUFFER_RADIUS << " (terrain-only), depth=" << UNDERGROUND_DEPTH << " chunks";
