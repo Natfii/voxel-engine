@@ -354,28 +354,31 @@ void EventDispatcher::eventHandlerThread() {
 void EventDispatcher::processEvent(Event& event) {
     EventType type = event.type;
 
-    // Lock listeners during processing
-    std::lock_guard<std::mutex> lock(m_listenersMutex);
+    // Snapshot listeners so callbacks don't run while holding the mutex.
+    std::vector<Listener> listenersCopy;
+    {
+        std::lock_guard<std::mutex> lock(m_listenersMutex);
+        auto it = m_listeners.find(type);
+        if (it != m_listeners.end()) {
+            listenersCopy = it->second;
+        }
+    }
 
-    // Process regular listeners
-    auto it = m_listeners.find(type);
-    if (it != m_listeners.end()) {
-        for (const auto& listener : it->second) {
-            // Monitor priority always runs, others stop if cancelled
-            if (listener.priority != EventPriority::MONITOR && event.isCancelled()) {
-                break;
-            }
+    for (const auto& listener : listenersCopy) {
+        // Monitor priority always runs, others stop if cancelled
+        if (listener.priority != EventPriority::MONITOR && event.isCancelled()) {
+            break;
+        }
 
-            try {
-                // Call the callback
-                listener.callback(event);
-            } catch (const std::exception& e) {
-                // Log error but continue processing other listeners
-                // In a real implementation, you'd use your logging system here
-                // For now, we'll silently catch to prevent crashes
-            } catch (...) {
-                // Catch all other exceptions
-            }
+        try {
+            // Call the callback
+            listener.callback(event);
+        } catch (const std::exception& e) {
+            // Log error but continue processing other listeners
+            // In a real implementation, you'd use your logging system here
+            // For now, we'll silently catch to prevent crashes
+        } catch (...) {
+            // Catch all other exceptions
         }
     }
 

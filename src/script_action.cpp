@@ -867,6 +867,7 @@ void registerBiomeEventHandlers(const std::string& biomeName, const std::vector<
             auto callback = [biomeName, handler](Event& event) {
                 glm::ivec3 position;
                 bool isValidEvent = false;
+                bool requiresBiomeCheck = true;
 
                 // Extract position from event based on event type
                 switch (event.type) {
@@ -890,12 +891,16 @@ void registerBiomeEventHandlers(const std::string& biomeName, const std::vector<
                         // Time events don't have a position, execute for all biomes
                         // We'll use player position or world spawn as reference
                         // For now, skip biome filtering for time events
-                        isValidEvent = false;
+                        position = glm::ivec3(0);
+                        isValidEvent = true;
+                        requiresBiomeCheck = false;
                         break;
                     case EventType::WORLD_SAVE:
                     case EventType::WORLD_LOAD:
                         // World events don't have a position, execute for all biomes
-                        isValidEvent = false;
+                        position = glm::ivec3(0);
+                        isValidEvent = true;
+                        requiresBiomeCheck = false;
                         break;
                     default:
                         return; // Unsupported event type for biome scripts
@@ -903,6 +908,11 @@ void registerBiomeEventHandlers(const std::string& biomeName, const std::vector<
 
                 // Only execute if this is a position-based event
                 if (isValidEvent) {
+                    if (!requiresBiomeCheck) {
+                        executeHandler(handler, position);
+                        return;
+                    }
+
                     // Check if the position is in the biome using EngineAPI
                     auto& api = EngineAPI::instance();
                     if (api.isInitialized()) {
