@@ -12,10 +12,12 @@
 #include <unordered_map>
 
 // tinygltf for GLB/GLTF loading
+// NOTE: STB_IMAGE_IMPLEMENTATION is defined in block_system.cpp
+// We tell tinygltf to use external stb_image by NOT defining TINYGLTF_NO_EXTERNAL_IMAGE
+// and NOT defining STB_IMAGE_IMPLEMENTATION here
 #define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define TINYGLTF_NO_EXTERNAL_IMAGE
+#define TINYGLTF_NO_STB_IMAGE        // Don't use stb_image (we use external)
+#define TINYGLTF_NO_STB_IMAGE_WRITE  // Don't use stb_image_write
 #include "tiny_gltf.h"
 
 // ========== OBJ Loader ==========
