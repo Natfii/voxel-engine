@@ -355,7 +355,7 @@ void EventDispatcher::processEvent(Event& event) {
     EventType type = event.type;
 
     // Snapshot listeners so callbacks don't run while holding the mutex.
-    std::vector<Listener> listenersCopy;
+    std::vector<EventListener> listenersCopy;
     {
         std::lock_guard<std::mutex> lock(m_listenersMutex);
         auto it = m_listeners.find(type);

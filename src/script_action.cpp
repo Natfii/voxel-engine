@@ -865,57 +865,60 @@ void registerBiomeEventHandlers(const std::string& biomeName, const std::vector<
 
             // Create a callback that filters by biome name and position
             auto callback = [biomeName, handler](Event& event) {
-                glm::ivec3 position;
-                bool isValidEvent = false;
-                bool requiresBiomeCheck = true;
-
-                // Extract position from event based on event type
-                switch (event.type) {
-                    case EventType::CHUNK_LOAD: {
-                        auto& e = static_cast<ChunkLoadEvent&>(event);
-                        // For chunk events, use chunk center position
-                        position = glm::ivec3(e.chunkX * 16 + 8, 0, e.chunkZ * 16 + 8);
-                        isValidEvent = true;
-                        break;
-                    }
-                    case EventType::CHUNK_UNLOAD: {
-                        auto& e = static_cast<ChunkUnloadEvent&>(event);
-                        // For chunk events, use chunk center position
-                        position = glm::ivec3(e.chunkX * 16 + 8, 0, e.chunkZ * 16 + 8);
-                        isValidEvent = true;
-                        break;
-                    }
-                    case EventType::TIME_CHANGE:
-                    case EventType::DAY_START:
-                    case EventType::NIGHT_START:
-                        // Time events don't have a position, execute for all biomes
-                        // We'll use player position or world spawn as reference
-                        // For now, skip biome filtering for time events
-                        position = glm::ivec3(0);
-                        isValidEvent = true;
-                        requiresBiomeCheck = false;
-                        break;
-                    case EventType::WORLD_SAVE:
-                    case EventType::WORLD_LOAD:
-                        // World events don't have a position, execute for all biomes
-                        position = glm::ivec3(0);
-                        isValidEvent = true;
-                        requiresBiomeCheck = false;
-                        break;
-                    default:
-                        return; // Unsupported event type for biome scripts
-                }
-
-                // Only execute if this is a position-based event
-                if (isValidEvent) {
-                    if (!requiresBiomeCheck) {
-                        executeHandler(handler, position);
-                        return;
-                    }
-
-                    // Check if the position is in the biome using EngineAPI
+                try {
+                    // Safety check - don't process during world loading
                     auto& api = EngineAPI::instance();
-                    if (api.isInitialized()) {
+                    if (!api.isInitialized()) {
+                        return; // Skip if API not ready
+                    }
+
+                    glm::ivec3 position;
+                    bool isValidEvent = false;
+                    bool requiresBiomeCheck = true;
+
+                    // Extract position from event based on event type
+                    switch (event.type) {
+                        case EventType::CHUNK_LOAD: {
+                            auto& e = static_cast<ChunkLoadEvent&>(event);
+                            // For chunk events, use chunk center position
+                            position = glm::ivec3(e.chunkX * 16 + 8, 0, e.chunkZ * 16 + 8);
+                            isValidEvent = true;
+                            break;
+                        }
+                        case EventType::CHUNK_UNLOAD: {
+                            auto& e = static_cast<ChunkUnloadEvent&>(event);
+                            // For chunk events, use chunk center position
+                            position = glm::ivec3(e.chunkX * 16 + 8, 0, e.chunkZ * 16 + 8);
+                            isValidEvent = true;
+                            break;
+                        }
+                        case EventType::TIME_CHANGE:
+                        case EventType::DAY_START:
+                        case EventType::NIGHT_START:
+                            // Time events - skip biome filtering
+                            position = glm::ivec3(0);
+                            isValidEvent = true;
+                            requiresBiomeCheck = false;
+                            break;
+                        case EventType::WORLD_SAVE:
+                        case EventType::WORLD_LOAD:
+                            // World events - skip biome filtering
+                            position = glm::ivec3(0);
+                            isValidEvent = true;
+                            requiresBiomeCheck = false;
+                            break;
+                        default:
+                            return; // Unsupported event type for biome scripts
+                    }
+
+                    // Only execute if this is a valid event
+                    if (isValidEvent) {
+                        if (!requiresBiomeCheck) {
+                            executeHandler(handler, position);
+                            return;
+                        }
+
+                        // Check if the position is in the biome using EngineAPI
                         std::string currentBiome = api.getBiomeAt(position.x, position.z);
 
                         // Normalize biome name for comparison
@@ -925,9 +928,11 @@ void registerBiomeEventHandlers(const std::string& biomeName, const std::vector<
                         if (normalizedBiome == normalizedTarget) {
                             executeHandler(handler, position);
                         }
-                    } else {
-                        Logger::warning() << "EngineAPI not initialized, cannot check biome for event handler";
                     }
+                } catch (const std::exception& e) {
+                    Logger::warning() << "Biome event handler error: " << e.what();
+                } catch (...) {
+                    Logger::warning() << "Unknown error in biome event handler";
                 }
             };
 

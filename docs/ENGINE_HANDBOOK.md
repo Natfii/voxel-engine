@@ -58,9 +58,8 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 
 ### **Conditional Actions (New Feature)**
 - ✅ **CONDITIONAL Action Type** - If/else logic in YAML scripts
-- ✅ **Condition Types** - `random`, `block_is`, `variable_equals`
+- ✅ **Condition Types** - `random_chance`, `block_is`, `block_is_not`, `time_is_day`, `time_is_night`
 - ✅ **Nested Actions** - `then` and `else` branches with multiple actions
-- ✅ **Random Chance** - `chance: 0.5` for 50% probability conditionals
 
 ### **Script Variables (New Feature)**
 - ✅ **ScriptVariableRegistry** - Global state storage for scripts
@@ -3231,19 +3230,15 @@ int count = api.flattenTerrain(
 // Spawn structure at position
 bool spawnStructure(const std::string& name, const glm::ivec3& position);
 
-// Spawn structure with rotation (0, 90, 180, 270 degrees)
-bool spawnStructure(const std::string& name, const glm::ivec3& position, int rotation);
-
 // Example:
 if (api.spawnStructure("oak_tree", glm::ivec3(50, 64, 50))) {
     std::cout << "Tree spawned!" << std::endl;
 }
-
-// Spawn rotated structure
-api.spawnStructure("house", glm::ivec3(100, 64, 100), 90);  // Rotated 90 degrees
 ```
 
 **Returns:** `true` if successful, `false` if structure not found
+
+> **Note:** Rotation parameter exists but is not yet implemented.
 
 ### Entity/Mesh Spawning
 
@@ -3886,21 +3881,25 @@ The following event types can be used in block YAML files:
 **conditional** - Execute actions based on conditions
 ```yaml
 - type: conditional
-  condition: "random"      # Condition type: random, block_is, variable_equals
-  chance: 0.5              # For random condition: probability (0.0-1.0)
-  then:                    # Actions to execute if condition is true
+  condition: "random_chance"  # Condition type (see table below)
+  condition_value: "50"       # For random_chance: probability 0-100
+  then:                       # Actions if condition is true
     - type: place_block
       block: "Gold"
       offset: [0, 1, 0]
-  else:                    # Actions to execute if condition is false (optional)
+  else:                       # Actions if condition is false (optional)
     - type: run_command
       command: "echo No luck!"
 ```
 
 **Condition Types:**
-- `random` - Uses `chance` field (0.0-1.0) to determine outcome
-- `block_is` - Checks if block at offset matches specified block name
-- `variable_equals` - Checks if script variable equals specified value
+| Condition | `condition_value` | Description |
+|-----------|-------------------|-------------|
+| `random_chance` | `"0-100"` | Random probability (integer percent) |
+| `block_is` | `"Block Name"` | True if block at offset matches |
+| `block_is_not` | `"Block Name"` | True if block at offset doesn't match |
+| `time_is_day` | - | True during daytime (0-12000 ticks) |
+| `time_is_night` | - | True during nighttime (12000-24000 ticks) |
 
 **set_variable** - Store a script variable
 ```yaml
@@ -4010,8 +4009,8 @@ events:
 
   on_chunk_generate:
     - type: conditional
-      condition: "random"
-      chance: 0.1
+      condition: "random_chance"
+      condition_value: "10"
       then:
         - type: spawn_structure
           structure: "Fairy Ring"
@@ -4030,22 +4029,20 @@ events:
 The ScriptVariableRegistry provides global state storage for scripts:
 
 ```yaml
-# Example: Counter-based trigger
+# Example: Random reward on step
 events:
   on_step:
     - type: increment_var
       variable: "steps_taken"
       amount: 1
     - type: conditional
-      condition: "variable_equals"
-      variable: "steps_taken"
-      value: "10"
+      condition: "random_chance"
+      condition_value: "10"
       then:
         - type: run_command
-          command: "echo You've taken 10 steps!"
-        - type: set_variable
-          variable: "steps_taken"
-          value: "0"
+          command: "echo Lucky step!"
+        - type: spawn_particles
+          particle: "sparkle"
 ```
 
 **Available Variable Actions:**
