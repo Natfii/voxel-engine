@@ -63,6 +63,31 @@ public:
      */
     bool isUndergroundBiomeAt(float worldX, float worldY, float worldZ);
 
+    /**
+     * Get maze tunnel density at a 3D world position
+     * Returns value 0.0-1.0 where lower = tunnel (< 0.3 = tunnel)
+     * Creates maze-like interconnected passages in deep underground
+     */
+    float getMazeTunnelDensityAt(float worldX, float worldY, float worldZ);
+
+    /**
+     * Check if a position is inside a large open cavern
+     * Returns true if in a rare, huge open underground space
+     */
+    bool isLargeCavernAt(float worldX, float worldY, float worldZ);
+
+    /**
+     * Get water table level at a world position
+     * Returns Y coordinate of the water table
+     */
+    int getWaterTableAt(float worldX, float worldZ);
+
+    /**
+     * Check if a position should have aquifer water
+     * Returns true if this cave location below water table should have water
+     */
+    bool hasAquiferAt(float worldX, float worldY, float worldZ);
+
 private:
     // Noise generators
     std::unique_ptr<FastNoiseLite> m_temperatureNoise;
@@ -72,6 +97,9 @@ private:
     std::unique_ptr<FastNoiseLite> m_caveNoise;              // Chamber-style caves
     std::unique_ptr<FastNoiseLite> m_caveTunnelNoise;        // Long winding tunnels
     std::unique_ptr<FastNoiseLite> m_undergroundChamberNoise;
+    std::unique_ptr<FastNoiseLite> m_mazeTunnelNoise;        // Maze-like interconnected tunnels
+    std::unique_ptr<FastNoiseLite> m_largeCavernNoise;       // Rare, huge open caverns
+    std::unique_ptr<FastNoiseLite> m_aquiferNoise;           // Aquifer/water table system
 
     // Secondary noise for variation
     std::unique_ptr<FastNoiseLite> m_temperatureVariation;

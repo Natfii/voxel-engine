@@ -82,6 +82,25 @@ BiomeMap::BiomeMap(int seed, float tempBias, float moistBias, float ageBias,
     m_undergroundChamberNoise->SetCellularDistanceFunction(FastNoiseLite::CellularDistanceFunction_Euclidean);
     m_undergroundChamberNoise->SetCellularReturnType(FastNoiseLite::CellularReturnType_Distance2);
     m_undergroundChamberNoise->SetFrequency(0.006f);  // Contained chambers (3x smaller than surface biomes)
+
+    // Maze tunnel noise - creates interconnected maze-like passages
+    m_mazeTunnelNoise = std::make_unique<FastNoiseLite>(seed + 500);
+    m_mazeTunnelNoise->SetNoiseType(FastNoiseLite::NoiseType_Cellular);
+    m_mazeTunnelNoise->SetCellularDistanceFunction(FastNoiseLite::CellularDistanceFunction_Manhattan);
+    m_mazeTunnelNoise->SetCellularReturnType(FastNoiseLite::CellularReturnType_Distance2Div);
+    m_mazeTunnelNoise->SetFrequency(0.04f);  // Tighter maze pattern
+
+    // Large cavern noise - creates occasional huge open spaces
+    m_largeCavernNoise = std::make_unique<FastNoiseLite>(seed + 600);
+    m_largeCavernNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_largeCavernNoise->SetFractalType(FastNoiseLite::FractalType_Ridged);
+    m_largeCavernNoise->SetFractalOctaves(2);
+    m_largeCavernNoise->SetFrequency(0.008f);  // Large, rare caverns
+
+    // Aquifer noise - determines water table variation and aquifer locations
+    m_aquiferNoise = std::make_unique<FastNoiseLite>(seed + 700);
+    m_aquiferNoise->SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    m_aquiferNoise->SetFrequency(0.01f);  // Large-scale water table variation
 }
 
 float BiomeMap::getTemperatureAt(float worldX, float worldZ) {
@@ -443,6 +462,37 @@ bool BiomeMap::isUndergroundBiomeAt(float worldX, float worldY, float worldZ) {
     return value > 0.6f;
 }
 
+float BiomeMap::getMazeTunnelDensityAt(float worldX, float worldY, float worldZ) {
+    // Only generate maze tunnels in deep underground (Y < 0)
+    if (worldY > 0) return 1.0f;  // No tunnels above Y=0
+
+    // Maze tunnels are more common deeper down
+    float depthFactor = std::min(1.0f, std::abs(worldY) / 50.0f);  // Full density at Y=-50
+
+    // Get maze noise - Manhattan distance creates grid-like patterns
+    float mazeNoise = m_mazeTunnelNoise->GetNoise(worldX, worldY * 0.5f, worldZ);
+
+    // Map to 0-1 range
+    float density = mapNoiseTo01(mazeNoise);
+
+    // Apply depth factor - fewer tunnels near surface
+    density = density + (1.0f - depthFactor) * (1.0f - density) * 0.5f;
+
+    return density;
+}
+
+bool BiomeMap::isLargeCavernAt(float worldX, float worldY, float worldZ) {
+    // Only in underground (Y < 20)
+    if (worldY > 20) return false;
+
+    // Get cavern noise
+    float cavernNoise = m_largeCavernNoise->GetNoise(worldX, worldY * 0.3f, worldZ);
+
+    // Ridged noise creates interesting cavern shapes
+    // Only create caverns where noise > 0.7 (rare, ~15% of underground)
+    return cavernNoise > 0.7f;
+}
+
 // ==================== Private Helper Functions ====================
 
 uint64_t BiomeMap::coordsToKey(int x, int z) const {
@@ -532,4 +582,33 @@ float BiomeMap::mapNoiseToRange(float noise, float min, float max) {
     // Map from [-1, 1] to [min, max]
     float normalized = (noise + 1.0f) * 0.5f;  // [0, 1]
     return min + (normalized * (max - min));
+}
+
+int BiomeMap::getWaterTableAt(float worldX, float worldZ) {
+    using namespace TerrainGeneration;
+
+    // Get noise for water table variation
+    float noise = m_aquiferNoise->GetNoise(worldX * 0.5f, worldZ * 0.5f);
+
+    // Map noise to water table variation
+    int variation = static_cast<int>(noise * AQUIFER_VARIATION);
+
+    return AQUIFER_LEVEL + variation;  // Returns Y level of water table
+}
+
+bool BiomeMap::hasAquiferAt(float worldX, float worldY, float worldZ) {
+    using namespace TerrainGeneration;
+
+    // Get local water table level
+    int waterTable = getWaterTableAt(worldX, worldZ);
+
+    // Only consider positions at or below water table
+    if (worldY > waterTable) return false;
+
+    // Use separate noise to determine if this specific area has water
+    float aquiferNoise = m_aquiferNoise->GetNoise(worldX, worldY * 2.0f, worldZ);
+    float chance = mapNoiseTo01(aquiferNoise);
+
+    // AQUIFER_CHANCE (25%) of underground caves below water table have water
+    return chance < AQUIFER_CHANCE;
 }

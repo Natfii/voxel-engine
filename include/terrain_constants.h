@@ -36,6 +36,11 @@ namespace TerrainGeneration {
     // Water physics
     constexpr int WATER_LEVEL = 62;              ///< Sea level height in blocks (Y coordinate)
 
+    // Aquifer/underground water constants
+    constexpr int AQUIFER_LEVEL = -30;           ///< Default water table level (Y coordinate)
+    constexpr int AQUIFER_VARIATION = 15;        ///< Water table can vary ±15 blocks
+    constexpr float AQUIFER_CHANCE = 0.25f;      ///< 25% of caves below water table have water
+
     // Snow line (2025-11-25): Y level above which snow appears on peaks
     constexpr int SNOW_LINE = 95;                ///< Y level above which snow appears
     constexpr int SNOW_TRANSITION = 5;           ///< Blocks of gradual snow transition

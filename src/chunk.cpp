@@ -448,6 +448,22 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 // Check if inside underground biome chamber (extended to deep underground)
                 bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ) && (worldY > 10);
 
+                // ============================================================================
+                // ENHANCED CAVE SYSTEM (2025-11-26): Maze tunnels, caverns, and aquifers
+                // ============================================================================
+                // Check for maze-like tunnel system (deep underground Y < 0)
+                float mazeDensity = biomeMap->getMazeTunnelDensityAt(worldX, worldYf, worldZ);
+                bool isMazeTunnel = (mazeDensity < 0.3f) && (worldY < 0) && (worldY > -97);
+
+                // Check for large open caverns (rare, spectacular underground spaces)
+                bool isLargeCavern = biomeMap->isLargeCavernAt(worldX, worldYf, worldZ) && (worldY > -97);
+
+                // Check for aquifer (underground water in caves below water table)
+                bool hasAquifer = biomeMap->hasAquiferAt(worldX, worldYf, worldZ);
+
+                // Combined cave check: any cave system creates air (or water if aquifer)
+                bool isAnyCave = (isCave || isUndergroundChamber || isMazeTunnel || isLargeCavern) && (worldY > -97);
+
                 // Determine block placement
                 if (worldY < terrainHeight) {
                     // Below surface
@@ -478,17 +494,17 @@ void Chunk::generate(BiomeMap* biomeMap) {
                     }
 
                     // LAND BIOME LOGIC (terrain above water level)
-                    // If in cave, create air pocket
-                    // Cave generation handles surface entrances intelligently via noise
+                    // Enhanced cave system: maze tunnels, caverns, and aquifers
                     // Only prevent caves in the very top layer (3 blocks) to avoid ugly surface pockmarks
-                    if (isCave && worldY < terrainHeight - 3) {
-                        m_blocks[x][y][z] = BLOCK_AIR;
-                        continue;
-                    }
-
-                    // If in underground chamber, create large open space (only above Y=15)
-                    if (isUndergroundChamber) {
-                        m_blocks[x][y][z] = BLOCK_AIR;
+                    if (isAnyCave && worldY < terrainHeight - 3) {
+                        // Check if this cave should be flooded (aquifer)
+                        if (hasAquifer) {
+                            // Aquifer: fill with water
+                            m_blocks[x][y][z] = BLOCK_WATER;
+                        } else {
+                            // Regular cave: air
+                            m_blocks[x][y][z] = BLOCK_AIR;
+                        }
                         continue;
                     }
 
