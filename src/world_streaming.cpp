@@ -764,8 +764,9 @@ void WorldStreaming::meshWorkerThreadFunction() {
             // PERFORMANCE FIX (2025-11-24): Backpressure to prevent queue overflow
             // Check upload queue occupancy BEFORE expensive mesh generation
             // If queue is nearly full, wait for GPU to catch up (prevents wasted work)
-            const size_t MAX_QUEUE_SIZE = 100;
-            const size_t THROTTLE_THRESHOLD = 85;  // Start throttling at 85% capacity (raised from 75%)
+            // PERFORMANCE FIX (2025-11-26): Increased queue size since GPU upload rate is now higher
+            const size_t MAX_QUEUE_SIZE = 200;     // Increased from 100 to handle burst generation
+            const size_t THROTTLE_THRESHOLD = 150; // Start throttling at 75% capacity
             bool shouldThrottle = false;
 
             {
@@ -829,9 +830,13 @@ void WorldStreaming::meshWorkerThreadFunction() {
                         if (m_chunksReadyForUpload.size() < MAX_QUEUE_SIZE) {
                             m_chunksReadyForUpload.push({chunkX, chunkY, chunkZ});
                         } else {
-                            // Should rarely happen now due to throttling above
-                            Logger::warning() << "Ready queue full, dropping chunk ("
-                                             << chunkX << ", " << chunkY << ", " << chunkZ << ")";
+                            // CRITICAL BUG FIX (2025-11-26): Never drop meshed chunks!
+                            // Re-queue for upload retry instead of dropping
+                            // This prevents "invisible chunk" bug where chunks have valid mesh but never upload
+                            Logger::warning() << "Ready queue full, re-queuing chunk ("
+                                             << chunkX << ", " << chunkY << ", " << chunkZ << ") for retry";
+                            // Force-push even if over limit - better to have a longer queue than lost chunks
+                            m_chunksReadyForUpload.push({chunkX, chunkY, chunkZ});
                         }
                     }
 

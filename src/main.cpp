@@ -1259,10 +1259,13 @@ int main() {
             //   v4: ASYNC (detached threads) → ZERO main thread blocking!
             // Can now process more chunks per frame since we never wait
 #if USE_INDIRECT_DRAWING
-            // GPU upload bottleneck - keep at 1 chunk to prevent command queue overflow
-            worldStreaming.processCompletedChunks(1, 3.0f);  // Max 1 chunk, 3ms budget
+            // PERFORMANCE FIX (2025-11-26): Increased from 1 to 8 chunks per frame
+            // Phase 1 (add to world + queue mesh) is CPU-only and fast
+            // Phase 2 (GPU upload) has its own rate limiting via getRecommendedUploadCount()
+            // This 8x increase dramatically reduces "invisible chunk" lag
+            worldStreaming.processCompletedChunks(8, 5.0f);  // Max 8 chunks, 5ms budget
 #else
-            worldStreaming.processCompletedChunks(1, 6.0f);   // Conservative for legacy path
+            worldStreaming.processCompletedChunks(4, 6.0f);   // Conservative for legacy path
 #endif
             auto afterChunkProcess = std::chrono::high_resolution_clock::now();
 

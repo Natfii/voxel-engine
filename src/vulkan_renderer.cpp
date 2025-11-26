@@ -2927,18 +2927,22 @@ size_t VulkanRenderer::getRecommendedUploadCount() const {
     size_t pending = m_pendingUploads.size();
 
     // ADAPTIVE UPLOAD RATE based on GPU backlog:
-    // - Severely backlogged (>30): Stop uploading entirely to let GPU catch up
-    // - Backlogged (20-30): Upload 1 chunk max
-    // - Moderate (10-20): Upload 2 chunks
-    // - Light (<10): Upload up to 4 chunks for fast streaming
+    // PERFORMANCE FIX (2025-11-26): Increased rates for faster chunk visibility
+    // - Severely backlogged (>30): Upload 1 chunk to make progress
+    // - Backlogged (20-30): Upload 2 chunks
+    // - Moderate (10-20): Upload 4 chunks
+    // - Light (5-10): Upload 6 chunks
+    // - Very light (<5): Upload up to 10 chunks for fast streaming
     if (pending >= 30) {
-        return 0;  // GPU severely overloaded - defer all uploads
+        return 1;  // GPU heavily loaded but still make progress
     } else if (pending >= 20) {
-        return 1;  // Backlogged - trickle uploads
+        return 2;  // Backlogged - slow uploads
     } else if (pending >= 10) {
-        return 2;  // Moderate load
+        return 4;  // Moderate load
+    } else if (pending >= 5) {
+        return 6;  // Light load
     } else {
-        return 4;  // GPU keeping up - stream faster
+        return 10; // GPU keeping up - stream fast to eliminate invisible chunks
     }
 }
 
