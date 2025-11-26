@@ -8,6 +8,7 @@ DebugState::DebugState()
       showCullingStats("debug_culling", "Show frustum culling statistics", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
       debugCollision("debug_collision", "Show collision detection debug output", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
       debugWorld("debug_world", "Show world/chunk debug logging", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
+      debugWater("debug_water", "Show water simulation debug logging", false, FCVAR_ARCHIVE | FCVAR_NOTIFY),
       wireframeMode("wireframe", "Enable wireframe rendering mode", false, FCVAR_NOTIFY),
       lightingEnabled("lighting", "Enable/disable voxel lighting system", true, FCVAR_ARCHIVE | FCVAR_NOTIFY) {
 }

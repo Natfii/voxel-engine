@@ -14,6 +14,7 @@ public:
     ConVar<bool> showCullingStats;
     ConVar<bool> debugCollision;
     ConVar<bool> debugWorld;  ///< Enable world/chunk debug logging
+    ConVar<bool> debugWater;  ///< Enable water simulation debug logging
     ConVar<bool> wireframeMode;
     ConVar<bool> lightingEnabled;  ///< Enable/disable voxel lighting system
 
