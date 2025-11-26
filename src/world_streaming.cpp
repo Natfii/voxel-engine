@@ -51,6 +51,15 @@ void WorldStreaming::start(int numWorkers) {
 
     Logger::info() << "Starting WorldStreaming with " << numWorkers << " worker threads";
 
+    {
+        std::lock_guard<std::mutex> lock(m_playerPosMutex);
+        // Reset player position samples when toggling running state to avoid stale deltas
+        m_lastPlayerPos = glm::vec3(0.0f);
+        m_previousPlayerPos = glm::vec3(0.0f);
+        m_lastVelocityUpdate = std::chrono::high_resolution_clock::now();
+        m_playerVelocity = 0.0f;
+    }
+
     m_running.store(true);
     m_activeWorkers.store(0);
 
@@ -79,6 +88,15 @@ void WorldStreaming::stop() {
 
     // Signal workers to exit
     m_running.store(false);
+
+    {
+        std::lock_guard<std::mutex> lock(m_playerPosMutex);
+        // Reset player position samples when toggling running state to avoid stale deltas
+        m_lastPlayerPos = glm::vec3(0.0f);
+        m_previousPlayerPos = glm::vec3(0.0f);
+        m_lastVelocityUpdate = std::chrono::high_resolution_clock::now();
+        m_playerVelocity = 0.0f;
+    }
 
     // Wake up all workers
     m_loadQueueCV.notify_all();
@@ -155,16 +173,19 @@ void WorldStreaming::updatePlayerPosition(const glm::vec3& playerPos,
         float deltaTime = std::chrono::duration<float>(now - m_lastVelocityUpdate).count();
 
         if (deltaTime > 0.0f) {
+            // Keep previous sample before delta calculation to maintain ordering
+            m_previousPlayerPos = m_lastPlayerPos;
+
             // Calculate velocity (blocks per second)
             glm::vec3 delta = playerPos - m_previousPlayerPos;
             float distance = glm::length(delta);
             velocity = distance / deltaTime;
 
             m_playerVelocity = velocity;
-            m_previousPlayerPos = m_lastPlayerPos;
             m_lastVelocityUpdate = now;
         }
 
+        // Update last position after velocity calculation to preserve previous sample
         m_lastPlayerPos = playerPos;
     }
 
