@@ -1268,8 +1268,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
 
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            // Water: render side faces against air and solid blocks, NOT against other water
-                            shouldRender = !neighborIsLiquid;
+                            // Water: ONLY render side faces against air (neighborBlockID == 0)
+                            // Don't render against solid blocks (looks weird) or other water (z-fighting)
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             // Transparent blocks (leaves, glass): render unless neighbor is same block type
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
@@ -1329,8 +1330,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X, Y, Z + 1);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            // Water: render side faces against air and solid blocks, NOT against other water
-                            shouldRender = !neighborIsLiquid;
+                            // Water: ONLY render side faces against air (neighborBlockID == 0)
+                            // Don't render against solid blocks (looks weird) or other water (z-fighting)
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
@@ -1388,8 +1390,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X - 1, Y, Z);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            // Water: render side faces against air and solid blocks, NOT against other water
-                            shouldRender = !neighborIsLiquid;
+                            // Water: ONLY render side faces against air (neighborBlockID == 0)
+                            // Don't render against solid blocks (looks weird) or other water (z-fighting)
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
@@ -1447,8 +1450,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X + 1, Y, Z);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            // Water: render side faces against air and solid blocks, NOT against other water
-                            shouldRender = !neighborIsLiquid;
+                            // Water: ONLY render side faces against air (neighborBlockID == 0)
+                            // Don't render against solid blocks (looks weird) or other water (z-fighting)
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
@@ -1506,7 +1510,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X, Y + 1, Z);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            shouldRender = !neighborIsLiquid;
+                            // Water: ONLY render top face against air (neighborBlockID == 0)
+                            // Don't render against solid blocks or other water
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {
@@ -1568,9 +1574,9 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
                         bool neighborIsSolid = isSolid(X, Y - 1, Z);
                         bool shouldRender;
                         if (isCurrentLiquid) {
-                            // Water: render bottom if not water below
-                            // Render against both air AND solid blocks (visible from below)
-                            shouldRender = !neighborIsLiquid;
+                            // Water: ONLY render bottom face against air (neighborBlockID == 0)
+                            // Don't render against solid blocks or other water
+                            shouldRender = (neighborBlockID == 0);
                         } else if (isCurrentTransparent) {
                             shouldRender = (neighborBlockID != id) && (neighborBlockID != 0);
                         } else {

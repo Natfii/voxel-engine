@@ -2311,8 +2311,12 @@ void World::updateWaterSimulation(float deltaTime, VulkanRenderer* renderer, con
     // Update particle system
     m_particleSystem->update(deltaTime);
 
-    // Update water simulation with chunk freezing (only simulate water near player)
-    m_waterSimulation->update(deltaTime, this, playerPos, renderDistance);
+    // DISABLED: Complex cellular automata water simulation
+    // Water is now static - no flowing, just simple transparent blocks
+    // m_waterSimulation->update(deltaTime, this, playerPos, renderDistance);
+
+    // Clear any dirty chunks from previous simulation
+    m_waterSimulation->clearDirtyChunks();
 
     // Particle spawning for water level changes is handled inside water simulation
     // See WaterSimulation::updateWaterCell() - spawns splash when water level increases
