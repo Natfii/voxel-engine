@@ -9,6 +9,7 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 liquidFogColor;  // .rgb = fog color, .a = fog density
     vec4 liquidFogDist;   // .x = fog start, .y = fog end, .zw = unused
     vec4 liquidTint;      // .rgb = tint color, .a = darken factor
+    vec4 atlasInfo;       // .x = atlas width in cells, .y = height, .z = cell size (1/width), .w = unused
 } ubo;
 
 layout(binding = 1) uniform sampler2D texSampler;
@@ -24,8 +25,9 @@ layout(location = 6) in float fragAO;          // Ambient occlusion from vertex 
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    const float atlasSize = 4.0;  // 4x4 atlas
-    const float cellSize = 1.0 / atlasSize;
+    // Get atlas size from UBO (dynamic, not hardcoded)
+    float atlasSize = max(ubo.atlasInfo.x, 1.0);
+    float cellSize = 1.0 / atlasSize;
     vec2 texCoord = fragTexCoord;
 
     // Parallax scrolling ONLY for water (not ice or other transparent blocks)

@@ -735,10 +735,11 @@ void Chunk::generateMesh(World* world, bool callerHoldsLock, int lodLevel) {
     int atlasGridSize = registry.getAtlasGridSize();
     float uvScale = (atlasGridSize > 0) ? (1.0f / atlasGridSize) : 1.0f;
 
-    // Max quad size for greedy meshing - prevents UV from crossing integer boundaries
+    // Max quad size for greedy meshing - limited by TWO constraints:
+    // 1. UV constraint: quadSize <= atlasSize (prevents UV from crossing cell boundaries)
+    // 2. Bit constraint: quadSize <= 31 (CompressedVertex uses 5 bits for width/height)
     // For tiled UV encoding, UV = cell + localUV * quadSize / atlasSize
-    // To keep UV in [cell, cell+1), quadSize must be <= atlasSize
-    const int maxQuadSize = (atlasGridSize > 0) ? atlasGridSize : 4;
+    const int maxQuadSize = std::min(31, (atlasGridSize > 0) ? atlasGridSize : 4);
 
     // ============================================================================
     // PERFORMANCE FIX (2025-11-24): Cache neighbor chunks to eliminate hash lookups
