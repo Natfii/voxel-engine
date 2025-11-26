@@ -426,43 +426,46 @@ void Chunk::generate(BiomeMap* biomeMap) {
                 int worldY = static_cast<int64_t>(m_y) * HEIGHT + y;
                 float worldYf = static_cast<float>(worldY);
 
-                // BEDROCK LAYER: Y <= -98 is always bedrock (indestructible bottom layer)
+                // BEDROCK LAYER: Y <= BEDROCK_LAYER_Y (-120) is always bedrock
                 // This creates the absolute bottom of the world, preventing falling into void
                 if (worldY <= BEDROCK_LAYER_Y) {
                     m_blocks[x][y][z] = BLOCK_BEDROCK;
                     continue;
                 }
 
-                // SOLID STONE FOUNDATION: Y=-97 to Y=10 is always stone (no caves)
-                // This provides a solid foundation above bedrock and ensures stability
-                if (worldY >= -97 && worldY <= 10) {
+                // SOLID STONE FLOOR: Thin layer just above bedrock (no caves here)
+                // This provides stable floor for deep caves to rest on
+                if (worldY > BEDROCK_LAYER_Y && worldY <= BEDROCK_LAYER_Y + 5) {
                     m_blocks[x][y][z] = BLOCK_STONE;
                     continue;
                 }
 
+                // Minimum Y for caves (just above solid stone floor)
+                const int CAVE_FLOOR_Y = BEDROCK_LAYER_Y + 6;  // Caves start above the solid floor
+
                 // Check if this is inside a cave (extended to deep underground)
                 // Pass terrainHeight to avoid redundant calculation (was 32x per column!)
                 float caveDensity = biomeMap->getCaveDensityAt(worldX, worldYf, worldZ, terrainHeight);
-                bool isCave = (caveDensity < 0.45f) && (worldY > 10);  // Caves above solid foundation layer
+                bool isCave = (caveDensity < 0.45f) && (worldY > CAVE_FLOOR_Y);
 
                 // Check if inside underground biome chamber (extended to deep underground)
-                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ) && (worldY > 10);
+                bool isUndergroundChamber = biomeMap->isUndergroundBiomeAt(worldX, worldYf, worldZ) && (worldY > CAVE_FLOOR_Y);
 
                 // ============================================================================
                 // ENHANCED CAVE SYSTEM (2025-11-26): Maze tunnels, caverns, and aquifers
                 // ============================================================================
                 // Check for maze-like tunnel system (deep underground Y < 0)
                 float mazeDensity = biomeMap->getMazeTunnelDensityAt(worldX, worldYf, worldZ);
-                bool isMazeTunnel = (mazeDensity < 0.3f) && (worldY < 0) && (worldY > -97);
+                bool isMazeTunnel = (mazeDensity < 0.3f) && (worldY < 0) && (worldY > CAVE_FLOOR_Y);
 
                 // Check for large open caverns (rare, spectacular underground spaces)
-                bool isLargeCavern = biomeMap->isLargeCavernAt(worldX, worldYf, worldZ) && (worldY > -97);
+                bool isLargeCavern = biomeMap->isLargeCavernAt(worldX, worldYf, worldZ) && (worldY > CAVE_FLOOR_Y);
 
                 // Check for aquifer (underground water in caves below water table)
                 bool hasAquifer = biomeMap->hasAquiferAt(worldX, worldYf, worldZ);
 
                 // Combined cave check: any cave system creates air (or water if aquifer)
-                bool isAnyCave = (isCave || isUndergroundChamber || isMazeTunnel || isLargeCavern) && (worldY > -97);
+                bool isAnyCave = (isCave || isUndergroundChamber || isMazeTunnel || isLargeCavern) && (worldY > CAVE_FLOOR_Y);
 
                 // Determine block placement
                 if (worldY < terrainHeight) {

@@ -141,8 +141,11 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
     // Calculate outer radius for terrain-only pre-generation
     const int TERRAIN_BUFFER_RADIUS = radius * 2;  // 2x spawn radius for terrain buffer
 
+    // Underground extends deeper than surface (uses constant from terrain_constants.h)
+    const int UNDERGROUND_DEPTH = UNDERGROUND_DEPTH_CHUNKS;  // How many chunks below Y=0
+
     Logger::info() << "Generating spawn chunks: inner=" << radius << " (decorated), outer="
-                   << TERRAIN_BUFFER_RADIUS << " (terrain-only)";
+                   << TERRAIN_BUFFER_RADIUS << " (terrain-only), depth=" << UNDERGROUND_DEPTH << " chunks";
 
     // Collect chunks to generate, split by surface/underground
     std::vector<Chunk*> surfaceChunks;      // Y >= 0
@@ -155,7 +158,8 @@ void World::generateSpawnChunks(int centerChunkX, int centerChunkY, int centerCh
         std::unique_lock<std::shared_mutex> lock(m_chunkMapMutex);
 
         for (int dx = -TERRAIN_BUFFER_RADIUS; dx <= TERRAIN_BUFFER_RADIUS; dx++) {
-            for (int dy = -TERRAIN_BUFFER_RADIUS; dy <= TERRAIN_BUFFER_RADIUS; dy++) {
+            // Y range: surface up to TERRAIN_BUFFER_RADIUS, underground down to UNDERGROUND_DEPTH
+            for (int dy = -UNDERGROUND_DEPTH; dy <= TERRAIN_BUFFER_RADIUS; dy++) {
                 for (int dz = -TERRAIN_BUFFER_RADIUS; dz <= TERRAIN_BUFFER_RADIUS; dz++) {
                     int chunkX = centerChunkX + dx;
                     int chunkY = centerChunkY + dy;
