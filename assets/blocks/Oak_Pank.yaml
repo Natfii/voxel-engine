@@ -1,0 +1,16 @@
+id: 13
+name: "Oak Plank"
+cube_map:
+  top: "Oak_Plank.png"
+  bottom: "Oak_Plank.png"
+  sides: "Oak_Plank.png"
+texture_variation: 1
+durability: 6
+liquid: false
+affected_by_gravity: false
+flammability: 1
+transparency: 0.0
+
+# Biome compatibility
+temperature_range: "30-75"
+moisture_range: "40-90"

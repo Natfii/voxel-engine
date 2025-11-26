@@ -1,0 +1,14 @@
+#Index of all IDs and the associtaed block to not accidently use the same ID for two blocks.
+1 = Stone
+2 = Dirt
+3 = Grass
+4 = Sand
+5 = Water
+6 = Oak Log
+7 = Leaves
+8 = Spruce Log
+9 = Spruce Leaves
+10 = Snow
+11 = Ice
+12 = Bedrock
+13 = Oak_Plank
