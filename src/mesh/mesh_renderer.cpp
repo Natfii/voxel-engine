@@ -323,6 +323,7 @@ void MeshRenderer::updateInstanceBuffer(MeshData& meshData) {
     if (instanceDataArray.empty()) {
         // No visible instances - clean up any existing buffer
         if (meshData.instanceBuffer != VK_NULL_HANDLE) {
+            m_renderer->waitForGPUIdle();  // Wait before destroying in-use buffer
             m_renderer->destroyMeshBuffers(meshData.instanceBuffer, VK_NULL_HANDLE,
                                           meshData.instanceMemory, VK_NULL_HANDLE);
             meshData.instanceBuffer = VK_NULL_HANDLE;
@@ -336,8 +337,11 @@ void MeshRenderer::updateInstanceBuffer(MeshData& meshData) {
     // Store visible count for rendering
     meshData.visibleInstanceCount = static_cast<uint32_t>(instanceDataArray.size());
 
-    // Destroy old instance buffer if it exists
+    // Wait for GPU to finish using old buffer before destroying
+    // This prevents device lost errors from destroying in-flight buffers
+    // TODO: Replace with deferred deletion queue for better performance
     if (meshData.instanceBuffer != VK_NULL_HANDLE) {
+        m_renderer->waitForGPUIdle();
         m_renderer->destroyMeshBuffers(meshData.instanceBuffer, VK_NULL_HANDLE,
                                       meshData.instanceMemory, VK_NULL_HANDLE);
         meshData.instanceBuffer = VK_NULL_HANDLE;
