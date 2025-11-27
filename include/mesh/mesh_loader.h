@@ -9,6 +9,33 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <cstdint>
+
+/**
+ * @brief Raw texture image data extracted from model files
+ *
+ * Contains decoded RGBA pixel data ready for upload to GPU.
+ * Used as intermediate storage between model loading and texture creation.
+ */
+struct TextureImage {
+    std::vector<uint8_t> data;  ///< Raw pixel data (RGBA, 4 bytes per pixel)
+    uint32_t width = 0;         ///< Image width in pixels
+    uint32_t height = 0;        ///< Image height in pixels
+    std::string name;           ///< Texture name (for debugging)
+
+    /**
+     * @brief Check if texture data is valid
+     * @return True if texture has valid dimensions and data
+     */
+    bool isValid() const {
+        return width > 0 && height > 0 && data.size() == width * height * 4;
+    }
+
+    /**
+     * @brief Get memory size in bytes
+     */
+    size_t getSize() const { return data.size(); }
+};
 
 /**
  * @brief Static mesh loading utilities
@@ -43,15 +70,24 @@ public:
                                       std::vector<PBRMaterial>& materials);
 
     /**
-     * @brief Load mesh from glTF 2.0 file (future implementation)
+     * @brief Load mesh from glTF 2.0 file with textures
+     *
+     * Loads meshes, materials, and embedded textures from glTF/GLB files.
+     * Supports:
+     * - Binary GLB format (recommended for embedded textures)
+     * - Text glTF format (textures referenced by URI)
+     * - PBR metallic-roughness materials
+     * - Embedded texture images (PNG, JPEG)
      *
      * @param filepath Path to .gltf or .glb file
      * @param materials Output vector of PBR materials
+     * @param textures Output vector of texture images (RGBA format)
      * @return Vector of loaded meshes
-     * @throws std::runtime_error if not implemented or file invalid
+     * @throws std::runtime_error if file not found or parsing fails
      */
     static std::vector<Mesh> loadGLTF(const std::string& filepath,
-                                       std::vector<PBRMaterial>& materials);
+                                       std::vector<PBRMaterial>& materials,
+                                       std::vector<TextureImage>& textures);
 
     // ========== Procedural Mesh Generators ==========
 

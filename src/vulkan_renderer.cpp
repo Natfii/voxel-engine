@@ -27,6 +27,7 @@
 #include <fstream>
 #include <cstring>
 #include <chrono>
+#include <array>
 
 // ========== StagingBufferPool Implementation (2025-11-25) ==========
 
@@ -1296,12 +1297,47 @@ void VulkanRenderer::createMeshPipeline() {
     colorBlending.attachmentCount = 1;
     colorBlending.pAttachments = &colorBlendAttachment;
 
-    // Reuse the existing descriptor set layout and pipeline layout from the voxel pipeline
-    // The mesh shader only uses binding 0 (CameraUBO) which is compatible with the voxel layout
-    // This allows us to reuse the already-bound descriptor sets
-    // NOTE: The voxel layout has extra bindings (texture atlas, etc.) that mesh shader ignores
-    m_meshDescriptorSetLayout = VK_NULL_HANDLE;  // Not used - using voxel layout
-    m_meshPipelineLayout = m_pipelineLayout;     // Reuse voxel pipeline layout
+    // Create mesh-specific descriptor set layout for textures (set 1)
+    VkDescriptorSetLayoutBinding textureSamplerBinding{};
+    textureSamplerBinding.binding = 0;
+    textureSamplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    textureSamplerBinding.descriptorCount = 64;  // Match shader's meshTextures[64]
+    textureSamplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    textureSamplerBinding.pImmutableSamplers = nullptr;
+
+    VkDescriptorSetLayoutCreateInfo textureLayoutInfo{};
+    textureLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    textureLayoutInfo.bindingCount = 1;
+    textureLayoutInfo.pBindings = &textureSamplerBinding;
+
+    if (vkCreateDescriptorSetLayout(m_device, &textureLayoutInfo, nullptr, &m_meshDescriptorSetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create mesh texture descriptor set layout!");
+    }
+
+    // Create push constant range for material data
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(int32_t) * 2 + sizeof(float) * 2;  // albedoTexIndex, normalTexIndex, metallic, roughness
+
+    // Create mesh pipeline layout with two descriptor sets + push constants
+    // Set 0: Camera UBO (from voxel pipeline, reused)
+    // Set 1: Mesh textures
+    std::array<VkDescriptorSetLayout, 2> meshSetLayouts = {
+        m_descriptorSetLayout,       // Set 0: Camera UBO
+        m_meshDescriptorSetLayout    // Set 1: Mesh textures
+    };
+
+    VkPipelineLayoutCreateInfo meshLayoutInfo{};
+    meshLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    meshLayoutInfo.setLayoutCount = static_cast<uint32_t>(meshSetLayouts.size());
+    meshLayoutInfo.pSetLayouts = meshSetLayouts.data();
+    meshLayoutInfo.pushConstantRangeCount = 1;
+    meshLayoutInfo.pPushConstantRanges = &pushConstantRange;
+
+    if (vkCreatePipelineLayout(m_device, &meshLayoutInfo, nullptr, &m_meshPipelineLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create mesh pipeline layout!");
+    }
 
     // Create graphics pipeline
     VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -2393,6 +2429,80 @@ VkSampler VulkanRenderer::createTextureSampler() {
     }
 
     return sampler;
+}
+
+VkSampler VulkanRenderer::createLinearTextureSampler() {
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;  // Linear for smooth textures
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.anisotropyEnable = VK_TRUE;
+    samplerInfo.maxAnisotropy = 4.0f;  // Enable some anisotropic filtering for quality
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+
+    VkSampler sampler;
+    if (vkCreateSampler(m_device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create linear texture sampler!");
+    }
+
+    return sampler;
+}
+
+void VulkanRenderer::uploadMeshTexture(const uint8_t* pixels, uint32_t width, uint32_t height,
+                                        VkImage& outImage, VkDeviceMemory& outMemory) {
+    VkDeviceSize imageSize = width * height * 4;  // RGBA
+
+    // Create staging buffer
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                stagingBuffer, stagingBufferMemory);
+
+    // Copy pixel data to staging buffer
+    void* data;
+    vkMapMemory(m_device, stagingBufferMemory, 0, imageSize, 0, &data);
+    memcpy(data, pixels, static_cast<size_t>(imageSize));
+    vkUnmapMemory(m_device, stagingBufferMemory);
+
+    // Create image
+    createImage(width, height, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+               VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+               outImage, outMemory);
+
+    // Transition image layout and copy from staging buffer
+    transitionImageLayout(outImage, VK_FORMAT_R8G8B8A8_SRGB,
+                         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    copyBufferToImage(stagingBuffer, outImage, width, height);
+    transitionImageLayout(outImage, VK_FORMAT_R8G8B8A8_SRGB,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    // Clean up staging buffer
+    vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+    vkFreeMemory(m_device, stagingBufferMemory, nullptr);
+}
+
+void VulkanRenderer::destroyMeshTexture(VkImage image, VkImageView imageView, VkDeviceMemory memory) {
+    if (imageView != VK_NULL_HANDLE) {
+        vkDestroyImageView(m_device, imageView, nullptr);
+    }
+    if (image != VK_NULL_HANDLE) {
+        vkDestroyImage(m_device, image, nullptr);
+    }
+    if (memory != VK_NULL_HANDLE) {
+        vkFreeMemory(m_device, memory, nullptr);
+    }
 }
 
 void VulkanRenderer::createDefaultTexture() {
@@ -3662,9 +3772,12 @@ void VulkanRenderer::cleanup() {
     std::cout << "    Cleaning up pipeline layout..." << '\n';
     // Pipelines are already destroyed in cleanupSwapChain()
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    // m_meshPipelineLayout points to m_pipelineLayout, don't double-free
-    // m_meshDescriptorSetLayout is VK_NULL_HANDLE, skip destruction
-    if (m_meshDescriptorSetLayout != VK_NULL_HANDLE && m_meshDescriptorSetLayout != m_descriptorSetLayout) {
+
+    // Destroy mesh-specific resources
+    if (m_meshPipelineLayout != VK_NULL_HANDLE && m_meshPipelineLayout != m_pipelineLayout) {
+        vkDestroyPipelineLayout(m_device, m_meshPipelineLayout, nullptr);
+    }
+    if (m_meshDescriptorSetLayout != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(m_device, m_meshDescriptorSetLayout, nullptr);
     }
     vkDestroyRenderPass(m_device, m_renderPass, nullptr);
@@ -3968,11 +4081,33 @@ void VulkanRenderer::resetPipelineCache() {
     m_currentlyBoundPipeline = VK_NULL_HANDLE;
 }
 
-void VulkanRenderer::bindMeshDescriptorSets(VkCommandBuffer cmd) {
-    // Bind the camera descriptor set for mesh rendering
-    // Uses the mesh pipeline layout which expects the same camera UBO at binding 0
+void VulkanRenderer::bindMeshDescriptorSets(VkCommandBuffer cmd, VkDescriptorSet textureDescriptorSet) {
+    // Bind the camera descriptor set (set 0)
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_meshPipelineLayout,
                             0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
+
+    // Bind the texture descriptor set (set 1) if provided
+    if (textureDescriptorSet != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_meshPipelineLayout,
+                                1, 1, &textureDescriptorSet, 0, nullptr);
+    }
+}
+
+void VulkanRenderer::pushMeshMaterialConstants(VkCommandBuffer cmd, int32_t albedoTexIndex, int32_t normalTexIndex,
+                                                float metallic, float roughness) {
+    struct MaterialPushConstant {
+        int32_t albedoTexIndex;
+        int32_t normalTexIndex;
+        float metallic;
+        float roughness;
+    } pushData;
+
+    pushData.albedoTexIndex = albedoTexIndex;
+    pushData.normalTexIndex = normalTexIndex;
+    pushData.metallic = metallic;
+    pushData.roughness = roughness;
+
+    vkCmdPushConstants(cmd, m_meshPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushData), &pushData);
 }
 
 void VulkanRenderer::batchCopyToMegaBuffer(VkBuffer srcVertexBuffer, VkBuffer srcIndexBuffer,

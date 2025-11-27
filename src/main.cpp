@@ -1050,59 +1050,51 @@ int main(int argc, char* argv[]) {
 
         try {
             std::string playerModelPath = "assets/models/player.glb";
-            std::vector<PBRMaterial> playerMaterials;
-            std::vector<Mesh> playerMeshes = MeshLoader::loadGLTF(playerModelPath, playerMaterials);
 
-            if (!playerMeshes.empty()) {
-                // Create mesh in renderer
-                playerMeshId = meshRenderer.createMesh(playerMeshes[0]);
+            // Load player model with textures using MeshRenderer
+            playerMeshId = meshRenderer.loadMeshFromGLTF(playerModelPath);
 
-                // Apply material if loaded
-                if (!playerMaterials.empty()) {
-                    uint32_t playerMatId = meshRenderer.createMaterial(playerMaterials[0]);
-                    meshRenderer.setMeshMaterial(playerMeshId, playerMatId);
-                }
-
-                // Calculate scale to make model 2 blocks tall
+            if (playerMeshId != 0) {
                 // Get model bounds to determine its height
-                glm::vec3 modelMin = playerMeshes[0].boundsMin;
-                glm::vec3 modelMax = playerMeshes[0].boundsMax;
-                float modelHeight = modelMax.y - modelMin.y;
-                const float TARGET_HEIGHT = 2.0f; // 2 blocks tall
+                glm::vec3 modelMin, modelMax;
+                if (meshRenderer.getMeshBounds(playerMeshId, modelMin, modelMax)) {
+                    float modelHeight = modelMax.y - modelMin.y;
+                    const float TARGET_HEIGHT = 2.0f; // 2 blocks tall
 
-                // Safeguard against division by zero or extremely small models
-                if (modelHeight < 0.001f) {
-                    std::cerr << "Warning: Player model has invalid height (" << modelHeight
-                              << "), using default scale" << '\n';
-                    playerModelScale = 1.0f;
-                } else {
-                    playerModelScale = TARGET_HEIGHT / modelHeight;
-                    // Clamp scale to reasonable range
-                    if (playerModelScale > 100.0f || playerModelScale < 0.01f) {
-                        std::cerr << "Warning: Calculated scale " << playerModelScale
-                                  << " out of range, clamping" << '\n';
-                        playerModelScale = glm::clamp(playerModelScale, 0.01f, 100.0f);
+                    // Safeguard against division by zero or extremely small models
+                    if (modelHeight < 0.001f) {
+                        std::cerr << "Warning: Player model has invalid height (" << modelHeight
+                                  << "), using default scale" << '\n';
+                        playerModelScale = 1.0f;
+                    } else {
+                        playerModelScale = TARGET_HEIGHT / modelHeight;
+                        // Clamp scale to reasonable range
+                        if (playerModelScale > 100.0f || playerModelScale < 0.01f) {
+                            std::cerr << "Warning: Calculated scale " << playerModelScale
+                                      << " out of range, clamping" << '\n';
+                            playerModelScale = glm::clamp(playerModelScale, 0.01f, 100.0f);
+                        }
                     }
+
+                    // Calculate offset to center model at player position (in model space)
+                    // Model bounds tell us where the model actually is relative to its origin
+                    // We need to offset so the model's center (X,Z) and feet (Y) align with origin
+                    glm::vec3 modelCenter = (modelMin + modelMax) * 0.5f;
+
+                    // Offset in MODEL SPACE (before scaling):
+                    // - X and Z: center the model horizontally
+                    // - Y: place feet (minY) at origin
+                    playerModelOffset = glm::vec3(
+                        -modelCenter.x,    // Center horizontally
+                        -modelMin.y,       // Feet at origin
+                        -modelCenter.z     // Center depth-wise
+                    );
+
+                    std::cout << "Player model loaded: bounds min=(" << modelMin.x << "," << modelMin.y << "," << modelMin.z
+                             << ") max=(" << modelMax.x << "," << modelMax.y << "," << modelMax.z
+                             << ") height=" << modelHeight << " scale=" << playerModelScale
+                             << " offset=(" << playerModelOffset.x << "," << playerModelOffset.y << "," << playerModelOffset.z << ")" << '\n';
                 }
-
-                // Calculate offset to center model at player position (in model space)
-                // Model bounds tell us where the model actually is relative to its origin
-                // We need to offset so the model's center (X,Z) and feet (Y) align with origin
-                glm::vec3 modelCenter = (modelMin + modelMax) * 0.5f;
-
-                // Offset in MODEL SPACE (before scaling):
-                // - X and Z: center the model horizontally
-                // - Y: place feet (minY) at origin
-                playerModelOffset = glm::vec3(
-                    -modelCenter.x,    // Center horizontally
-                    -modelMin.y,       // Feet at origin
-                    -modelCenter.z     // Center depth-wise
-                );
-
-                std::cout << "Player model loaded: bounds min=(" << modelMin.x << "," << modelMin.y << "," << modelMin.z
-                         << ") max=(" << modelMax.x << "," << modelMax.y << "," << modelMax.z
-                         << ") height=" << modelHeight << " scale=" << playerModelScale
-                         << " offset=(" << playerModelOffset.x << "," << playerModelOffset.y << "," << playerModelOffset.z << ")" << '\n';
 
                 // Create instance (hidden by default in first-person)
                 glm::mat4 playerTransform = glm::mat4(1.0f);
@@ -1110,7 +1102,7 @@ int main(int argc, char* argv[]) {
                 meshRenderer.setInstanceVisible(playerInstanceId, false); // Hidden in 1st person
 
                 playerModelLoaded = true;
-                std::cout << "Player model ready for third-person view (F3 to toggle)" << '\n';
+                std::cout << "Player model ready for third-person view with textures (F3 to toggle)" << '\n';
             }
         } catch (const std::exception& e) {
             std::cerr << "Warning: Could not load player model: " << e.what() << '\n';

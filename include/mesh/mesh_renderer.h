@@ -7,6 +7,7 @@
 
 #include "mesh/mesh.h"
 #include "mesh/mesh_loader.h"
+#include <vulkan/vulkan.h>
 #include <vector>
 #include <unordered_map>
 #include <memory>
@@ -48,6 +49,13 @@ public:
      * @return Mesh ID (use for creating instances)
      */
     uint32_t loadMeshFromFile(const std::string& filepath);
+
+    /**
+     * @brief Load mesh from GLB/glTF file with textures
+     * @param filepath Path to GLB or glTF file
+     * @return Mesh ID (use for creating instances)
+     */
+    uint32_t loadMeshFromGLTF(const std::string& filepath);
 
     /**
      * @brief Create procedural mesh
@@ -158,6 +166,37 @@ public:
      */
     size_t getGPUMemoryUsage() const;
 
+    /**
+     * @brief Get texture descriptor set layout for pipeline creation
+     */
+    VkDescriptorSetLayout getTextureDescriptorSetLayout() const { return m_textureDescriptorSetLayout; }
+
+    /**
+     * @brief Get texture descriptor set for binding during rendering
+     */
+    VkDescriptorSet getTextureDescriptorSet() const { return m_textureDescriptorSet; }
+
+    /**
+     * @brief Check if textures are available for rendering
+     */
+    bool hasTextures() const { return !m_textures.empty(); }
+
+    /**
+     * @brief Get material for a mesh
+     * @param meshId Mesh ID
+     * @return Pointer to material data, or nullptr if not found
+     */
+    const PBRMaterial* getMeshMaterial(uint32_t meshId) const;
+
+    /**
+     * @brief Get mesh bounding box
+     * @param meshId Mesh ID
+     * @param outMin Output min bounds
+     * @param outMax Output max bounds
+     * @return True if mesh found, false otherwise
+     */
+    bool getMeshBounds(uint32_t meshId, glm::vec3& outMin, glm::vec3& outMax) const;
+
 private:
     struct MeshData {
         Mesh mesh;
@@ -189,6 +228,16 @@ private:
         uint64_t frameNumber;  // Frame when deletion was requested
     };
 
+    // GPU texture data
+    struct TextureData {
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        std::string name;
+    };
+
     VulkanRenderer* m_renderer;
 
     // Mesh storage
@@ -204,6 +253,14 @@ private:
     std::unordered_map<uint32_t, InstanceInfo> m_instances;
     uint32_t m_nextInstanceId = 1;
     size_t m_instanceCount = 0;
+
+    // Texture storage (indexed by mesh-local texture index)
+    std::vector<TextureData> m_textures;
+    VkSampler m_textureSampler = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_textureDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool m_textureDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet m_textureDescriptorSet = VK_NULL_HANDLE;
+    static constexpr uint32_t MAX_TEXTURES = 64;  // Maximum textures for mesh rendering
 
     // Deferred deletion queue
     std::vector<PendingDeletion> m_pendingDeletions;
@@ -234,4 +291,26 @@ private:
      * @brief Create or update material uniform buffer
      */
     void uploadMaterial(MaterialData& materialData);
+
+    /**
+     * @brief Initialize texture resources (sampler, descriptor set layout, pool)
+     */
+    void initializeTextureResources();
+
+    /**
+     * @brief Upload a texture image to GPU
+     * @param texImage CPU texture data
+     * @return Index into m_textures array, or -1 on failure
+     */
+    int32_t uploadTexture(const TextureImage& texImage);
+
+    /**
+     * @brief Update texture descriptor set with current textures
+     */
+    void updateTextureDescriptorSet();
+
+    /**
+     * @brief Clean up all texture resources
+     */
+    void cleanupTextures();
 };

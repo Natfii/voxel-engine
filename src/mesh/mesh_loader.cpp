@@ -13,11 +13,11 @@
 
 // tinygltf for GLB/GLTF loading
 // NOTE: STB_IMAGE_IMPLEMENTATION is defined in block_system.cpp
-// We tell tinygltf to use external stb_image by NOT defining TINYGLTF_NO_EXTERNAL_IMAGE
-// and NOT defining STB_IMAGE_IMPLEMENTATION here
+// We use stb_image for texture loading by including it without IMPLEMENTATION
+// (it's already defined elsewhere)
 #define TINYGLTF_IMPLEMENTATION
-#define TINYGLTF_NO_STB_IMAGE        // Don't use stb_image (we use external)
-#define TINYGLTF_NO_STB_IMAGE_WRITE  // Don't use stb_image_write
+#define TINYGLTF_NO_STB_IMAGE_WRITE  // Don't use stb_image_write (we don't need to save images)
+#include "stb_image.h"               // For texture loading
 #include "tiny_gltf.h"
 
 // ========== OBJ Loader ==========
@@ -255,7 +255,8 @@ int MeshLoader::convertOBJIndex(int index, size_t size) {
 // ========== glTF/GLB Loader ==========
 
 std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
-                                        std::vector<PBRMaterial>& materials) {
+                                        std::vector<PBRMaterial>& materials,
+                                        std::vector<TextureImage>& textures) {
     Logger::info() << "Loading glTF/GLB mesh: " << filepath;
 
     tinygltf::Model model;
@@ -288,9 +289,87 @@ std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
 
     std::vector<Mesh> meshes;
 
-    // Load materials
+    // ========== Extract Textures ==========
+    textures.clear();
+
+    // Map from glTF texture index to our texture array index
+    std::unordered_map<int, int32_t> textureIndexMap;
+
+    for (size_t i = 0; i < model.textures.size(); ++i) {
+        const tinygltf::Texture& gltfTex = model.textures[i];
+
+        // Get the image source
+        if (gltfTex.source < 0 || gltfTex.source >= static_cast<int>(model.images.size())) {
+            Logger::warning() << "Texture " << i << " has invalid image source";
+            continue;
+        }
+
+        const tinygltf::Image& gltfImage = model.images[gltfTex.source];
+
+        TextureImage texImage;
+        texImage.name = gltfImage.name.empty() ? "texture_" + std::to_string(i) : gltfImage.name;
+
+        // Check if image data is already decoded (tinygltf does this for us)
+        if (!gltfImage.image.empty()) {
+            // tinygltf already decoded the image
+            texImage.width = static_cast<uint32_t>(gltfImage.width);
+            texImage.height = static_cast<uint32_t>(gltfImage.height);
+
+            // Convert to RGBA if necessary
+            if (gltfImage.component == 4) {
+                // Already RGBA
+                texImage.data = gltfImage.image;
+            } else if (gltfImage.component == 3) {
+                // RGB -> RGBA
+                texImage.data.resize(texImage.width * texImage.height * 4);
+                for (size_t p = 0; p < texImage.width * texImage.height; ++p) {
+                    texImage.data[p * 4 + 0] = gltfImage.image[p * 3 + 0];
+                    texImage.data[p * 4 + 1] = gltfImage.image[p * 3 + 1];
+                    texImage.data[p * 4 + 2] = gltfImage.image[p * 3 + 2];
+                    texImage.data[p * 4 + 3] = 255;
+                }
+            } else if (gltfImage.component == 1) {
+                // Grayscale -> RGBA
+                texImage.data.resize(texImage.width * texImage.height * 4);
+                for (size_t p = 0; p < texImage.width * texImage.height; ++p) {
+                    uint8_t gray = gltfImage.image[p];
+                    texImage.data[p * 4 + 0] = gray;
+                    texImage.data[p * 4 + 1] = gray;
+                    texImage.data[p * 4 + 2] = gray;
+                    texImage.data[p * 4 + 3] = 255;
+                }
+            } else if (gltfImage.component == 2) {
+                // Grayscale+Alpha -> RGBA
+                texImage.data.resize(texImage.width * texImage.height * 4);
+                for (size_t p = 0; p < texImage.width * texImage.height; ++p) {
+                    uint8_t gray = gltfImage.image[p * 2 + 0];
+                    uint8_t alpha = gltfImage.image[p * 2 + 1];
+                    texImage.data[p * 4 + 0] = gray;
+                    texImage.data[p * 4 + 1] = gray;
+                    texImage.data[p * 4 + 2] = gray;
+                    texImage.data[p * 4 + 3] = alpha;
+                }
+            }
+
+            if (texImage.isValid()) {
+                textureIndexMap[static_cast<int>(i)] = static_cast<int32_t>(textures.size());
+                textures.push_back(std::move(texImage));
+                Logger::info() << "Loaded texture " << i << ": " << textures.back().name
+                              << " (" << textures.back().width << "x" << textures.back().height << ")";
+            } else {
+                Logger::warning() << "Failed to process texture " << i;
+            }
+        } else {
+            Logger::warning() << "Texture " << i << " has no decoded image data";
+        }
+    }
+
+    Logger::info() << "Extracted " << textures.size() << " textures from glTF";
+
+    // ========== Load Materials ==========
     materials.clear();
-    for (const auto& gltfMat : model.materials) {
+    for (size_t matIdx = 0; matIdx < model.materials.size(); ++matIdx) {
+        const auto& gltfMat = model.materials[matIdx];
         PBRMaterial mat = PBRMaterial::createDefault();
 
         // Base color
@@ -315,7 +394,46 @@ std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
             mat.emissive = emissive;
         }
 
+        // Base color texture (albedo)
+        int baseColorTexIdx = gltfMat.pbrMetallicRoughness.baseColorTexture.index;
+        if (baseColorTexIdx >= 0) {
+            auto it = textureIndexMap.find(baseColorTexIdx);
+            if (it != textureIndexMap.end()) {
+                mat.albedoTexture = it->second;
+            }
+        }
+
+        // Normal texture
+        int normalTexIdx = gltfMat.normalTexture.index;
+        if (normalTexIdx >= 0) {
+            auto it = textureIndexMap.find(normalTexIdx);
+            if (it != textureIndexMap.end()) {
+                mat.normalTexture = it->second;
+            }
+        }
+
+        // Metallic-roughness texture
+        int mrTexIdx = gltfMat.pbrMetallicRoughness.metallicRoughnessTexture.index;
+        if (mrTexIdx >= 0) {
+            auto it = textureIndexMap.find(mrTexIdx);
+            if (it != textureIndexMap.end()) {
+                mat.metallicRoughnessTexture = it->second;
+            }
+        }
+
+        // Emissive texture
+        int emissiveTexIdx = gltfMat.emissiveTexture.index;
+        if (emissiveTexIdx >= 0) {
+            auto it = textureIndexMap.find(emissiveTexIdx);
+            if (it != textureIndexMap.end()) {
+                mat.emissiveTexture = it->second;
+            }
+        }
+
         materials.push_back(mat);
+        Logger::info() << "Material " << matIdx << ": albedoTex=" << mat.albedoTexture
+                      << ", normalTex=" << mat.normalTexture
+                      << ", mrTex=" << mat.metallicRoughnessTexture;
     }
 
     // If no materials, add default
