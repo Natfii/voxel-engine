@@ -1059,7 +1059,7 @@ int main(int argc, char* argv[]) {
                 glm::vec3 modelMin, modelMax;
                 if (meshRenderer.getMeshBounds(playerMeshId, modelMin, modelMax)) {
                     float modelHeight = modelMax.y - modelMin.y;
-                    const float TARGET_HEIGHT = 2.0f; // 2 blocks tall
+                    const float TARGET_HEIGHT = 1.8f; // 1.8 blocks tall (like Minecraft player)
 
                     // Safeguard against division by zero or extremely small models
                     if (modelHeight < 0.001f) {
