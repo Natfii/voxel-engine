@@ -182,6 +182,13 @@ private:
         bool visible = true;  ///< Whether this instance should be rendered
     };
 
+    // Deferred buffer deletion to avoid destroying in-flight resources
+    struct PendingDeletion {
+        VkBuffer buffer;
+        VkDeviceMemory memory;
+        uint64_t frameNumber;  // Frame when deletion was requested
+    };
+
     VulkanRenderer* m_renderer;
 
     // Mesh storage
@@ -197,6 +204,21 @@ private:
     std::unordered_map<uint32_t, InstanceInfo> m_instances;
     uint32_t m_nextInstanceId = 1;
     size_t m_instanceCount = 0;
+
+    // Deferred deletion queue
+    std::vector<PendingDeletion> m_pendingDeletions;
+    uint64_t m_frameNumber = 0;
+    static constexpr uint64_t FRAMES_TO_KEEP = 3;  // Keep buffers for 3 frames before deletion
+
+    /**
+     * @brief Queue buffer for deferred deletion
+     */
+    void queueBufferDeletion(VkBuffer buffer, VkDeviceMemory memory);
+
+    /**
+     * @brief Process pending deletions (call each frame)
+     */
+    void processPendingDeletions();
 
     /**
      * @brief Upload mesh geometry to GPU

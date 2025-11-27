@@ -1046,7 +1046,7 @@ int main(int argc, char* argv[]) {
         uint32_t playerInstanceId = 0;
         bool playerModelLoaded = false;
         float playerModelScale = 1.0f;
-        float playerModelYOffset = 0.0f; // Offset to place model feet at position
+        glm::vec3 playerModelOffset = glm::vec3(0.0f); // Offset to center model at position
 
         try {
             std::string playerModelPath = "assets/models/player.glb";
@@ -1085,14 +1085,24 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                // Calculate Y offset to place model feet at ground level
-                // After scaling, the model's minY should be at 0 (feet on ground)
-                playerModelYOffset = -modelMin.y * playerModelScale;
+                // Calculate offset to center model at player position (in model space)
+                // Model bounds tell us where the model actually is relative to its origin
+                // We need to offset so the model's center (X,Z) and feet (Y) align with origin
+                glm::vec3 modelCenter = (modelMin + modelMax) * 0.5f;
+
+                // Offset in MODEL SPACE (before scaling):
+                // - X and Z: center the model horizontally
+                // - Y: place feet (minY) at origin
+                playerModelOffset = glm::vec3(
+                    -modelCenter.x,    // Center horizontally
+                    -modelMin.y,       // Feet at origin
+                    -modelCenter.z     // Center depth-wise
+                );
 
                 std::cout << "Player model loaded: bounds min=(" << modelMin.x << "," << modelMin.y << "," << modelMin.z
                          << ") max=(" << modelMax.x << "," << modelMax.y << "," << modelMax.z
                          << ") height=" << modelHeight << " scale=" << playerModelScale
-                         << " yOffset=" << playerModelYOffset << '\n';
+                         << " offset=(" << playerModelOffset.x << "," << playerModelOffset.y << "," << playerModelOffset.z << ")" << '\n';
 
                 // Create instance (hidden by default in first-person)
                 glm::mat4 playerTransform = glm::mat4(1.0f);
@@ -1262,14 +1272,21 @@ int main(int argc, char* argv[]) {
 
                 if (player.isThirdPerson()) {
                     // Update player model transform
+                    // Transform order (right-to-left): offset -> scale -> rotate -> translate
+                    // 1. First center the model at origin (offset in model space)
+                    // 2. Then scale to correct size
+                    // 3. Then rotate to face player's direction
+                    // 4. Finally translate to player's position in world
                     glm::vec3 bodyPos = player.getBodyPosition();
-                    // Apply Y offset to place model feet at ground level
-                    bodyPos.y += playerModelYOffset;
-                    glm::mat4 playerTransform = glm::translate(glm::mat4(1.0f), bodyPos);
-                    // Rotate model to face same direction as player
-                    playerTransform = glm::rotate(playerTransform, glm::radians(-player.Yaw - 90.0f), glm::vec3(0, 1, 0));
-                    // Apply scale to fit 2 blocks tall
-                    playerTransform = glm::scale(playerTransform, glm::vec3(playerModelScale));
+
+                    glm::mat4 playerTransform = glm::mat4(1.0f);
+                    playerTransform = glm::translate(playerTransform, bodyPos);  // World position
+                    // Rotate model to face AWAY from camera (so camera sees back)
+                    // Player.Yaw is the direction the player is looking, model should face same way
+                    playerTransform = glm::rotate(playerTransform, glm::radians(-player.Yaw + 90.0f), glm::vec3(0, 1, 0));
+                    playerTransform = glm::scale(playerTransform, glm::vec3(playerModelScale));  // Scale to 2 blocks tall
+                    playerTransform = glm::translate(playerTransform, playerModelOffset);  // Center model at origin
+
                     meshRenderer.updateInstanceTransform(playerInstanceId, playerTransform);
                 }
             }

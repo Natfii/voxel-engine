@@ -23,6 +23,18 @@ MeshRenderer::MeshRenderer(VulkanRenderer* renderer)
 MeshRenderer::~MeshRenderer() {
     Logger::info() << "Cleaning up MeshRenderer...";
 
+    // Wait for GPU before cleanup to ensure all buffers are safe to delete
+    m_renderer->waitForGPUIdle();
+
+    // Process any remaining pending deletions
+    for (const auto& pending : m_pendingDeletions) {
+        if (pending.buffer != VK_NULL_HANDLE) {
+            m_renderer->destroyMeshBuffers(pending.buffer, VK_NULL_HANDLE,
+                                          pending.memory, VK_NULL_HANDLE);
+        }
+    }
+    m_pendingDeletions.clear();
+
     // Destroy all meshes (also destroys buffers)
     for (auto& [id, meshData] : m_meshes) {
         if (meshData.mesh.hasGPUBuffers()) {
@@ -43,6 +55,33 @@ MeshRenderer::~MeshRenderer() {
     }
 
     Logger::info() << "MeshRenderer cleanup complete";
+}
+
+// ========== Deferred Buffer Deletion ==========
+
+void MeshRenderer::queueBufferDeletion(VkBuffer buffer, VkDeviceMemory memory) {
+    if (buffer == VK_NULL_HANDLE) return;
+
+    PendingDeletion pending;
+    pending.buffer = buffer;
+    pending.memory = memory;
+    pending.frameNumber = m_frameNumber;
+    m_pendingDeletions.push_back(pending);
+}
+
+void MeshRenderer::processPendingDeletions() {
+    // Remove buffers that have been queued for enough frames
+    auto it = m_pendingDeletions.begin();
+    while (it != m_pendingDeletions.end()) {
+        if (m_frameNumber - it->frameNumber >= FRAMES_TO_KEEP) {
+            // Safe to delete now
+            m_renderer->destroyMeshBuffers(it->buffer, VK_NULL_HANDLE,
+                                          it->memory, VK_NULL_HANDLE);
+            it = m_pendingDeletions.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 // ========== Mesh Management ==========
@@ -321,11 +360,9 @@ void MeshRenderer::updateInstanceBuffer(MeshData& meshData) {
     }
 
     if (instanceDataArray.empty()) {
-        // No visible instances - clean up any existing buffer
+        // No visible instances - queue buffer for deferred deletion
         if (meshData.instanceBuffer != VK_NULL_HANDLE) {
-            m_renderer->waitForGPUIdle();  // Wait before destroying in-use buffer
-            m_renderer->destroyMeshBuffers(meshData.instanceBuffer, VK_NULL_HANDLE,
-                                          meshData.instanceMemory, VK_NULL_HANDLE);
+            queueBufferDeletion(meshData.instanceBuffer, meshData.instanceMemory);
             meshData.instanceBuffer = VK_NULL_HANDLE;
             meshData.instanceMemory = VK_NULL_HANDLE;
         }
@@ -337,13 +374,9 @@ void MeshRenderer::updateInstanceBuffer(MeshData& meshData) {
     // Store visible count for rendering
     meshData.visibleInstanceCount = static_cast<uint32_t>(instanceDataArray.size());
 
-    // Wait for GPU to finish using old buffer before destroying
-    // This prevents device lost errors from destroying in-flight buffers
-    // TODO: Replace with deferred deletion queue for better performance
+    // Queue old buffer for deferred deletion (will be deleted after FRAMES_TO_KEEP frames)
     if (meshData.instanceBuffer != VK_NULL_HANDLE) {
-        m_renderer->waitForGPUIdle();
-        m_renderer->destroyMeshBuffers(meshData.instanceBuffer, VK_NULL_HANDLE,
-                                      meshData.instanceMemory, VK_NULL_HANDLE);
+        queueBufferDeletion(meshData.instanceBuffer, meshData.instanceMemory);
         meshData.instanceBuffer = VK_NULL_HANDLE;
         meshData.instanceMemory = VK_NULL_HANDLE;
     }
@@ -370,6 +403,10 @@ void MeshRenderer::updateInstanceBuffer(MeshData& meshData) {
 // ========== Rendering ==========
 
 void MeshRenderer::render(VkCommandBuffer cmd) {
+    // Increment frame counter and process pending deletions
+    m_frameNumber++;
+    processPendingDeletions();
+
     if (m_meshes.empty()) {
         return;
     }
