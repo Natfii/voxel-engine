@@ -1944,8 +1944,17 @@ void VulkanRenderer::endFrame() {
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    if (vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]) != VK_SUCCESS) {
-        throw std::runtime_error("failed to submit draw command buffer!");
+    VkResult submitResult = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
+    if (submitResult != VK_SUCCESS) {
+        // Log the specific error for debugging
+        const char* errorStr = "unknown error";
+        switch (submitResult) {
+            case VK_ERROR_OUT_OF_HOST_MEMORY: errorStr = "out of host memory"; break;
+            case VK_ERROR_OUT_OF_DEVICE_MEMORY: errorStr = "out of device memory"; break;
+            case VK_ERROR_DEVICE_LOST: errorStr = "device lost"; break;
+            default: break;
+        }
+        throw std::runtime_error(std::string("failed to submit draw command buffer: ") + errorStr);
     }
 
     VkPresentInfoKHR presentInfo{};

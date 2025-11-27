@@ -370,8 +370,14 @@ void MeshRenderer::render(VkCommandBuffer cmd) {
         return;
     }
 
+    // Safety check: ensure mesh pipeline is valid
+    VkPipeline meshPipeline = m_renderer->getMeshPipeline();
+    if (meshPipeline == VK_NULL_HANDLE) {
+        return; // Mesh pipeline not initialized
+    }
+
     // Bind mesh pipeline
-    m_renderer->bindPipelineCached(cmd, m_renderer->getMeshPipeline());
+    m_renderer->bindPipelineCached(cmd, meshPipeline);
 
     // Render each mesh with its instances
     for (auto& [meshId, meshData] : m_meshes) {
@@ -386,6 +392,12 @@ void MeshRenderer::render(VkCommandBuffer cmd) {
 
         // Skip if no visible instances or no buffer
         if (meshData.instanceBuffer == VK_NULL_HANDLE || meshData.visibleInstanceCount == 0) {
+            continue;
+        }
+
+        // Safety checks: ensure buffers are valid
+        if (meshData.mesh.vertexBuffer == VK_NULL_HANDLE ||
+            meshData.mesh.indexBuffer == VK_NULL_HANDLE) {
             continue;
         }
 
