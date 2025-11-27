@@ -168,6 +168,13 @@ if exist "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC" (
     set VS_YEAR=2022
     goto vs_found
 )
+if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC" (
+    set VS_FOUND=1
+    set "VS_PATH=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
+    set VS_EDITION=BuildTools
+    set VS_YEAR=2022
+    goto vs_found
+)
 
 REM Check for VS 2019 in Program Files (64-bit install)
 if exist "C:\Program Files\Microsoft Visual Studio\2019\Community\VC" (
