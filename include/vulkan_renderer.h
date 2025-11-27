@@ -310,6 +310,30 @@ public:
     VkPipeline getMeshPipeline() const { return m_meshPipeline; }               ///< Get mesh rendering pipeline
     VkPipelineLayout getPipelineLayout() const { return m_pipelineLayout; }     ///< Get pipeline layout
     VkPipelineLayout getMeshPipelineLayout() const { return m_meshPipelineLayout; }  ///< Get mesh pipeline layout
+
+    /**
+     * @brief Bind descriptor sets for mesh rendering
+     * Must be called after binding the mesh pipeline
+     * @param cmd Command buffer
+     * @param textureDescriptorSet Optional texture descriptor set (set 1)
+     */
+    void bindMeshDescriptorSets(VkCommandBuffer cmd, VkDescriptorSet textureDescriptorSet = VK_NULL_HANDLE);
+
+    /**
+     * @brief Get mesh texture descriptor set layout for creating compatible descriptor sets
+     */
+    VkDescriptorSetLayout getMeshTextureDescriptorSetLayout() const { return m_meshDescriptorSetLayout; }
+
+    /**
+     * @brief Push material constants for mesh rendering
+     * @param cmd Command buffer
+     * @param albedoTexIndex Albedo texture index (-1 for no texture)
+     * @param normalTexIndex Normal texture index (-1 for no texture)
+     * @param metallic Material metallic value
+     * @param roughness Material roughness value
+     */
+    void pushMeshMaterialConstants(VkCommandBuffer cmd, int32_t albedoTexIndex, int32_t normalTexIndex,
+                                    float metallic, float roughness);
     VkCommandBuffer getCurrentCommandBuffer() const { return m_commandBuffers[m_currentFrame]; }  ///< Get current cmd buffer
     VkDescriptorSetLayout getDescriptorSetLayout() const { return m_descriptorSetLayout; }  ///< Get descriptor layout
     VkDescriptorSet getCurrentDescriptorSet() const { return m_descriptorSets[m_currentFrame]; }  ///< Get current descriptor
@@ -765,11 +789,42 @@ public:
     VkSampler createTextureSampler();
 
     /**
+     * @brief Creates a texture sampler with linear filtering (smooth textures)
+     *
+     * @return Sampler handle with linear filtering
+     */
+    VkSampler createLinearTextureSampler();
+
+    /**
      * @brief Creates a default 1x1 white texture
      *
      * Used as fallback for blocks without custom textures.
      */
     void createDefaultTexture();
+
+    /**
+     * @brief Upload a mesh texture from CPU pixel data
+     *
+     * Creates a VkImage, VkDeviceMemory, and transitions to shader-readable layout.
+     * The pixel data must be RGBA format (4 bytes per pixel).
+     *
+     * @param pixels Pointer to RGBA pixel data
+     * @param width Image width in pixels
+     * @param height Image height in pixels
+     * @param outImage Output image handle
+     * @param outMemory Output memory handle
+     */
+    void uploadMeshTexture(const uint8_t* pixels, uint32_t width, uint32_t height,
+                           VkImage& outImage, VkDeviceMemory& outMemory);
+
+    /**
+     * @brief Destroy a mesh texture
+     *
+     * @param image Image to destroy
+     * @param imageView Image view to destroy (can be VK_NULL_HANDLE)
+     * @param memory Memory to free
+     */
+    void destroyMeshTexture(VkImage image, VkImageView imageView, VkDeviceMemory memory);
 
     // ========== Cube Map Utilities ==========
 

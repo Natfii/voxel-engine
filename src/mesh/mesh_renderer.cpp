@@ -13,15 +13,30 @@
 MeshRenderer::MeshRenderer(VulkanRenderer* renderer)
     : m_renderer(renderer) {
 
+    // Initialize texture resources
+    initializeTextureResources();
+
     // Create default material
     PBRMaterial defaultMat = PBRMaterial::createDefault();
     m_defaultMaterialId = createMaterial(defaultMat);
 
-    Logger::info() << "MeshRenderer initialized with default material";
+    Logger::info() << "MeshRenderer initialized with default material and texture support";
 }
 
 MeshRenderer::~MeshRenderer() {
     Logger::info() << "Cleaning up MeshRenderer...";
+
+    // Wait for GPU before cleanup to ensure all buffers are safe to delete
+    m_renderer->waitForGPUIdle();
+
+    // Process any remaining pending deletions
+    for (const auto& pending : m_pendingDeletions) {
+        if (pending.buffer != VK_NULL_HANDLE) {
+            m_renderer->destroyMeshBuffers(pending.buffer, VK_NULL_HANDLE,
+                                          pending.memory, VK_NULL_HANDLE);
+        }
+    }
+    m_pendingDeletions.clear();
 
     // Destroy all meshes (also destroys buffers)
     for (auto& [id, meshData] : m_meshes) {
@@ -42,7 +57,37 @@ MeshRenderer::~MeshRenderer() {
         }
     }
 
+    // Clean up textures
+    cleanupTextures();
+
     Logger::info() << "MeshRenderer cleanup complete";
+}
+
+// ========== Deferred Buffer Deletion ==========
+
+void MeshRenderer::queueBufferDeletion(VkBuffer buffer, VkDeviceMemory memory) {
+    if (buffer == VK_NULL_HANDLE) return;
+
+    PendingDeletion pending;
+    pending.buffer = buffer;
+    pending.memory = memory;
+    pending.frameNumber = m_frameNumber;
+    m_pendingDeletions.push_back(pending);
+}
+
+void MeshRenderer::processPendingDeletions() {
+    // Remove buffers that have been queued for enough frames
+    auto it = m_pendingDeletions.begin();
+    while (it != m_pendingDeletions.end()) {
+        if (m_frameNumber - it->frameNumber >= FRAMES_TO_KEEP) {
+            // Safe to delete now
+            m_renderer->destroyMeshBuffers(it->buffer, VK_NULL_HANDLE,
+                                          it->memory, VK_NULL_HANDLE);
+            it = m_pendingDeletions.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 // ========== Mesh Management ==========
@@ -278,30 +323,66 @@ void MeshRenderer::removeInstance(uint32_t instanceId) {
     }
 }
 
+void MeshRenderer::setInstanceVisible(uint32_t instanceId, bool visible) {
+    auto it = m_instances.find(instanceId);
+    if (it == m_instances.end()) {
+        Logger::warning() << "Instance " << instanceId << " not found";
+        return;
+    }
+
+    if (it->second.visible != visible) {
+        it->second.visible = visible;
+
+        // Mark instance buffer as dirty
+        auto meshIt = m_meshes.find(it->second.meshId);
+        if (meshIt != m_meshes.end()) {
+            meshIt->second.instanceBufferDirty = true;
+        }
+    }
+}
+
+bool MeshRenderer::isInstanceVisible(uint32_t instanceId) const {
+    auto it = m_instances.find(instanceId);
+    if (it == m_instances.end()) {
+        return false;
+    }
+    return it->second.visible;
+}
+
 void MeshRenderer::updateInstanceBuffer(MeshData& meshData) {
     if (meshData.instances.empty()) {
         return;
     }
 
-    // Collect instance data
+    // Collect instance data (only visible instances)
     std::vector<InstanceData> instanceDataArray;
     instanceDataArray.reserve(meshData.instances.size());
 
     for (uint32_t instanceId : meshData.instances) {
         auto it = m_instances.find(instanceId);
-        if (it != m_instances.end()) {
+        if (it != m_instances.end() && it->second.visible) {
             instanceDataArray.push_back(it->second.data);
         }
     }
 
     if (instanceDataArray.empty()) {
+        // No visible instances - queue buffer for deferred deletion
+        if (meshData.instanceBuffer != VK_NULL_HANDLE) {
+            queueBufferDeletion(meshData.instanceBuffer, meshData.instanceMemory);
+            meshData.instanceBuffer = VK_NULL_HANDLE;
+            meshData.instanceMemory = VK_NULL_HANDLE;
+        }
+        meshData.visibleInstanceCount = 0;
+        meshData.instanceBufferDirty = false;
         return;
     }
 
-    // Destroy old instance buffer if it exists
+    // Store visible count for rendering
+    meshData.visibleInstanceCount = static_cast<uint32_t>(instanceDataArray.size());
+
+    // Queue old buffer for deferred deletion (will be deleted after FRAMES_TO_KEEP frames)
     if (meshData.instanceBuffer != VK_NULL_HANDLE) {
-        m_renderer->destroyMeshBuffers(meshData.instanceBuffer, VK_NULL_HANDLE,
-                                      meshData.instanceMemory, VK_NULL_HANDLE);
+        queueBufferDeletion(meshData.instanceBuffer, meshData.instanceMemory);
         meshData.instanceBuffer = VK_NULL_HANDLE;
         meshData.instanceMemory = VK_NULL_HANDLE;
     }
@@ -328,12 +409,23 @@ void MeshRenderer::updateInstanceBuffer(MeshData& meshData) {
 // ========== Rendering ==========
 
 void MeshRenderer::render(VkCommandBuffer cmd) {
+    // Increment frame counter and process pending deletions
+    m_frameNumber++;
+    processPendingDeletions();
+
     if (m_meshes.empty()) {
         return;
     }
 
-    // Bind mesh pipeline
-    m_renderer->bindPipelineCached(cmd, m_renderer->getMeshPipeline());
+    // Safety check: ensure mesh pipeline is valid
+    VkPipeline meshPipeline = m_renderer->getMeshPipeline();
+    if (meshPipeline == VK_NULL_HANDLE) {
+        return; // Mesh pipeline not initialized
+    }
+
+    // Bind mesh pipeline and its descriptor sets (including textures)
+    m_renderer->bindPipelineCached(cmd, meshPipeline);
+    m_renderer->bindMeshDescriptorSets(cmd, m_textureDescriptorSet);
 
     // Render each mesh with its instances
     for (auto& [meshId, meshData] : m_meshes) {
@@ -346,19 +438,35 @@ void MeshRenderer::render(VkCommandBuffer cmd) {
             updateInstanceBuffer(meshData);
         }
 
-        // Skip if no valid instances
-        if (meshData.instanceBuffer == VK_NULL_HANDLE) {
+        // Skip if no visible instances or no buffer
+        if (meshData.instanceBuffer == VK_NULL_HANDLE || meshData.visibleInstanceCount == 0) {
             continue;
         }
 
-        // Get material
+        // Safety checks: ensure buffers are valid
+        if (meshData.mesh.vertexBuffer == VK_NULL_HANDLE ||
+            meshData.mesh.indexBuffer == VK_NULL_HANDLE) {
+            continue;
+        }
+
+        // Get material and push constants
         auto matIt = m_materials.find(meshData.materialId);
         if (matIt == m_materials.end()) {
             matIt = m_materials.find(m_defaultMaterialId);
         }
 
-        // Bind material (TODO: descriptor set binding when we add descriptor management)
-        // For now, we'll need to create descriptor sets in a future update
+        // Push material constants to shader
+        if (matIt != m_materials.end()) {
+            const auto& mat = matIt->second.material;
+            m_renderer->pushMeshMaterialConstants(cmd,
+                mat.albedoTexture,
+                mat.normalTexture,
+                mat.metallic,
+                mat.roughness);
+        } else {
+            // Default material values (no textures)
+            m_renderer->pushMeshMaterialConstants(cmd, -1, -1, 0.0f, 0.5f);
+        }
 
         // Bind vertex buffer (binding 0)
         VkDeviceSize vertexOffset = 0;
@@ -371,8 +479,8 @@ void MeshRenderer::render(VkCommandBuffer cmd) {
         // Bind index buffer
         vkCmdBindIndexBuffer(cmd, meshData.mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
-        // Draw instanced
-        uint32_t instanceCount = static_cast<uint32_t>(meshData.instances.size());
+        // Draw instanced (only visible instances)
+        uint32_t instanceCount = meshData.visibleInstanceCount;
         uint32_t indexCount = static_cast<uint32_t>(meshData.mesh.indices.size());
         vkCmdDrawIndexed(cmd, indexCount, instanceCount, 0, 0, 0);
     }
@@ -392,5 +500,257 @@ size_t MeshRenderer::getGPUMemoryUsage() const {
         total += sizeof(MaterialUBO);
     }
 
+    // Add texture memory
+    for (const auto& tex : m_textures) {
+        total += tex.width * tex.height * 4;  // RGBA
+    }
+
     return total;
+}
+
+const PBRMaterial* MeshRenderer::getMeshMaterial(uint32_t meshId) const {
+    auto meshIt = m_meshes.find(meshId);
+    if (meshIt == m_meshes.end()) {
+        return nullptr;
+    }
+
+    auto matIt = m_materials.find(meshIt->second.materialId);
+    if (matIt == m_materials.end()) {
+        matIt = m_materials.find(m_defaultMaterialId);
+    }
+
+    if (matIt != m_materials.end()) {
+        return &matIt->second.material;
+    }
+    return nullptr;
+}
+
+bool MeshRenderer::getMeshBounds(uint32_t meshId, glm::vec3& outMin, glm::vec3& outMax) const {
+    auto meshIt = m_meshes.find(meshId);
+    if (meshIt == m_meshes.end()) {
+        return false;
+    }
+
+    outMin = meshIt->second.mesh.boundsMin;
+    outMax = meshIt->second.mesh.boundsMax;
+    return true;
+}
+
+// ========== GLTF/GLB Loading ==========
+
+uint32_t MeshRenderer::loadMeshFromGLTF(const std::string& filepath) {
+    try {
+        std::vector<PBRMaterial> materials;
+        std::vector<TextureImage> textureImages;
+        std::vector<Mesh> meshes = MeshLoader::loadGLTF(filepath, materials, textureImages);
+
+        if (meshes.empty()) {
+            Logger::error() << "No meshes loaded from: " << filepath;
+            return 0;
+        }
+
+        // Upload textures and get base texture index
+        int32_t baseTextureIndex = static_cast<int32_t>(m_textures.size());
+        for (const auto& texImage : textureImages) {
+            int32_t texIdx = uploadTexture(texImage);
+            if (texIdx < 0) {
+                Logger::warning() << "Failed to upload texture: " << texImage.name;
+            }
+        }
+
+        // Update material texture indices to be global
+        for (auto& mat : materials) {
+            if (mat.albedoTexture >= 0) {
+                mat.albedoTexture += baseTextureIndex;
+            }
+            if (mat.normalTexture >= 0) {
+                mat.normalTexture += baseTextureIndex;
+            }
+            if (mat.metallicRoughnessTexture >= 0) {
+                mat.metallicRoughnessTexture += baseTextureIndex;
+            }
+            if (mat.emissiveTexture >= 0) {
+                mat.emissiveTexture += baseTextureIndex;
+            }
+        }
+
+        // Update texture descriptor set if we added textures
+        if (!textureImages.empty()) {
+            updateTextureDescriptorSet();
+        }
+
+        // For now, just load the first mesh
+        Mesh& mesh = meshes[0];
+
+        // Create material if provided
+        uint32_t materialId = m_defaultMaterialId;
+        if (!materials.empty()) {
+            materialId = createMaterial(materials[0]);
+        }
+
+        mesh.materialIndex = materialId;
+        return createMesh(mesh);
+
+    } catch (const std::exception& e) {
+        Logger::error() << "Failed to load GLTF mesh from " << filepath << ": " << e.what();
+        return 0;
+    }
+}
+
+// ========== Texture Management ==========
+
+void MeshRenderer::initializeTextureResources() {
+    VkDevice device = m_renderer->getDevice();
+
+    // Create texture sampler (linear filtering for smooth textures)
+    m_textureSampler = m_renderer->createLinearTextureSampler();
+
+    // Use the renderer's mesh texture descriptor set layout (created in createMeshPipeline)
+    m_textureDescriptorSetLayout = m_renderer->getMeshTextureDescriptorSetLayout();
+
+    if (m_textureDescriptorSetLayout == VK_NULL_HANDLE) {
+        Logger::error() << "Mesh texture descriptor set layout not available";
+        return;
+    }
+
+    // Create descriptor pool for texture descriptor sets
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSize.descriptorCount = MAX_TEXTURES;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.maxSets = 1;
+
+    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &m_textureDescriptorPool) != VK_SUCCESS) {
+        Logger::error() << "Failed to create mesh texture descriptor pool";
+        return;
+    }
+
+    // Allocate descriptor set using the renderer's layout
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_textureDescriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &m_textureDescriptorSetLayout;
+
+    if (vkAllocateDescriptorSets(device, &allocInfo, &m_textureDescriptorSet) != VK_SUCCESS) {
+        Logger::error() << "Failed to allocate mesh texture descriptor set";
+        return;
+    }
+
+    // Create a default 1x1 white texture so descriptor set is always valid
+    TextureImage defaultTex;
+    defaultTex.name = "default_white";
+    defaultTex.width = 1;
+    defaultTex.height = 1;
+    defaultTex.data = {255, 255, 255, 255};  // White pixel RGBA
+    uploadTexture(defaultTex);
+
+    // Initialize descriptor set with default texture
+    updateTextureDescriptorSet();
+
+    Logger::info() << "Mesh texture resources initialized (max " << MAX_TEXTURES << " textures)";
+}
+
+int32_t MeshRenderer::uploadTexture(const TextureImage& texImage) {
+    if (!texImage.isValid()) {
+        Logger::warning() << "Invalid texture data: " << texImage.name;
+        return -1;
+    }
+
+    if (m_textures.size() >= MAX_TEXTURES) {
+        Logger::warning() << "Maximum texture count reached (" << MAX_TEXTURES << ")";
+        return -1;
+    }
+
+    TextureData texData;
+    texData.name = texImage.name;
+    texData.width = texImage.width;
+    texData.height = texImage.height;
+
+    // Upload to GPU
+    m_renderer->uploadMeshTexture(texImage.data.data(), texImage.width, texImage.height,
+                                   texData.image, texData.memory);
+
+    // Create image view
+    texData.view = m_renderer->createImageView(texData.image, VK_FORMAT_R8G8B8A8_SRGB,
+                                                VK_IMAGE_ASPECT_COLOR_BIT);
+
+    int32_t index = static_cast<int32_t>(m_textures.size());
+    m_textures.push_back(std::move(texData));
+
+    Logger::info() << "Uploaded texture " << index << ": " << texImage.name
+                  << " (" << texImage.width << "x" << texImage.height << ")";
+
+    return index;
+}
+
+void MeshRenderer::updateTextureDescriptorSet() {
+    if (m_textureDescriptorSet == VK_NULL_HANDLE || m_textures.empty()) {
+        return;
+    }
+
+    VkDevice device = m_renderer->getDevice();
+
+    // Create array of image infos for all textures
+    std::vector<VkDescriptorImageInfo> imageInfos(MAX_TEXTURES);
+
+    // Fill with actual textures
+    for (size_t i = 0; i < m_textures.size(); ++i) {
+        imageInfos[i].sampler = m_textureSampler;
+        imageInfos[i].imageView = m_textures[i].view;
+        imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+
+    // Fill remaining slots with first texture (or a default if we had one)
+    VkImageView defaultView = m_textures.empty() ? VK_NULL_HANDLE : m_textures[0].view;
+    for (size_t i = m_textures.size(); i < MAX_TEXTURES; ++i) {
+        imageInfos[i].sampler = m_textureSampler;
+        imageInfos[i].imageView = defaultView;
+        imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+
+    VkWriteDescriptorSet descriptorWrite{};
+    descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite.dstSet = m_textureDescriptorSet;
+    descriptorWrite.dstBinding = 0;
+    descriptorWrite.dstArrayElement = 0;
+    descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrite.descriptorCount = MAX_TEXTURES;
+    descriptorWrite.pImageInfo = imageInfos.data();
+
+    vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+
+    Logger::info() << "Updated texture descriptor set with " << m_textures.size() << " textures";
+}
+
+void MeshRenderer::cleanupTextures() {
+    VkDevice device = m_renderer->getDevice();
+
+    // Destroy all textures
+    for (auto& tex : m_textures) {
+        m_renderer->destroyMeshTexture(tex.image, tex.view, tex.memory);
+    }
+    m_textures.clear();
+
+    // Destroy descriptor pool (this also frees the descriptor set)
+    if (m_textureDescriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, m_textureDescriptorPool, nullptr);
+        m_textureDescriptorPool = VK_NULL_HANDLE;
+        m_textureDescriptorSet = VK_NULL_HANDLE;
+    }
+
+    // Note: m_textureDescriptorSetLayout is owned by VulkanRenderer, don't destroy it here
+    m_textureDescriptorSetLayout = VK_NULL_HANDLE;
+
+    // Destroy sampler
+    if (m_textureSampler != VK_NULL_HANDLE) {
+        vkDestroySampler(device, m_textureSampler, nullptr);
+        m_textureSampler = VK_NULL_HANDLE;
+    }
+
+    Logger::info() << "Cleaned up mesh textures";
 }

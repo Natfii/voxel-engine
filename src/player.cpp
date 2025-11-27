@@ -10,6 +10,7 @@
 #include "debug_state.h"
 #include "logger.h"
 #include "terrain_constants.h"
+#include "key_bindings.h"
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -22,15 +23,18 @@ Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     : Position(position), WorldUp(up), Yaw(yaw), Pitch(pitch),
       MovementSpeed(5.0f), MouseSensitivity(0.1f), m_firstMouse(true),
       m_velocity(0.0f), m_onGround(false), m_inLiquid(false), m_cameraUnderwater(false),
-      m_submergence(0.0f), m_nKeyPressed(false), NoclipMode(false), m_isSprinting(false),
+      m_submergence(0.0f), m_nKeyPressed(false), m_f3KeyPressed(false), NoclipMode(false),
+      ThirdPersonMode(false), ThirdPersonDistance(5.5f), m_isSprinting(false),
       m_sprintKeyPressed(false)
 {
     updateVectors();
 }
 
 void Player::update(GLFWwindow* window, float deltaTime, World* world, bool processInput) {
-    // Handle N key to toggle noclip mode (only if processing input)
-    if (processInput && glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) {
+    const auto& keys = KeyBindings::instance();
+
+    // Handle noclip toggle key (only if processing input)
+    if (processInput && glfwGetKey(window, keys.noclip) == GLFW_PRESS) {
         if (!m_nKeyPressed) {
             NoclipMode = !NoclipMode;
             m_nKeyPressed = true;
@@ -42,6 +46,17 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
         }
     } else {
         m_nKeyPressed = false;
+    }
+
+    // Handle third-person toggle key (only if processing input)
+    if (processInput && glfwGetKey(window, keys.thirdPerson) == GLFW_PRESS) {
+        if (!m_f3KeyPressed) {
+            ThirdPersonMode = !ThirdPersonMode;
+            m_f3KeyPressed = true;
+            Logger::info() << "Third-person mode: " << (ThirdPersonMode ? "ON" : "OFF");
+        }
+    } else {
+        m_f3KeyPressed = false;
     }
 
     // Update mouse look (only if processing input)
@@ -87,20 +102,22 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
 }
 
 void Player::updateNoclip(GLFWwindow* window, float deltaTime) {
+    const auto& keys = KeyBindings::instance();
+
     // Noclip movement (fly mode) - 2x normal speed for faster exploration
     float velocity = MovementSpeed * 2.0f * deltaTime;
 
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+    if (glfwGetKey(window, keys.moveForward) == GLFW_PRESS)
         Position += Front * velocity;
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+    if (glfwGetKey(window, keys.moveBackward) == GLFW_PRESS)
         Position -= Front * velocity;
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+    if (glfwGetKey(window, keys.moveLeft) == GLFW_PRESS)
         Position -= Right * velocity;
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+    if (glfwGetKey(window, keys.moveRight) == GLFW_PRESS)
         Position += Right * velocity;
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
+    if (glfwGetKey(window, keys.jump) == GLFW_PRESS)
         Position += WorldUp * velocity;
-    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
+    if (glfwGetKey(window, keys.sprint) == GLFW_PRESS)
         Position -= WorldUp * velocity;
 }
 
@@ -169,26 +186,28 @@ void Player::updateNoclip(GLFWwindow* window, float deltaTime) {
  * @param processInput Whether to process keyboard input (false during menu)
  */
 void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bool processInput) {
+    const auto& keys = KeyBindings::instance();
+
     // Handle sprint input
     // NOTE: Sprint toggle mode could be added in the future by:
     // - Adding a sprint_toggle_mode config option in config.ini
     // - Tracking sprint toggle state in m_sprintKeyPressed member
     // - Toggling m_isSprinting on key press instead of holding
     // For now, using hold-to-sprint (Minecraft default behavior)
-    bool sprintKeyDown = processInput && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
+    bool sprintKeyDown = processInput && glfwGetKey(window, keys.sprint) == GLFW_PRESS;
     m_isSprinting = sprintKeyDown && m_onGround;  // Can only sprint on ground
 
     // WASD input for horizontal movement (only if processing input)
     glm::vec3 wishDir(0.0f);
 
     if (processInput) {
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        if (glfwGetKey(window, keys.moveForward) == GLFW_PRESS)
             wishDir += glm::normalize(glm::vec3(Front.x, 0.0f, Front.z));
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        if (glfwGetKey(window, keys.moveBackward) == GLFW_PRESS)
             wishDir -= glm::normalize(glm::vec3(Front.x, 0.0f, Front.z));
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        if (glfwGetKey(window, keys.moveLeft) == GLFW_PRESS)
             wishDir -= Right;
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        if (glfwGetKey(window, keys.moveRight) == GLFW_PRESS)
             wishDir += Right;
 
         // Normalize diagonal movement
@@ -246,7 +265,7 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     glm::vec3 horizontalVel = wishDir * moveSpeed;
 
     // Jumping (only if processing input)
-    if (processInput && glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+    if (processInput && glfwGetKey(window, keys.jump) == GLFW_PRESS) {
         if (m_inLiquid) {
             // Jump strength scales with submergence
             // Less submerged = stronger jump (can exit water easier)
@@ -273,8 +292,8 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
         }
     }
 
-    // Swim down with shift (only if processing input and in water)
-    if (m_inLiquid && processInput && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+    // Swim down with crouch key (only if processing input and in water)
+    if (m_inLiquid && processInput && glfwGetKey(window, keys.crouch) == GLFW_PRESS) {
         m_velocity.y -= SWIM_SPEED * 1.5f * deltaTime;  // Extra downward force
     }
 
@@ -849,7 +868,29 @@ bool Player::checkHorizontalCollision(const glm::vec3& position, World* world) {
 }
 
 glm::mat4 Player::getViewMatrix() const {
+    if (ThirdPersonMode) {
+        // Third-person camera: position behind and slightly above player
+        glm::vec3 cameraPos = getCameraPosition();
+        glm::vec3 lookTarget = Position; // Look at eye position
+        return glm::lookAt(cameraPos, lookTarget, WorldUp);
+    }
     return glm::lookAt(Position, Position + Front, Up);
+}
+
+glm::vec3 Player::getBodyPosition() const {
+    // Body position is at feet level
+    return Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+}
+
+glm::vec3 Player::getCameraPosition() const {
+    if (ThirdPersonMode) {
+        // Camera positioned behind player, slightly above
+        // Move back along the opposite of front direction
+        glm::vec3 offset = -Front * ThirdPersonDistance;
+        offset.y += 1.0f; // Slightly above eye level
+        return Position + offset;
+    }
+    return Position;
 }
 
 void Player::updateVectors() {

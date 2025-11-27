@@ -7,10 +7,11 @@ layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inTexCoord;
 layout(location = 3) in vec3 inTangent;
+layout(location = 4) in vec4 inVertexColor;  // Vertex color (RGBA)
 
 // Per-instance data (binding 1) - for instanced rendering
-layout(location = 4) in mat4 instanceTransform;  // Locations 4-7 (mat4 = 4x vec4)
-layout(location = 8) in vec4 instanceTintColor;  // Location 8
+layout(location = 5) in mat4 instanceTransform;  // Locations 5-8 (mat4 = 4x vec4)
+layout(location = 9) in vec4 instanceTintColor;  // Location 9
 
 // ========== Uniforms ==========
 
@@ -34,6 +35,7 @@ layout(location = 3) out vec3 fragTangent;
 layout(location = 4) out vec3 fragBitangent;
 layout(location = 5) out vec4 fragTintColor;
 layout(location = 6) out float fragTimeOfDay;  // For dynamic lighting
+layout(location = 7) out vec4 fragVertexColor; // Vertex color for PS1-style models
 
 // ========== Main ==========
 
@@ -56,8 +58,9 @@ void main() {
     // Pass through texture coordinates
     fragTexCoord = inTexCoord;
 
-    // Pass through tint color
+    // Combine instance tint with vertex color
     fragTintColor = instanceTintColor;
+    fragVertexColor = inVertexColor;
 
     // Pass through time of day for dynamic lighting
     fragTimeOfDay = camera.skyTimeData.x;

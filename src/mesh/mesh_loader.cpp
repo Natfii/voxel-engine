@@ -11,6 +11,15 @@
 #include <cmath>
 #include <unordered_map>
 
+// tinygltf for GLB/GLTF loading
+// STB_IMAGE_IMPLEMENTATION is already defined in block_system.cpp
+// Include stb_image.h first so tinygltf can use the external implementation
+#include "stb_image.h"
+#define TINYGLTF_IMPLEMENTATION
+#define TINYGLTF_NO_STB_IMAGE_WRITE  // Don't need image writing
+#define STBI_INCLUDE_STB_IMAGE_H     // Tell tinygltf we already included stb_image.h
+#include "tiny_gltf.h"
+
 // ========== OBJ Loader ==========
 
 std::vector<Mesh> MeshLoader::loadOBJ(const std::string& filepath,
@@ -243,11 +252,384 @@ int MeshLoader::convertOBJIndex(int index, size_t size) {
     return -1;  // Invalid
 }
 
-// ========== glTF Loader (Stub) ==========
+// ========== glTF/GLB Loader ==========
 
 std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
-                                        std::vector<PBRMaterial>& materials) {
-    throw std::runtime_error("glTF loading not yet implemented (Phase 2 feature)");
+                                        std::vector<PBRMaterial>& materials,
+                                        std::vector<TextureImage>& textures) {
+    Logger::info() << "Loading glTF/GLB mesh: " << filepath;
+
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    std::string err, warn;
+
+    // Determine if it's a binary GLB or text GLTF
+    bool isBinary = filepath.size() >= 4 &&
+                    (filepath.substr(filepath.size() - 4) == ".glb" ||
+                     filepath.substr(filepath.size() - 4) == ".GLB");
+
+    bool success = false;
+    if (isBinary) {
+        success = loader.LoadBinaryFromFile(&model, &err, &warn, filepath);
+    } else {
+        success = loader.LoadASCIIFromFile(&model, &err, &warn, filepath);
+    }
+
+    if (!warn.empty()) {
+        Logger::warning() << "glTF warning: " << warn;
+    }
+
+    if (!err.empty()) {
+        throw std::runtime_error("glTF error: " + err);
+    }
+
+    if (!success) {
+        throw std::runtime_error("Failed to load glTF file: " + filepath);
+    }
+
+    std::vector<Mesh> meshes;
+
+    // ========== Extract Textures ==========
+    textures.clear();
+
+    // Map from glTF texture index to our texture array index
+    std::unordered_map<int, int32_t> textureIndexMap;
+
+    for (size_t i = 0; i < model.textures.size(); ++i) {
+        const tinygltf::Texture& gltfTex = model.textures[i];
+
+        // Get the image source
+        if (gltfTex.source < 0 || gltfTex.source >= static_cast<int>(model.images.size())) {
+            Logger::warning() << "Texture " << i << " has invalid image source";
+            continue;
+        }
+
+        const tinygltf::Image& gltfImage = model.images[gltfTex.source];
+
+        TextureImage texImage;
+        texImage.name = gltfImage.name.empty() ? "texture_" + std::to_string(i) : gltfImage.name;
+
+        // Check if image data is already decoded (tinygltf does this for us)
+        if (!gltfImage.image.empty()) {
+            // tinygltf already decoded the image
+            texImage.width = static_cast<uint32_t>(gltfImage.width);
+            texImage.height = static_cast<uint32_t>(gltfImage.height);
+
+            // Convert to RGBA if necessary
+            if (gltfImage.component == 4) {
+                // Already RGBA
+                texImage.data = gltfImage.image;
+            } else if (gltfImage.component == 3) {
+                // RGB -> RGBA
+                texImage.data.resize(texImage.width * texImage.height * 4);
+                for (size_t p = 0; p < texImage.width * texImage.height; ++p) {
+                    texImage.data[p * 4 + 0] = gltfImage.image[p * 3 + 0];
+                    texImage.data[p * 4 + 1] = gltfImage.image[p * 3 + 1];
+                    texImage.data[p * 4 + 2] = gltfImage.image[p * 3 + 2];
+                    texImage.data[p * 4 + 3] = 255;
+                }
+            } else if (gltfImage.component == 1) {
+                // Grayscale -> RGBA
+                texImage.data.resize(texImage.width * texImage.height * 4);
+                for (size_t p = 0; p < texImage.width * texImage.height; ++p) {
+                    uint8_t gray = gltfImage.image[p];
+                    texImage.data[p * 4 + 0] = gray;
+                    texImage.data[p * 4 + 1] = gray;
+                    texImage.data[p * 4 + 2] = gray;
+                    texImage.data[p * 4 + 3] = 255;
+                }
+            } else if (gltfImage.component == 2) {
+                // Grayscale+Alpha -> RGBA
+                texImage.data.resize(texImage.width * texImage.height * 4);
+                for (size_t p = 0; p < texImage.width * texImage.height; ++p) {
+                    uint8_t gray = gltfImage.image[p * 2 + 0];
+                    uint8_t alpha = gltfImage.image[p * 2 + 1];
+                    texImage.data[p * 4 + 0] = gray;
+                    texImage.data[p * 4 + 1] = gray;
+                    texImage.data[p * 4 + 2] = gray;
+                    texImage.data[p * 4 + 3] = alpha;
+                }
+            }
+
+            if (texImage.isValid()) {
+                textureIndexMap[static_cast<int>(i)] = static_cast<int32_t>(textures.size());
+                textures.push_back(std::move(texImage));
+                Logger::info() << "Loaded texture " << i << ": " << textures.back().name
+                              << " (" << textures.back().width << "x" << textures.back().height << ")";
+            } else {
+                Logger::warning() << "Failed to process texture " << i;
+            }
+        } else {
+            Logger::warning() << "Texture " << i << " has no decoded image data";
+        }
+    }
+
+    Logger::info() << "Extracted " << textures.size() << " textures from glTF";
+
+    // ========== Load Materials ==========
+    materials.clear();
+    for (size_t matIdx = 0; matIdx < model.materials.size(); ++matIdx) {
+        const auto& gltfMat = model.materials[matIdx];
+        PBRMaterial mat = PBRMaterial::createDefault();
+
+        // Base color
+        if (gltfMat.pbrMetallicRoughness.baseColorFactor.size() >= 4) {
+            mat.baseColor = glm::vec4(
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[0]),
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[1]),
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[2]),
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[3])
+            );
+        }
+
+        // Metallic and roughness
+        mat.metallic = static_cast<float>(gltfMat.pbrMetallicRoughness.metallicFactor);
+        mat.roughness = static_cast<float>(gltfMat.pbrMetallicRoughness.roughnessFactor);
+
+        // Emissive
+        if (gltfMat.emissiveFactor.size() >= 3) {
+            float emissive = static_cast<float>(
+                (gltfMat.emissiveFactor[0] + gltfMat.emissiveFactor[1] + gltfMat.emissiveFactor[2]) / 3.0
+            );
+            mat.emissive = emissive;
+        }
+
+        // Base color texture (albedo)
+        int baseColorTexIdx = gltfMat.pbrMetallicRoughness.baseColorTexture.index;
+        if (baseColorTexIdx >= 0) {
+            auto it = textureIndexMap.find(baseColorTexIdx);
+            if (it != textureIndexMap.end()) {
+                mat.albedoTexture = it->second;
+            }
+        }
+
+        // Normal texture
+        int normalTexIdx = gltfMat.normalTexture.index;
+        if (normalTexIdx >= 0) {
+            auto it = textureIndexMap.find(normalTexIdx);
+            if (it != textureIndexMap.end()) {
+                mat.normalTexture = it->second;
+            }
+        }
+
+        // Metallic-roughness texture
+        int mrTexIdx = gltfMat.pbrMetallicRoughness.metallicRoughnessTexture.index;
+        if (mrTexIdx >= 0) {
+            auto it = textureIndexMap.find(mrTexIdx);
+            if (it != textureIndexMap.end()) {
+                mat.metallicRoughnessTexture = it->second;
+            }
+        }
+
+        // Emissive texture
+        int emissiveTexIdx = gltfMat.emissiveTexture.index;
+        if (emissiveTexIdx >= 0) {
+            auto it = textureIndexMap.find(emissiveTexIdx);
+            if (it != textureIndexMap.end()) {
+                mat.emissiveTexture = it->second;
+            }
+        }
+
+        materials.push_back(mat);
+        Logger::info() << "Material " << matIdx << ": albedoTex=" << mat.albedoTexture
+                      << ", normalTex=" << mat.normalTexture
+                      << ", mrTex=" << mat.metallicRoughnessTexture;
+    }
+
+    // If no materials, add default
+    if (materials.empty()) {
+        materials.push_back(PBRMaterial::createDefault());
+    }
+
+    // Process each mesh in the model
+    for (const auto& gltfMesh : model.meshes) {
+        for (const auto& primitive : gltfMesh.primitives) {
+            if (primitive.mode != TINYGLTF_MODE_TRIANGLES) {
+                Logger::warning() << "Skipping non-triangle primitive in mesh: " << gltfMesh.name;
+                continue;
+            }
+
+            std::vector<MeshVertex> vertices;
+            std::vector<uint32_t> indices;
+
+            // Get accessors
+            const tinygltf::Accessor* posAccessor = nullptr;
+            const tinygltf::Accessor* normalAccessor = nullptr;
+            const tinygltf::Accessor* uvAccessor = nullptr;
+            const tinygltf::Accessor* colorAccessor = nullptr;
+
+            // Position (required)
+            auto posIt = primitive.attributes.find("POSITION");
+            if (posIt == primitive.attributes.end()) {
+                Logger::warning() << "Mesh primitive has no POSITION attribute, skipping";
+                continue;
+            }
+            posAccessor = &model.accessors[posIt->second];
+
+            // Normal (optional)
+            auto normIt = primitive.attributes.find("NORMAL");
+            if (normIt != primitive.attributes.end()) {
+                normalAccessor = &model.accessors[normIt->second];
+            }
+
+            // UV (optional)
+            auto uvIt = primitive.attributes.find("TEXCOORD_0");
+            if (uvIt != primitive.attributes.end()) {
+                uvAccessor = &model.accessors[uvIt->second];
+            }
+
+            // Vertex color (optional - used by PS1-style models)
+            auto colorIt = primitive.attributes.find("COLOR_0");
+            if (colorIt != primitive.attributes.end()) {
+                colorAccessor = &model.accessors[colorIt->second];
+            }
+
+            // Get buffer views
+            const tinygltf::BufferView& posView = model.bufferViews[posAccessor->bufferView];
+            const tinygltf::Buffer& posBuffer = model.buffers[posView.buffer];
+
+            // Read vertex data
+            size_t vertexCount = posAccessor->count;
+            vertices.resize(vertexCount);
+
+            for (size_t i = 0; i < vertexCount; ++i) {
+                MeshVertex& vertex = vertices[i];
+
+                // Position
+                const float* posData = reinterpret_cast<const float*>(
+                    &posBuffer.data[posView.byteOffset + posAccessor->byteOffset + i * 12]
+                );
+                vertex.position = glm::vec3(posData[0], posData[1], posData[2]);
+
+                // Normal
+                if (normalAccessor) {
+                    const tinygltf::BufferView& normView = model.bufferViews[normalAccessor->bufferView];
+                    const tinygltf::Buffer& normBuffer = model.buffers[normView.buffer];
+                    const float* normData = reinterpret_cast<const float*>(
+                        &normBuffer.data[normView.byteOffset + normalAccessor->byteOffset + i * 12]
+                    );
+                    vertex.normal = glm::normalize(glm::vec3(normData[0], normData[1], normData[2]));
+                } else {
+                    vertex.normal = glm::vec3(0, 1, 0);
+                }
+
+                // UV
+                if (uvAccessor) {
+                    const tinygltf::BufferView& uvView = model.bufferViews[uvAccessor->bufferView];
+                    const tinygltf::Buffer& uvBuffer = model.buffers[uvView.buffer];
+                    const float* uvData = reinterpret_cast<const float*>(
+                        &uvBuffer.data[uvView.byteOffset + uvAccessor->byteOffset + i * 8]
+                    );
+                    vertex.texCoord = glm::vec2(uvData[0], uvData[1]);
+                } else {
+                    vertex.texCoord = glm::vec2(0, 0);
+                }
+
+                // Vertex color (for PS1-style models)
+                if (colorAccessor) {
+                    const tinygltf::BufferView& colorView = model.bufferViews[colorAccessor->bufferView];
+                    const tinygltf::Buffer& colorBuffer = model.buffers[colorView.buffer];
+
+                    // COLOR_0 can be vec3 or vec4, and float or normalized unsigned byte/short
+                    int numComponents = (colorAccessor->type == TINYGLTF_TYPE_VEC4) ? 4 : 3;
+
+                    if (colorAccessor->componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+                        // Float colors
+                        size_t stride = numComponents * sizeof(float);
+                        const float* colorData = reinterpret_cast<const float*>(
+                            &colorBuffer.data[colorView.byteOffset + colorAccessor->byteOffset + i * stride]
+                        );
+                        vertex.color.r = colorData[0];
+                        vertex.color.g = colorData[1];
+                        vertex.color.b = colorData[2];
+                        vertex.color.a = (numComponents == 4) ? colorData[3] : 1.0f;
+                    } else if (colorAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                        // Normalized unsigned byte colors (0-255 -> 0.0-1.0)
+                        size_t stride = numComponents * sizeof(uint8_t);
+                        const uint8_t* colorData =
+                            &colorBuffer.data[colorView.byteOffset + colorAccessor->byteOffset + i * stride];
+                        vertex.color.r = colorData[0] / 255.0f;
+                        vertex.color.g = colorData[1] / 255.0f;
+                        vertex.color.b = colorData[2] / 255.0f;
+                        vertex.color.a = (numComponents == 4) ? colorData[3] / 255.0f : 1.0f;
+                    } else if (colorAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                        // Normalized unsigned short colors (0-65535 -> 0.0-1.0)
+                        size_t stride = numComponents * sizeof(uint16_t);
+                        const uint16_t* colorData = reinterpret_cast<const uint16_t*>(
+                            &colorBuffer.data[colorView.byteOffset + colorAccessor->byteOffset + i * stride]
+                        );
+                        vertex.color.r = colorData[0] / 65535.0f;
+                        vertex.color.g = colorData[1] / 65535.0f;
+                        vertex.color.b = colorData[2] / 65535.0f;
+                        vertex.color.a = (numComponents == 4) ? colorData[3] / 65535.0f : 1.0f;
+                    }
+                }
+                // Note: vertex.color defaults to white (1,1,1,1) via MeshVertex constructor
+
+                // Default tangent
+                vertex.tangent = glm::vec3(1, 0, 0);
+            }
+
+            // Read indices
+            if (primitive.indices >= 0) {
+                const tinygltf::Accessor& idxAccessor = model.accessors[primitive.indices];
+                const tinygltf::BufferView& idxView = model.bufferViews[idxAccessor.bufferView];
+                const tinygltf::Buffer& idxBuffer = model.buffers[idxView.buffer];
+
+                indices.reserve(idxAccessor.count);
+
+                const uint8_t* dataPtr = &idxBuffer.data[idxView.byteOffset + idxAccessor.byteOffset];
+
+                for (size_t i = 0; i < idxAccessor.count; ++i) {
+                    uint32_t index = 0;
+                    switch (idxAccessor.componentType) {
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                            index = dataPtr[i];
+                            break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                            index = reinterpret_cast<const uint16_t*>(dataPtr)[i];
+                            break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                            index = reinterpret_cast<const uint32_t*>(dataPtr)[i];
+                            break;
+                        default:
+                            Logger::warning() << "Unknown index component type: " << idxAccessor.componentType;
+                            index = 0;
+                    }
+                    indices.push_back(index);
+                }
+            } else {
+                // No indices, generate sequential
+                for (size_t i = 0; i < vertexCount; ++i) {
+                    indices.push_back(static_cast<uint32_t>(i));
+                }
+            }
+
+            // Create mesh
+            std::string meshName = gltfMesh.name.empty() ? "mesh_" + std::to_string(meshes.size()) : gltfMesh.name;
+            Mesh mesh(meshName, vertices, indices);
+            mesh.calculateTangents();
+            mesh.calculateBounds();
+
+            // Set material index
+            if (primitive.material >= 0) {
+                mesh.materialIndex = static_cast<uint32_t>(primitive.material);
+            }
+
+            Logger::info() << "  Mesh '" << meshName << "': " << vertices.size() << " verts, "
+                          << indices.size() / 3 << " tris"
+                          << (colorAccessor ? " (with vertex colors)" : "");
+
+            meshes.push_back(std::move(mesh));
+        }
+    }
+
+    if (meshes.empty()) {
+        throw std::runtime_error("glTF file contains no valid meshes: " + filepath);
+    }
+
+    Logger::info() << "Loaded glTF: " << meshes.size() << " meshes, " << materials.size() << " materials";
+    return meshes;
 }
 
 // ========== Procedural Mesh Generators ==========

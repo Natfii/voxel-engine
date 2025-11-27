@@ -21,10 +21,11 @@
  * Layout designed to match Vulkan vertex input requirements.
  */
 struct MeshVertex {
-    glm::vec3 position;    ///< Local space position
-    glm::vec3 normal;      ///< Vertex normal (normalized)
-    glm::vec2 texCoord;    ///< UV texture coordinates
-    glm::vec3 tangent;     ///< Tangent for normal mapping (PBR)
+    glm::vec3 position{0.0f};           ///< Local space position
+    glm::vec3 normal{0.0f, 1.0f, 0.0f}; ///< Vertex normal (normalized)
+    glm::vec2 texCoord{0.0f};           ///< UV texture coordinates
+    glm::vec3 tangent{1.0f, 0.0f, 0.0f}; ///< Tangent for normal mapping (PBR)
+    glm::vec4 color{1.0f};              ///< Vertex color (RGBA), defaults to white
 
     /**
      * @brief Get Vulkan binding description for vertex buffer
@@ -34,7 +35,7 @@ struct MeshVertex {
 
     /**
      * @brief Get Vulkan attribute descriptions for vertex shader
-     * @return Array of 4 attribute descriptions (position, normal, uv, tangent)
+     * @return Array of 5 attribute descriptions (position, normal, uv, tangent, color)
      */
     static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptions();
 };

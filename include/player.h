@@ -77,10 +77,33 @@ public:
      * @brief Gets the view matrix for rendering
      *
      * Constructs a view matrix using the current position, front, and up vectors.
+     * In third-person mode, camera is positioned behind and above the player.
      *
      * @return View matrix for use in MVP transformation
      */
     glm::mat4 getViewMatrix() const;
+
+    /**
+     * @brief Gets the player's body position (for model rendering)
+     *
+     * Returns the position where the player model should be rendered,
+     * which is at feet level (eye position minus eye height).
+     *
+     * @return Position at player's feet for model rendering
+     */
+    glm::vec3 getBodyPosition() const;
+
+    /**
+     * @brief Checks if in third-person view mode
+     * @return True if third-person mode is active
+     */
+    bool isThirdPerson() const { return ThirdPersonMode; }
+
+    /**
+     * @brief Gets the camera position (eye position in 1st person, offset in 3rd person)
+     * @return Camera world position for rendering
+     */
+    glm::vec3 getCameraPosition() const;
 
     /**
      * @brief Checks if the player is currently in liquid (swimming)
@@ -131,6 +154,8 @@ public:
     float MouseSensitivity;///< Mouse sensitivity multiplier
 
     bool NoclipMode;       ///< If true, disables physics and allows free flight
+    bool ThirdPersonMode;  ///< If true, camera is behind player
+    float ThirdPersonDistance; ///< Distance behind player in third-person mode
 
 private:
     // ========== Mouse Tracking ==========
@@ -145,6 +170,7 @@ private:
     bool m_cameraUnderwater; ///< True if camera/head is specifically in liquid (for fog)
     float m_submergence;     ///< How deep in liquid (0.0 = not submerged, 1.0 = fully submerged)
     bool m_nKeyPressed;      ///< Tracks N key state for noclip toggle
+    bool m_f3KeyPressed;     ///< Tracks F3 key state for third-person toggle
     bool m_isSprinting;      ///< True if currently sprinting
     bool m_sprintKeyPressed; ///< Tracks sprint key state for toggle mode (reserved)
 

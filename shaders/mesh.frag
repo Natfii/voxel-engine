@@ -9,6 +9,7 @@ layout(location = 3) in vec3 fragTangent;
 layout(location = 4) in vec3 fragBitangent;
 layout(location = 5) in vec4 fragTintColor;
 layout(location = 6) in float fragTimeOfDay;
+layout(location = 7) in vec4 fragVertexColor;  // Vertex color (for PS1-style models)
 
 // ========== Outputs ==========
 
@@ -16,7 +17,8 @@ layout(location = 0) out vec4 outColor;
 
 // ========== Uniforms ==========
 
-layout(binding = 0) uniform CameraUBO {
+// Set 0: Camera data (shared with voxel pipeline)
+layout(set = 0, binding = 0) uniform CameraUBO {
     mat4 model;
     mat4 view;
     mat4 projection;
@@ -27,29 +29,16 @@ layout(binding = 0) uniform CameraUBO {
     vec4 liquidTint;
 } camera;
 
-// NOTE: MaterialUBO (binding 1) not implemented yet - using push constants would be ideal
-// For now, use hardcoded defaults to prevent GPU hang from invalid descriptor read
-// layout(binding = 1) uniform MaterialUBO {
-//     vec4 baseColor;
-//     float metallic;
-//     float roughness;
-//     float emissive;
-//     float alphaCutoff;
-//     int albedoTexIndex;
-//     int normalTexIndex;
-//     int metallicRoughnessTexIndex;
-//     int emissiveTexIndex;
-// } material;
+// Set 1: Mesh textures
+layout(set = 1, binding = 0) uniform sampler2D meshTextures[64];
 
-// Hardcoded material defaults (TODO: implement proper material binding)
-const vec4 material_baseColor = vec4(1.0, 1.0, 1.0, 1.0);
-const float material_metallic = 0.0;
-const float material_roughness = 0.5;
-const float material_emissive = 0.0;
-const float material_alphaCutoff = 0.1;
-
-// Texture array (binding 2) - not implemented in Phase 1
-// layout(binding = 2) uniform sampler2D textures[256];
+// Push constant for material data
+layout(push_constant) uniform MaterialPushConstant {
+    int albedoTexIndex;     // -1 = no texture, use base color
+    int normalTexIndex;     // -1 = no normal map
+    float metallic;
+    float roughness;
+} material;
 
 // ========== Constants ==========
 
@@ -95,7 +84,7 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
 
 // Fresnel-Schlick approximation
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
-    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
 // ========== Lighting Calculation ==========
@@ -147,31 +136,40 @@ vec3 calculatePBRLighting(vec3 albedo, float metallic, float roughness, vec3 nor
 // ========== Main ==========
 
 void main() {
-    // Sample albedo texture (Phase 1: use constant color)
-    // Use hardcoded material constants (binding 1 not implemented yet)
-    vec3 albedo = material_baseColor.rgb * fragTintColor.rgb;
+    // Sample albedo texture or use vertex color (for PS1-style models without textures)
+    vec4 albedoSample;
+    if (material.albedoTexIndex >= 0 && material.albedoTexIndex < 64) {
+        albedoSample = texture(meshTextures[material.albedoTexIndex], fragTexCoord);
+    } else {
+        // No texture - use vertex color (defaults to white if not set)
+        albedoSample = fragVertexColor;
+    }
 
-    // Get normal from normal map (Phase 1: use vertex normal)
+    // Apply instance tint color
+    vec3 albedo = albedoSample.rgb * fragTintColor.rgb;
+    float alpha = albedoSample.a * fragTintColor.a;
+
+    // Get normal from normal map or use vertex normal
     vec3 normal = normalize(fragNormal);
 
-    // Phase 2: Normal mapping (TODO when textures implemented)
-    // if (material.normalTexIndex >= 0) {
-    //     vec3 tangentNormal = texture(textures[material.normalTexIndex], fragTexCoord).rgb;
-    //     tangentNormal = tangentNormal * 2.0 - 1.0;
-    //     mat3 TBN = mat3(fragTangent, fragBitangent, fragNormal);
-    //     normal = normalize(TBN * tangentNormal);
-    // }
+    if (material.normalTexIndex >= 0 && material.normalTexIndex < 64) {
+        vec3 tangentNormal = texture(meshTextures[material.normalTexIndex], fragTexCoord).rgb;
+        tangentNormal = tangentNormal * 2.0 - 1.0;
+
+        // Build TBN matrix
+        vec3 T = normalize(fragTangent);
+        vec3 B = normalize(fragBitangent);
+        vec3 N = normalize(fragNormal);
+        mat3 TBN = mat3(T, B, N);
+
+        normal = normalize(TBN * tangentNormal);
+    }
 
     // View direction
     vec3 viewDir = normalize(camera.cameraPos.xyz - fragWorldPos);
 
-    // PBR lighting calculation (use hardcoded material values)
-    vec3 color = calculatePBRLighting(albedo, material_metallic, material_roughness, normal, viewDir);
-
-    // Add emissive (self-illumination)
-    if (material_emissive > 0.0) {
-        color += albedo * material_emissive;
-    }
+    // PBR lighting calculation
+    vec3 color = calculatePBRLighting(albedo, material.metallic, material.roughness, normal, viewDir);
 
     // Tone mapping (simple Reinhard)
     color = color / (color + vec3(1.0));
@@ -180,10 +178,10 @@ void main() {
     color = pow(color, vec3(1.0 / 2.2));
 
     // Output final color
-    outColor = vec4(color, material_baseColor.a * fragTintColor.a);
+    outColor = vec4(color, alpha);
 
     // Alpha cutoff for masked transparency
-    if (outColor.a < material_alphaCutoff) {
+    if (outColor.a < 0.1) {
         discard;
     }
 }

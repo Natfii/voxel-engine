@@ -49,6 +49,7 @@
 #include "raycast.h"
 #include "input_manager.h"
 #include "inventory.h"
+#include "key_bindings.h"
 #include "terrain_constants.h"
 #include "sun_tracker.h"
 #include "frustum.h"
@@ -111,6 +112,9 @@ int main(int argc, char* argv[]) {
         if (!config.loadFromFile("config.ini")) {
             std::cerr << "Warning: Failed to load config.ini, using default values" << '\n';
         }
+
+        // Load key bindings from config
+        KeyBindings::instance().loadFromConfig();
 
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // No OpenGL context
@@ -1035,6 +1039,76 @@ int main(int argc, char* argv[]) {
         std::cout << "Mesh system ready: " << meshRenderer.getMeshCount() << " meshes, "
                  << meshRenderer.getInstanceCount() << " instances" << '\n';
 
+        // ========== PLAYER MODEL SETUP ==========
+        // Load player model for third-person view
+        // Model should be placed in assets/models/player.glb
+        uint32_t playerMeshId = 0;
+        uint32_t playerInstanceId = 0;
+        bool playerModelLoaded = false;
+        float playerModelScale = 1.0f;
+        glm::vec3 playerModelOffset = glm::vec3(0.0f); // Offset to center model at position
+
+        try {
+            std::string playerModelPath = "assets/models/player.glb";
+
+            // Load player model with textures using MeshRenderer
+            playerMeshId = meshRenderer.loadMeshFromGLTF(playerModelPath);
+
+            if (playerMeshId != 0) {
+                // Get model bounds to determine its height
+                glm::vec3 modelMin, modelMax;
+                if (meshRenderer.getMeshBounds(playerMeshId, modelMin, modelMax)) {
+                    float modelHeight = modelMax.y - modelMin.y;
+                    const float TARGET_HEIGHT = 1.8f; // 1.8 blocks tall (like Minecraft player)
+
+                    // Safeguard against division by zero or extremely small models
+                    if (modelHeight < 0.001f) {
+                        std::cerr << "Warning: Player model has invalid height (" << modelHeight
+                                  << "), using default scale" << '\n';
+                        playerModelScale = 1.0f;
+                    } else {
+                        playerModelScale = TARGET_HEIGHT / modelHeight;
+                        // Clamp scale to reasonable range
+                        if (playerModelScale > 100.0f || playerModelScale < 0.01f) {
+                            std::cerr << "Warning: Calculated scale " << playerModelScale
+                                      << " out of range, clamping" << '\n';
+                            playerModelScale = glm::clamp(playerModelScale, 0.01f, 100.0f);
+                        }
+                    }
+
+                    // Calculate offset to center model at player position (in model space)
+                    // Model bounds tell us where the model actually is relative to its origin
+                    // We need to offset so the model's center (X,Z) and feet (Y) align with origin
+                    glm::vec3 modelCenter = (modelMin + modelMax) * 0.5f;
+
+                    // Offset in MODEL SPACE (before scaling):
+                    // - X and Z: center the model horizontally
+                    // - Y: place feet (minY) at origin
+                    playerModelOffset = glm::vec3(
+                        -modelCenter.x,    // Center horizontally
+                        -modelMin.y,       // Feet at origin
+                        -modelCenter.z     // Center depth-wise
+                    );
+
+                    std::cout << "Player model loaded: bounds min=(" << modelMin.x << "," << modelMin.y << "," << modelMin.z
+                             << ") max=(" << modelMax.x << "," << modelMax.y << "," << modelMax.z
+                             << ") height=" << modelHeight << " scale=" << playerModelScale
+                             << " offset=(" << playerModelOffset.x << "," << playerModelOffset.y << "," << playerModelOffset.z << ")" << '\n';
+                }
+
+                // Create instance (hidden by default in first-person)
+                glm::mat4 playerTransform = glm::mat4(1.0f);
+                playerInstanceId = meshRenderer.createInstance(playerMeshId, playerTransform);
+                meshRenderer.setInstanceVisible(playerInstanceId, false); // Hidden in 1st person
+
+                playerModelLoaded = true;
+                std::cout << "Player model ready for third-person view with textures (F3 to toggle)" << '\n';
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Warning: Could not load player model: " << e.what() << '\n';
+            std::cout << "Place player.glb in assets/models/ for third-person view" << '\n';
+        }
+
         bool isPaused = false;
         bool escPressed = false;
         bool requestMouseReset = false;
@@ -1098,8 +1172,9 @@ int main(int argc, char* argv[]) {
             // static sky light values by dynamic sun/moon intensity
             // No need to recalculate voxel lighting when sun moves!
 
-            // Handle F9 key for console
-            if (glfwGetKey(window, GLFW_KEY_F9) == GLFW_PRESS) {
+            // Handle console toggle key (default F9)
+            const auto& keys = KeyBindings::instance();
+            if (glfwGetKey(window, keys.toggleConsole) == GLFW_PRESS) {
                 if (!f9Pressed) {
                     f9Pressed = true;
                     console.toggle();
@@ -1115,8 +1190,8 @@ int main(int argc, char* argv[]) {
                 f9Pressed = false;
             }
 
-            // Handle I key for inventory (only when not in console or paused)
-            if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
+            // Handle inventory toggle key (default I) - only when not in console or paused
+            if (glfwGetKey(window, keys.toggleInventory) == GLFW_PRESS) {
                 if (!iPressed && !console.isVisible() && !isPaused) {
                     iPressed = true;
                     inventory.toggleOpen();
@@ -1132,8 +1207,8 @@ int main(int argc, char* argv[]) {
                 iPressed = false;
             }
 
-            // Handle ESC key for pause menu (but not if console or inventory is open)
-            if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+            // Handle pause key (default ESC) for pause menu (but not if console or inventory is open)
+            if (glfwGetKey(window, keys.pause) == GLFW_PRESS) {
                 if (!escPressed) {
                     escPressed = true;
 
@@ -1181,6 +1256,32 @@ int main(int argc, char* argv[]) {
             // Always update player physics, but only process input during gameplay
             bool canProcessInput = InputManager::instance().canMove();
             player.update(window, clampedDeltaTime, &world, canProcessInput);
+
+            // Update player model for third-person view
+            if (playerModelLoaded) {
+                // Toggle visibility based on view mode
+                meshRenderer.setInstanceVisible(playerInstanceId, player.isThirdPerson());
+
+                if (player.isThirdPerson()) {
+                    // Update player model transform
+                    // Transform order (right-to-left): offset -> scale -> rotate -> translate
+                    // 1. First center the model at origin (offset in model space)
+                    // 2. Then scale to correct size
+                    // 3. Then rotate to face player's direction
+                    // 4. Finally translate to player's position in world
+                    glm::vec3 bodyPos = player.getBodyPosition();
+
+                    glm::mat4 playerTransform = glm::mat4(1.0f);
+                    playerTransform = glm::translate(playerTransform, bodyPos);  // World position
+                    // Rotate model to face AWAY from camera (so camera sees back)
+                    // Player.Yaw is the direction the player is looking, model should face same way
+                    playerTransform = glm::rotate(playerTransform, glm::radians(-player.Yaw + 90.0f), glm::vec3(0, 1, 0));
+                    playerTransform = glm::scale(playerTransform, glm::vec3(playerModelScale));  // Scale to 2 blocks tall
+                    playerTransform = glm::translate(playerTransform, playerModelOffset);  // Center model at origin
+
+                    meshRenderer.updateInstanceTransform(playerInstanceId, playerTransform);
+                }
+            }
 
             // Update inventory system
             inventory.update(window, clampedDeltaTime);
