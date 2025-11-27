@@ -1046,6 +1046,7 @@ int main(int argc, char* argv[]) {
         uint32_t playerInstanceId = 0;
         bool playerModelLoaded = false;
         float playerModelScale = 1.0f;
+        float playerModelYOffset = 0.0f; // Offset to place model feet at position
 
         try {
             std::string playerModelPath = "assets/models/player.glb";
@@ -1068,10 +1069,30 @@ int main(int argc, char* argv[]) {
                 glm::vec3 modelMax = playerMeshes[0].boundsMax;
                 float modelHeight = modelMax.y - modelMin.y;
                 const float TARGET_HEIGHT = 2.0f; // 2 blocks tall
-                playerModelScale = TARGET_HEIGHT / modelHeight;
 
-                std::cout << "Player model loaded: original height=" << modelHeight
-                         << ", scale=" << playerModelScale << " for 2 block height" << '\n';
+                // Safeguard against division by zero or extremely small models
+                if (modelHeight < 0.001f) {
+                    std::cerr << "Warning: Player model has invalid height (" << modelHeight
+                              << "), using default scale" << '\n';
+                    playerModelScale = 1.0f;
+                } else {
+                    playerModelScale = TARGET_HEIGHT / modelHeight;
+                    // Clamp scale to reasonable range
+                    if (playerModelScale > 100.0f || playerModelScale < 0.01f) {
+                        std::cerr << "Warning: Calculated scale " << playerModelScale
+                                  << " out of range, clamping" << '\n';
+                        playerModelScale = glm::clamp(playerModelScale, 0.01f, 100.0f);
+                    }
+                }
+
+                // Calculate Y offset to place model feet at ground level
+                // After scaling, the model's minY should be at 0 (feet on ground)
+                playerModelYOffset = -modelMin.y * playerModelScale;
+
+                std::cout << "Player model loaded: bounds min=(" << modelMin.x << "," << modelMin.y << "," << modelMin.z
+                         << ") max=(" << modelMax.x << "," << modelMax.y << "," << modelMax.z
+                         << ") height=" << modelHeight << " scale=" << playerModelScale
+                         << " yOffset=" << playerModelYOffset << '\n';
 
                 // Create instance (hidden by default in first-person)
                 glm::mat4 playerTransform = glm::mat4(1.0f);
@@ -1242,6 +1263,8 @@ int main(int argc, char* argv[]) {
                 if (player.isThirdPerson()) {
                     // Update player model transform
                     glm::vec3 bodyPos = player.getBodyPosition();
+                    // Apply Y offset to place model feet at ground level
+                    bodyPos.y += playerModelYOffset;
                     glm::mat4 playerTransform = glm::translate(glm::mat4(1.0f), bodyPos);
                     // Rotate model to face same direction as player
                     playerTransform = glm::rotate(playerTransform, glm::radians(-player.Yaw - 90.0f), glm::vec3(0, 1, 0));
