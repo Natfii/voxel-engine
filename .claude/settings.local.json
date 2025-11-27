@@ -58,7 +58,9 @@
       "WebFetch(domain:w-shadow.com)",
       "WebFetch(domain:www.gamedeveloper.com)",
       "WebFetch(domain:wiki.bedrock.dev)",
-      "WebFetch(domain:docs.iolite-engine.com)"
+      "WebFetch(domain:docs.iolite-engine.com)",
+      "Bash(git clone:*)",
+      "Bash(test:*)"
     ],
     "deny": [],
     "ask": []

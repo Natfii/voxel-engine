@@ -1,8 +1,8 @@
 # Voxel Engine: Complete Handbook
 
-**Version:** 2.2
-**Last Updated:** 2025-11-26
-**Status:** Production Ready (Event System + Engine API + YAML Scripting)
+**Version:** 2.3
+**Last Updated:** 2025-11-27
+**Status:** Production Ready (Event System + Engine API + YAML Scripting + Editor Tools)
 
 ---
 
@@ -42,6 +42,80 @@ If you're Claude Code or another AI assistant working on this project:
 A modern voxel-based game engine built with **Vulkan**, featuring procedural terrain generation, infinite world streaming, dynamic lighting, and advanced rendering techniques. The engine provides a complete framework for voxel-based games with Minecraft-inspired mechanics and optimizations.
 
 ## Recent Updates
+
+**November 27, 2025 - Editor Tools Implementation:**
+
+### **3D Skeletal Annotation Editor**
+- ✅ **3deditor Console Command** - Launch skeletal editor with `3deditor [model_path]`
+- ✅ **Model Loading** - Support for glTF and OBJ model formats
+- ✅ **Bone Placement Wizard** - Step-by-step guided workflow for placing bones
+- ✅ **ImGuizmo Integration** - Interactive 3D translation gizmos for bone positioning
+- ✅ **Undo/Redo System** - Full command history with undo/redo support
+- ✅ **Rig File Format** - YAML-based rig files saved to `assets/rigs/`
+- ✅ **Required Bone Set** - spine_root, spine_tip, leg_L, leg_R, arm_L, arm_R, head
+- ✅ **Optional Tail Bones** - tail_base, tail_tip for tailed characters
+- ✅ **Camera Controls** - Orbit, pan, zoom, and arrow key panning
+- ✅ **Bone Hierarchy Visualization** - Visual representation of skeleton structure
+- ✅ **Preview Animation** - Real-time preview of procedural animations
+- ✅ **Wireframe Model Rendering** - Model displayed in viewport for reference
+- ✅ **XYZ Dragger Controls** - Color-coded draggers (red=X, green=Y, blue=Z) for bone positioning
+- ✅ **Preview Orb** - Pulsing red orb shows current bone placement position
+- ✅ **Tooltips** - Comprehensive tooltips on all controls for beginners
+
+### **2D Particle Effect Editor**
+- ✅ **particaleditor Console Command** - Launch particle editor with `particaleditor [effect_path]`
+- ✅ **Multi-Emitter Support** - Multiple emitters per particle effect
+- ✅ **Emitter Shapes** - Point, cone, box, and circle emission patterns
+- ✅ **Particle Render Shapes** - Circle, square, triangle, star, ring, and spark visuals
+- ✅ **Color Gradient** - Start and end colors with alpha for fade effects
+- ✅ **Lifetime Properties** - Size and color curves over particle lifetime
+- ✅ **Burst Emission** - Configurable particle burst patterns
+- ✅ **Physics System** - Gravity and drag simulation
+- ✅ **Blend Modes** - Alpha, additive, and premultiplied alpha blending
+- ✅ **Real-Time Preview** - Live viewport showing particle effect
+- ✅ **Timeline Controls** - Visual timeline with progress bar, playhead, and duration bars
+- ✅ **Effect File Format** - YAML-based effect files saved to `assets/particles/`
+- ✅ **Preset Effects** - Built-in presets (fire, smoke, sparkle, explosion, rain, snow)
+- ✅ **Tooltips** - Comprehensive tooltips on all controls for beginners
+- ✅ **File Browser** - Native file browser for save/load operations
+
+### **Editor Infrastructure**
+- ✅ **EditorCamera** - Reusable orbit/pan/zoom camera for editors
+- ✅ **PreviewAnimator** - Animation preview system for skeletal editor
+- ✅ **ParticleEffect System** - Runtime particle effect and emitter classes
+- ✅ **File Browser** - Reusable ImGui file browser component for save/load dialogs
+- ✅ **Particle Effect File I/O** - YAML serialization for particle effects
+
+**Files Added:**
+- `include/editor/editor_camera.h` - Editor camera class
+- `include/editor/skeleton_editor_state.h` - Skeletal editor state management
+- `include/editor/rig_file.h` - Rig file loading/saving
+- `include/editor/skeletal_editor.h` - Main skeletal editor class
+- `include/editor/preview_animator.h` - Animation preview system
+- `include/editor/particle_editor.h` - Particle effect editor
+- `include/editor/file_browser.h` - Reusable file browser component
+- `include/editor/particle_effect_file.h` - Particle effect file I/O
+- `src/editor/editor_camera.cpp` - Camera implementation
+- `src/editor/skeleton_editor_state.cpp` - State management implementation
+- `src/editor/rig_file.cpp` - Rig file I/O implementation
+- `src/editor/skeletal_editor.cpp` - Skeletal editor implementation
+- `src/editor/preview_animator.cpp` - Animation preview implementation
+- `src/editor/particle_editor.cpp` - Particle editor implementation
+- `src/editor/file_browser.cpp` - File browser implementation
+- `src/editor/particle_effect_file.cpp` - Particle effect YAML serialization
+- `include/particle/particle_effect.h` - Particle effect class
+- `include/particle/particle_emitter.h` - Particle emitter class
+- `src/particle/particle_effect.cpp` - Effect implementation
+- `src/particle/particle_emitter.cpp` - Emitter implementation
+
+**Impact:**
+- Content creators can now annotate character models with animation skeletons
+- Artists can create and edit particle effects visually
+- Both editors save human-readable YAML files for version control
+- Animation-ready character rigs for procedural animation system
+- Rich particle effects for game events and visual feedback
+
+---
 
 **November 26, 2025 - Event System & Engine API (Major Release):**
 
@@ -508,6 +582,33 @@ The engine now supports rendering arbitrary 3D meshes alongside voxel terrain! A
 - **ConVar System** - Persistent console variables
 - **Debug Overlays** - FPS, position, target info
 - **Markdown Viewer** - In-game documentation viewer
+
+### Editor Tools
+- **3D Skeletal Annotation Editor** - Annotate character models with animation skeletons
+  - **Console Command:** `3deditor [model_path]`
+  - **Model Support:** glTF and OBJ formats
+  - **Bone Placement Wizard:** Step-by-step guided workflow
+  - **Interactive Gizmos:** ImGuizmo 3D translation controls
+  - **Undo/Redo:** Full command history support
+  - **Required Bones:** spine_root, spine_tip, leg_L, leg_R, arm_L, arm_R, head
+  - **Optional Bones:** tail_base, tail_tip (for tailed characters)
+  - **Camera Controls:** Orbit with middle-mouse, pan with Shift+middle-mouse, zoom with scroll
+  - **Bone Hierarchy:** Visual skeleton structure display
+  - **Rig Files:** YAML format saved to `assets/rigs/`
+  - **Animation Preview:** Real-time preview of procedural animations (walk, idle, tail sway)
+
+- **2D Particle Effect Editor** - Create and edit particle effects
+  - **Console Command:** `particaleditor [effect_path]`
+  - **Multi-Emitter:** Support for multiple emitters per effect
+  - **Emitter Shapes:** Point, cone, box, and circle emission patterns
+  - **Property Curves:** Size and color over particle lifetime
+  - **Burst Emission:** Configurable burst patterns
+  - **Physics:** Gravity and drag simulation
+  - **Blend Modes:** Alpha, additive, and premultiplied alpha blending
+  - **Real-Time Preview:** Live viewport with particle simulation
+  - **Timeline Controls:** Play, pause, reset, and scrubbing
+  - **Effect Files:** YAML format saved to `assets/particles/`
+  - **Hot-Reload:** Changes apply immediately to preview
 
 ## Technical Specifications
 

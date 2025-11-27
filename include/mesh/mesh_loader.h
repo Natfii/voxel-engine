@@ -38,6 +38,29 @@ struct TextureImage {
 };
 
 /**
+ * @brief Node in glTF scene hierarchy
+ */
+struct GLTFNode {
+    std::string name;
+    glm::mat4 localTransform = glm::mat4(1.0f);
+    int parent = -1;  // -1 means root
+    std::vector<int> children;
+    int meshIndex = -1;  // -1 means no mesh
+};
+
+/**
+ * @brief Complete glTF scene with meshes, materials, textures, and hierarchy
+ */
+struct GLTFScene {
+    std::vector<Mesh> meshes;
+    std::vector<PBRMaterial> materials;
+    std::vector<TextureImage> textures;
+    std::vector<GLTFNode> nodes;
+    glm::vec3 boundsMin = glm::vec3(FLT_MAX);
+    glm::vec3 boundsMax = glm::vec3(-FLT_MAX);
+};
+
+/**
  * @brief Static mesh loading utilities
  *
  * Supports loading meshes from various formats:
@@ -88,6 +111,19 @@ public:
     static std::vector<Mesh> loadGLTF(const std::string& filepath,
                                        std::vector<PBRMaterial>& materials,
                                        std::vector<TextureImage>& textures);
+
+    /**
+     * @brief Load complete glTF scene with hierarchy
+     *
+     * Loads a complete glTF scene including meshes, materials, textures,
+     * and the full node hierarchy with transforms. This is useful for
+     * skeletal editors and scene graph visualization.
+     *
+     * @param filepath Path to .gltf or .glb file
+     * @return Complete GLTFScene with all scene data
+     * @throws std::runtime_error if file not found or parsing fails
+     */
+    static GLTFScene loadGLTFScene(const std::string& filepath);
 
     // ========== Procedural Mesh Generators ==========
 

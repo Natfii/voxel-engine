@@ -10,6 +10,8 @@
 #include "perf_monitor.h"
 #include "block_system.h"
 #include "biome_system.h"
+#include "editor/skeletal_editor.h"
+#include "editor/particle_editor.h"
 // #include "engine_api.h"      // TODO: Implement EngineAPI
 // #include "event_dispatcher.h" // TODO: Implement EventDispatcher
 #include <sstream>
@@ -23,6 +25,8 @@ World* ConsoleCommands::s_world = nullptr;
 VulkanRenderer* ConsoleCommands::s_renderer = nullptr;
 float ConsoleCommands::s_timeSpeed = 1.0f;      // Default: normal speed (time flows by default)
 float ConsoleCommands::s_currentSkyTime = 0.25f; // Default: morning (sunrise)
+std::unique_ptr<SkeletalEditor> ConsoleCommands::s_skeletalEditor = nullptr;
+std::unique_ptr<ParticleEditor> ConsoleCommands::s_particleEditor = nullptr;
 
 void ConsoleCommands::registerAll(Console* console, Player* player, World* world, VulkanRenderer* renderer) {
     s_console = console;
@@ -158,6 +162,21 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
     registry.registerCommand("entity", "Entity management commands",
                            "entity <list|remove|clear> [args]", cmdEntity,
                            {"list", "remove", "clear"});
+
+    // Initialize and register editor commands
+    s_skeletalEditor = std::make_unique<SkeletalEditor>();
+    s_skeletalEditor->initialize(renderer);
+
+    s_particleEditor = std::make_unique<ParticleEditor>();
+    s_particleEditor->initialize(renderer);
+
+    registry.registerCommand("3deditor", "Open 3D skeletal annotation editor",
+                           "3deditor [model_path]", cmd3DEditor,
+                           {"assets/models/player.glb"});
+
+    registry.registerCommand("particaleditor", "Open 2D particle effect editor",
+                           "particaleditor [effect_path]", cmdParticleEditor,
+                           {"assets/particles/"});
 }
 
 void ConsoleCommands::cmdHelp(const std::vector<std::string>& args) {
@@ -1196,5 +1215,59 @@ void ConsoleCommands::cmdEntity(const std::vector<std::string>& args) {
     else {
         s_console->addMessage("Unknown entity command: " + subcommand, ConsoleMessageType::ERROR);
         s_console->addMessage("Available: list, remove, clear", ConsoleMessageType::INFO);
+    }
+}
+
+void ConsoleCommands::cmd3DEditor(const std::vector<std::string>& args) {
+    if (!s_skeletalEditor) {
+        s_console->addMessage("Error: Skeletal editor not initialized", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    std::string modelPath;
+    if (args.size() > 1) {
+        modelPath = args[1];
+    }
+
+    s_skeletalEditor->open(modelPath);
+    s_console->addMessage("3D Skeletal Editor opened", ConsoleMessageType::INFO);
+    if (!modelPath.empty()) {
+        s_console->addMessage("  Loading model: " + modelPath, ConsoleMessageType::INFO);
+    }
+}
+
+void ConsoleCommands::cmdParticleEditor(const std::vector<std::string>& args) {
+    if (!s_particleEditor) {
+        s_console->addMessage("Error: Particle editor not initialized", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    std::string effectPath;
+    if (args.size() > 1) {
+        effectPath = args[1];
+    }
+
+    s_particleEditor->open(effectPath);
+    s_console->addMessage("Particle Effect Editor opened", ConsoleMessageType::INFO);
+    if (!effectPath.empty()) {
+        s_console->addMessage("  Loading effect: " + effectPath, ConsoleMessageType::INFO);
+    }
+}
+
+void ConsoleCommands::updateEditors(float deltaTime) {
+    if (s_skeletalEditor && s_skeletalEditor->isOpen()) {
+        s_skeletalEditor->update(deltaTime);
+    }
+    if (s_particleEditor && s_particleEditor->isOpen()) {
+        s_particleEditor->update(deltaTime);
+    }
+}
+
+void ConsoleCommands::renderEditors() {
+    if (s_skeletalEditor && s_skeletalEditor->isOpen()) {
+        s_skeletalEditor->render();
+    }
+    if (s_particleEditor && s_particleEditor->isOpen()) {
+        s_particleEditor->render();
     }
 }

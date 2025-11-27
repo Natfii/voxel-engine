@@ -1,11 +1,14 @@
 #pragma once
 
 #include "console.h"
+#include <memory>
 
 // Forward declarations
 class Player;
 class World;
 class VulkanRenderer;
+class SkeletalEditor;
+class ParticleEditor;
 
 // Register all built-in console commands
 class ConsoleCommands {
@@ -16,6 +19,12 @@ public:
     static float getTimeSpeed() { return s_timeSpeed; }
     static float getCurrentSkyTime() { return s_currentSkyTime; }
     static void updateSkyTime(float deltaTime);
+
+    // Editor access
+    static SkeletalEditor* getSkeletalEditor() { return s_skeletalEditor.get(); }
+    static ParticleEditor* getParticleEditor() { return s_particleEditor.get(); }
+    static void updateEditors(float deltaTime);
+    static void renderEditors();
 
 private:
     static Console* s_console;
@@ -47,4 +56,12 @@ private:
     static void cmdBrush(const std::vector<std::string>& args);
     static void cmdSpawn(const std::vector<std::string>& args);
     static void cmdEntity(const std::vector<std::string>& args);
+
+    // Editor commands
+    static void cmd3DEditor(const std::vector<std::string>& args);
+    static void cmdParticleEditor(const std::vector<std::string>& args);
+
+    // Editor instances
+    static std::unique_ptr<SkeletalEditor> s_skeletalEditor;
+    static std::unique_ptr<ParticleEditor> s_particleEditor;
 };

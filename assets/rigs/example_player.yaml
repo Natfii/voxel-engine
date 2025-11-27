@@ -1,0 +1,25 @@
+version: 1
+model: assets/models/player.glb
+has_tail: false
+bones:
+  - name: spine_root
+    parent: ~
+    position: [0.0, 0.5, 0.0]
+  - name: spine_tip
+    parent: spine_root
+    position: [0.0, 1.2, 0.0]
+  - name: leg_L
+    parent: spine_root
+    position: [-0.2, 0.0, 0.0]
+  - name: leg_R
+    parent: spine_root
+    position: [0.2, 0.0, 0.0]
+  - name: arm_L
+    parent: spine_tip
+    position: [-0.4, 1.0, 0.0]
+  - name: arm_R
+    parent: spine_tip
+    position: [0.4, 1.0, 0.0]
+  - name: head
+    parent: spine_tip
+    position: [0.0, 1.5, 0.0]

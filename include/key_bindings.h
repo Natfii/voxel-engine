@@ -62,6 +62,7 @@ public:
     int toggleConsole = GLFW_KEY_F9;
     int toggleInventory = GLFW_KEY_I;
     int pause = GLFW_KEY_ESCAPE;
+    int cursorUnlock = GLFW_KEY_RIGHT_ALT;  // Temporarily unlock cursor
 
     // ========== Mouse Sensitivity ==========
     float mouseSensitivity = 0.1f;

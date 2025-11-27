@@ -78,6 +78,10 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
+    // Don't scroll hotbar when cursor is unlocked (editing mode)
+    if (InputManager::instance().isCursorUnlocked()) {
+        return;
+    }
     if (g_inventory) {
         g_inventory->handleMouseScroll(yoffset);
     }
@@ -1114,6 +1118,8 @@ int main(int argc, char* argv[]) {
         bool requestMouseReset = false;
         bool f9Pressed = false;
         bool iPressed = false;
+        bool cursorUnlocked = false;         // Cursor temporarily unlocked via key
+        bool cursorUnlockKeyPressed = false; // Key state tracking
 
         // Autosave timer (saves modified chunks every 5 minutes)
         float autosaveTimer = 0.0f;
@@ -1179,6 +1185,10 @@ int main(int argc, char* argv[]) {
                     f9Pressed = true;
                     console.toggle();
 
+                    // Reset cursor unlock state when toggling console
+                    cursorUnlocked = false;
+                    InputManager::instance().setCursorUnlocked(false);
+
                     // Hide cursor when console is visible (text input uses keyboard only)
                     if (console.isVisible()) {
                         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
@@ -1196,6 +1206,10 @@ int main(int argc, char* argv[]) {
                     iPressed = true;
                     inventory.toggleOpen();
 
+                    // Reset cursor unlock state when toggling inventory
+                    cursorUnlocked = false;
+                    InputManager::instance().setCursorUnlocked(false);
+
                     // Show cursor when inventory is open
                     if (inventory.isOpen()) {
                         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -1205,6 +1219,32 @@ int main(int argc, char* argv[]) {
                 }
             } else {
                 iPressed = false;
+            }
+
+            // Handle cursor unlock key (default RIGHT_ALT) - temporarily unlock cursor
+            if (glfwGetKey(window, keys.cursorUnlock) == GLFW_PRESS) {
+                if (!cursorUnlockKeyPressed && !isPaused && !console.isVisible() && !inventory.isOpen()) {
+                    cursorUnlockKeyPressed = true;
+                    cursorUnlocked = true;
+                    InputManager::instance().setCursorUnlocked(true);
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                }
+            } else {
+                cursorUnlockKeyPressed = false;
+            }
+
+            // Re-lock cursor on mouse click when cursor is temporarily unlocked
+            // But NOT if clicking inside an ImGui window (like editors)
+            if (cursorUnlocked && !isPaused && !console.isVisible() && !inventory.isOpen()) {
+                if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS ||
+                    glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+                    // Only re-lock if ImGui doesn't want the mouse (clicking outside UI)
+                    if (!ImGui::GetIO().WantCaptureMouse) {
+                        cursorUnlocked = false;
+                        InputManager::instance().setCursorUnlocked(false);
+                        requestMouseReset = true;
+                    }
+                }
             }
 
             // Handle pause key (default ESC) for pause menu (but not if console or inventory is open)
@@ -1632,6 +1672,10 @@ int main(int argc, char* argv[]) {
 
             // Render console (overlays on top of everything)
             console.render();
+
+            // Render editor windows (3D editor, particle editor)
+            ConsoleCommands::updateEditors(clampedDeltaTime);
+            ConsoleCommands::renderEditors();
 
             // Render inventory UI (full inventory when open, hotbar always visible)
             if (inventory.isOpen()) {
