@@ -162,6 +162,18 @@ public:
     void updateZoom(float delta);
 
     /**
+     * @brief Sets the camera yaw angle directly
+     * @param yaw Horizontal rotation in degrees
+     */
+    void setYaw(float yaw);
+
+    /**
+     * @brief Sets the camera pitch angle directly
+     * @param pitch Vertical rotation in degrees
+     */
+    void setPitch(float pitch);
+
+    /**
      * @brief Updates camera position in fly mode
      *
      * Free-flight navigation using WASD-style controls. Movement is
@@ -246,10 +258,40 @@ public:
     glm::vec3 getTarget() const { return m_target; }
 
     /**
+     * @brief Sets the camera target point
+     * @param target New target point to orbit around
+     */
+    void setTarget(const glm::vec3& target) {
+        m_target = target;
+        updateCameraVectors();
+    }
+
+    /**
      * @brief Gets the current camera-to-target distance
      * @return Distance in world units
      */
     float getDistance() const { return m_distance; }
+
+    /**
+     * @brief Sets the camera distance from target
+     * @param distance New distance (clamped to valid range)
+     */
+    void setDistance(float distance) {
+        m_distance = glm::clamp(distance, MIN_DISTANCE, MAX_DISTANCE);
+        updateCameraVectors();
+    }
+
+    /**
+     * @brief Gets the current yaw angle
+     * @return Yaw in degrees
+     */
+    float getYaw() const { return m_yaw; }
+
+    /**
+     * @brief Gets the current pitch angle
+     * @return Pitch in degrees
+     */
+    float getPitch() const { return m_pitch; }
 
     /**
      * @brief Sets the field of view
@@ -291,8 +333,8 @@ private:
     static constexpr float FLY_SPEED = 5.0f;              ///< Fly mode movement speed
     static constexpr float MIN_DISTANCE = 0.5f;           ///< Minimum zoom distance
     static constexpr float MAX_DISTANCE = 1000.0f;        ///< Maximum zoom distance
-    static constexpr float MIN_PITCH = -89.0f;            ///< Minimum pitch angle
-    static constexpr float MAX_PITCH = 89.0f;             ///< Maximum pitch angle
+    static constexpr float MIN_PITCH = -179.0f;           ///< Minimum pitch angle (full rotation)
+    static constexpr float MAX_PITCH = 179.0f;            ///< Maximum pitch angle (full rotation)
 
     /**
      * @brief Recalculates camera position from spherical coordinates

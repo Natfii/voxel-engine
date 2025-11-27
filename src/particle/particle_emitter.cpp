@@ -39,24 +39,36 @@ void ParticleEmitter::setConfig(const EmitterConfig& config) {
 void ParticleEmitter::update(float deltaTime) {
     m_time += deltaTime;
 
+    // Safety limits to prevent crashes from extreme values
+    static constexpr size_t MAX_PARTICLES = 10000;
+    static constexpr int MAX_SPAWNS_PER_FRAME = 100;
+
     // Check if emitter is finished
     if (!m_config.loop && m_time >= m_config.duration) {
         // Only update existing particles, don't spawn new ones
     } else {
-        // Spawn particles based on rate
+        // Spawn particles based on rate (with safety limits)
         float rate = m_config.rate.random();
         m_spawnAccumulator += rate * deltaTime;
 
-        while (m_spawnAccumulator >= 1.0f) {
-            spawnParticle();
+        int spawnsThisFrame = 0;
+        while (m_spawnAccumulator >= 1.0f && spawnsThisFrame < MAX_SPAWNS_PER_FRAME) {
+            if (m_particles.size() < MAX_PARTICLES) {
+                spawnParticle();
+            }
             m_spawnAccumulator -= 1.0f;
+            spawnsThisFrame++;
+        }
+        // Cap accumulator to prevent runaway spawning
+        if (m_spawnAccumulator > 10.0f) {
+            m_spawnAccumulator = 10.0f;
         }
 
         // Handle burst spawning
         if (m_config.burst.count > 0 && m_burstCyclesRemaining > 0) {
             m_burstTimer += deltaTime;
             if (m_burstTimer >= m_config.burst.interval || m_time < deltaTime) {
-                burst(m_config.burst.count);
+                burst(std::min(m_config.burst.count, MAX_SPAWNS_PER_FRAME));
                 m_burstTimer = 0.0f;
                 m_burstCyclesRemaining--;
             }
@@ -111,11 +123,11 @@ void ParticleEmitter::spawnParticle() {
     p.rotation = m_dist01(m_rng) * glm::two_pi<float>();
     p.frameIndex = m_config.texture.frameIndex;
 
-    // Initial color
+    // Initial color - use colorStart (will be updated by evaluateColor each frame)
     if (!m_config.colorGradient.empty()) {
         p.color = m_config.colorGradient[0].color;
     } else {
-        p.color = glm::vec4(1.0f);
+        p.color = m_config.colorStart;
     }
 
     m_particles.push_back(p);
@@ -176,7 +188,7 @@ glm::vec3 ParticleEmitter::getSpawnPosition() {
             float angle = m_dist01(m_rng) * glm::two_pi<float>();
             float radius = std::sqrt(m_dist01(m_rng)) * m_config.circleRadius;
             pos.x += std::cos(angle) * radius;
-            pos.z += std::sin(angle) * radius;
+            pos.y += std::sin(angle) * radius;  // Use X/Y plane for 2D preview
             break;
         }
 
@@ -199,14 +211,14 @@ glm::vec3 ParticleEmitter::getSpawnVelocity() {
     glm::vec3 velocity;
 
     if (m_config.shape == EmitterShape::CONE) {
-        // Cone emission - spread within cone angle
+        // Cone emission - spread within cone angle (2D: spray upward with spread)
         float coneHalfAngle = glm::radians(m_config.coneAngle * 0.5f);
-        float theta = m_dist01(m_rng) * glm::two_pi<float>();
-        float phi = m_dist01(m_rng) * coneHalfAngle;
+        float spreadAngle = (m_dist01(m_rng) * 2.0f - 1.0f) * coneHalfAngle;  // -cone to +cone
+        float baseAngle = glm::radians(90.0f);  // Up direction
 
-        velocity.x = std::sin(phi) * std::cos(theta) * speed;
-        velocity.y = std::cos(phi) * speed;
-        velocity.z = std::sin(phi) * std::sin(theta) * speed;
+        velocity.x = std::cos(baseAngle + spreadAngle) * speed;
+        velocity.y = std::sin(baseAngle + spreadAngle) * speed;
+        velocity.z = 0.0f;
     } else {
         // 2D angle-based emission
         velocity.x = std::cos(angle) * speed;
@@ -220,38 +232,48 @@ glm::vec3 ParticleEmitter::getSpawnVelocity() {
 glm::vec4 ParticleEmitter::evaluateColor(float normalizedAge) {
     const auto& gradient = m_config.colorGradient;
 
+    glm::vec4 result;
+
+    // Use simple start/end interpolation if no gradient defined
     if (gradient.empty()) {
-        return glm::vec4(1.0f);
+        result = glm::mix(m_config.colorStart, m_config.colorEnd, normalizedAge);
+    }
+    else if (gradient.size() == 1) {
+        result = gradient[0].color;
+    }
+    else {
+        // Find surrounding stops
+        size_t i = 0;
+        while (i < gradient.size() - 1 && gradient[i + 1].time <= normalizedAge) {
+            ++i;
+        }
+
+        if (i >= gradient.size() - 1) {
+            result = gradient.back().color;
+        } else {
+            // Interpolate between stops
+            const ColorStop& a = gradient[i];
+            const ColorStop& b = gradient[i + 1];
+
+            // Guard against division by zero if stops have same time
+            float timeDiff = b.time - a.time;
+            if (timeDiff < 0.0001f) {
+                result = a.color;
+            } else {
+                float t = (normalizedAge - a.time) / timeDiff;
+                t = glm::clamp(t, 0.0f, 1.0f);
+                result = glm::mix(a.color, b.color, t);
+            }
+        }
     }
 
-    if (gradient.size() == 1) {
-        return gradient[0].color;
-    }
+    // Clamp color to valid 0-1 range to prevent crashes from extreme values
+    result.r = glm::clamp(result.r, 0.0f, 1.0f);
+    result.g = glm::clamp(result.g, 0.0f, 1.0f);
+    result.b = glm::clamp(result.b, 0.0f, 1.0f);
+    result.a = glm::clamp(result.a, 0.0f, 1.0f);
 
-    // Find surrounding stops
-    size_t i = 0;
-    while (i < gradient.size() - 1 && gradient[i + 1].time <= normalizedAge) {
-        ++i;
-    }
-
-    if (i >= gradient.size() - 1) {
-        return gradient.back().color;
-    }
-
-    // Interpolate between stops
-    const ColorStop& a = gradient[i];
-    const ColorStop& b = gradient[i + 1];
-
-    // Guard against division by zero if stops have same time
-    float timeDiff = b.time - a.time;
-    if (timeDiff < 0.0001f) {
-        return a.color;
-    }
-
-    float t = (normalizedAge - a.time) / timeDiff;
-    t = glm::clamp(t, 0.0f, 1.0f);
-
-    return glm::mix(a.color, b.color, t);
+    return result;
 }
 
 glm::vec2 ParticleEmitter::evaluateSize(float normalizedAge) {

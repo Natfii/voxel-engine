@@ -69,6 +69,20 @@ A modern voxel-based game engine built with **Vulkan**, featuring procedural ter
 - Conditional logic (if/else) and variables in scripts
 - Biome-specific event handlers
 
+🎨 **Built-in Editor Tools**
+- **3D Skeletal Editor** (`3deditor`): Annotate models with animation skeletons
+  - Guided bone placement wizard
+  - Wireframe model rendering
+  - XYZ dragger controls with preview orb
+  - Undo/redo with YAML export
+- **Particle Effect Editor** (`particaleditor`): Create visual effects
+  - Multiple emitter shapes (point, cone, box, circle)
+  - 6 particle render shapes (circle, square, triangle, star, ring, spark)
+  - Timeline with playback controls
+  - Built-in presets (fire, smoke, sparkle, explosion, rain, snow)
+- **Freeze Mode** (`freeze`): Pause world updates for focused asset creation
+- **Editor-Only Mode** (`-debug 2`): Launch with cute animated world background
+
 ## Quick Start
 
 ### Prerequisites

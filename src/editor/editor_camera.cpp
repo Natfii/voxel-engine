@@ -79,6 +79,16 @@ void EditorCamera::updateOrbit(float deltaX, float deltaY) {
     updateCameraVectors();
 }
 
+void EditorCamera::setYaw(float yaw) {
+    m_yaw = yaw;
+    updateCameraVectors();
+}
+
+void EditorCamera::setPitch(float pitch) {
+    m_pitch = glm::clamp(pitch, MIN_PITCH, MAX_PITCH);
+    updateCameraVectors();
+}
+
 void EditorCamera::updatePan(float deltaX, float deltaY) {
     // Calculate camera's right and up vectors
     glm::vec3 forwardVec = m_target - m_position;

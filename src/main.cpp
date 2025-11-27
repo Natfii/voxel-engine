@@ -43,6 +43,10 @@
 #include "config.h"
 #include "console.h"
 #include "console_commands.h"
+#include "editor/skeletal_editor.h"
+#include "editor/particle_editor.h"
+#include "editor/paint_editor.h"
+#include "editor/editor_background.h"
 #include "debug_state.h"
 #include "perf_monitor.h"
 #include "targeting_system.h"
@@ -69,7 +73,9 @@ enum class GameState {
 // Global variables
 VulkanRenderer* g_renderer = nullptr;
 Inventory* g_inventory = nullptr;
-bool g_debugMode = false;  // Quick-start mode for development (-debug flag)
+bool g_debugMode = false;      // Quick-start mode for development (-debug flag)
+int g_debugLevel = 0;          // 0=off, 1=normal debug, 2=editor-only mode (no world)
+bool g_startFrozen = false;    // Start with world frozen (-freeze flag)
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     if (g_renderer) {
@@ -104,9 +110,30 @@ int main(int argc, char* argv[]) {
         std::string arg = argv[i];
         if (arg == "-debug" || arg == "--debug") {
             g_debugMode = true;
-            std::cout << "=== DEBUG MODE ENABLED ===" << '\n';
-            std::cout << "Skipping main menu, using reduced world size for quick iteration" << '\n';
+            g_debugLevel = 1;  // Default debug level
+            // Check if next arg is a number (debug level)
+            if (i + 1 < argc) {
+                std::string nextArg = argv[i + 1];
+                if (nextArg == "1" || nextArg == "2") {
+                    g_debugLevel = std::stoi(nextArg);
+                    i++;  // Skip the level argument
+                }
+            }
+            std::cout << "=== DEBUG MODE ENABLED (Level " << g_debugLevel << ") ===" << '\n';
+            if (g_debugLevel == 1) {
+                std::cout << "Skipping main menu, using reduced world size for quick iteration" << '\n';
+            } else if (g_debugLevel == 2) {
+                std::cout << "EDITOR-ONLY MODE: No world loading, editors open by default" << '\n';
+                std::cout << "Perfect for asset creation and tool development!" << '\n';
+            }
             std::cout << "=========================" << '\n';
+        }
+        else if (arg == "-freeze" || arg == "--freeze") {
+            g_startFrozen = true;
+            std::cout << "=== STARTING FROZEN ===" << '\n';
+            std::cout << "World updates will be paused on startup" << '\n';
+            std::cout << "Type 'freeze' in console to resume" << '\n';
+            std::cout << "========================" << '\n';
         }
     }
 
@@ -136,7 +163,10 @@ int main(int argc, char* argv[]) {
         }
         glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
         glfwSetScrollCallback(window, scroll_callback);
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        // Keep mouse free in editor-only mode (debug 2), capture otherwise
+        if (g_debugLevel != 2) {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        }
 
         // Initialize Vulkan renderer
         std::cout << "Initializing Vulkan renderer..." << '\n';
@@ -427,8 +457,10 @@ int main(int argc, char* argv[]) {
             loadingThreadRunning.store(true);
             std::thread renderThread(loadingRenderThread);
 
-            // Disable cursor for gameplay
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            // Disable cursor for gameplay (keep free in editor-only mode)
+            if (g_debugLevel != 2) {
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            }
 
         // Determine if we're loading an existing world or creating a new one
         bool loadingExistingWorld = (menuResult.action == MenuAction::LOAD_GAME && !menuResult.worldPath.empty());
@@ -639,19 +671,24 @@ int main(int argc, char* argv[]) {
             // We generate: inner=6 (decorated), outer=12 (terrain buffer)
             // This creates a solid starting area with pre-loaded terrain buffer
             // DEBUG MODE: Use smaller radius (3 instead of 6) for faster iteration
-            const int SPAWN_RADIUS = g_debugMode ? 3 : 6;
-            int spawnRadius = SPAWN_RADIUS;
+            // EDITOR MODE (debug 2): Skip world generation entirely
+            if (g_debugLevel != 2) {
+                const int SPAWN_RADIUS = g_debugMode ? 3 : 6;
+                int spawnRadius = SPAWN_RADIUS;
 
-            std::cout << "Generating " << spawnRadius << " chunk radius ("
-                     << ((2*spawnRadius+1)*(2*spawnRadius+1)*(2*spawnRadius+1))
-                     << " chunks) to fully cover load sphere..." << '\n';
+                std::cout << "Generating " << spawnRadius << " chunk radius ("
+                         << ((2*spawnRadius+1)*(2*spawnRadius+1)*(2*spawnRadius+1))
+                         << " chunks) to fully cover load sphere..." << '\n';
 
-            world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
+                world.generateSpawnChunks(spawnChunkX, spawnChunkY, spawnChunkZ, spawnRadius);
 
-            // Decorate world with trees and features
-            // Only decorates spawn chunks for faster startup
-            std::cout << "Placing trees and features..." << '\n';
-            world.decorateWorld();
+                // Decorate world with trees and features
+                // Only decorates spawn chunks for faster startup
+                std::cout << "Placing trees and features..." << '\n';
+                world.decorateWorld();
+            } else {
+                std::cout << "EDITOR MODE: Skipping world generation" << '\n';
+            }
 
             // PERFORMANCE FIX (2025-11-23): Skip bulk water registration at startup
             // Water is already registered incrementally in addStreamedChunk() (world.cpp:1144)
@@ -943,6 +980,28 @@ int main(int argc, char* argv[]) {
         Console console(window);
         ConsoleCommands::registerAll(&console, &player, &world, &renderer);
 
+        // Apply launch flags
+        if (g_startFrozen) {
+            ConsoleCommands::setFrozen(true);
+            console.addMessage("World started FROZEN (use 'freeze' to unfreeze)", ConsoleMessageType::INFO);
+        }
+
+        // Set debug level in ConsoleCommands for editors to access
+        ConsoleCommands::setDebugLevel(g_debugLevel);
+
+        // Debug level 2: Open editors by default with cute background
+        if (g_debugLevel == 2) {
+            ConsoleCommands::setFrozen(true);  // Also freeze in editor mode
+            ConsoleCommands::getSkeletalEditor()->open("");
+            ConsoleCommands::getParticleEditor()->open("");
+            ConsoleCommands::getPaintEditor()->open();
+            // Initialize cute animated background (960x540 for HD look, scales to fill screen)
+            ConsoleCommands::initEditorBackground(960, 540);
+            console.addMessage("EDITOR MODE: Skeletal, Particle, and Paint editors opened", ConsoleMessageType::INFO);
+            console.addMessage("Cute world simulation running in background!", ConsoleMessageType::INFO);
+            console.addMessage("World is frozen. Focus on asset creation!", ConsoleMessageType::INFO);
+        }
+
         // Create inventory system
         Inventory inventory;
         g_inventory = &inventory;
@@ -975,17 +1034,19 @@ int main(int argc, char* argv[]) {
             mapPreview = nullptr;
         }
 
-        // Initialize world streaming for infinite world generation
+        // Initialize world streaming for infinite world generation (skip in editor-only mode)
         std::cout << "Starting world streaming system..." << '\n';
         WorldStreaming worldStreaming(&world, world.getBiomeMap(), &renderer);
 
-        // SPAWN ANCHOR (2025-11-25): Keep spawn chunks permanently loaded (like Minecraft)
-        // Uses same radius as spawn generation - these chunks never unload
-        // DEBUG MODE: Use smaller anchor (3 instead of 6) for faster iteration
-        const int ANCHOR_RADIUS = g_debugMode ? 3 : 6;
-        worldStreaming.setSpawnAnchor(0, 2, 0, ANCHOR_RADIUS);  // chunk (0,2,0) = world origin surface
+        if (g_debugLevel != 2) {
+            // SPAWN ANCHOR (2025-11-25): Keep spawn chunks permanently loaded (like Minecraft)
+            // Uses same radius as spawn generation - these chunks never unload
+            // DEBUG MODE: Use smaller anchor (3 instead of 6) for faster iteration
+            const int ANCHOR_RADIUS = g_debugMode ? 3 : 6;
+            worldStreaming.setSpawnAnchor(0, 2, 0, ANCHOR_RADIUS);  // chunk (0,2,0) = world origin surface
 
-        worldStreaming.start();  // Starts worker threads (default: CPU cores - 1)
+            worldStreaming.start();  // Starts worker threads (default: CPU cores - 1)
+        }
 
         // Initialize mesh rendering system
         std::cout << "Initializing mesh rendering system..." << '\n';
@@ -1294,8 +1355,11 @@ int main(int argc, char* argv[]) {
             }
 
             // Always update player physics, but only process input during gameplay
-            bool canProcessInput = InputManager::instance().canMove();
-            player.update(window, clampedDeltaTime, &world, canProcessInput);
+            // Skip player entirely in editor-only mode (debug 2) - no player exists
+            if (g_debugLevel != 2) {
+                bool canProcessInput = InputManager::instance().canMove();
+                player.update(window, clampedDeltaTime, &world, canProcessInput);
+            }
 
             // Update player model for third-person view
             if (playerModelLoaded) {
@@ -1328,18 +1392,21 @@ int main(int argc, char* argv[]) {
 
             // Update lighting system (OPTIMIZED: reduced from 60 FPS to 30 FPS for performance)
             // Still feels responsive but cuts CPU usage in half
-            static float lightingUpdateTimer = 0.0f;
-            lightingUpdateTimer += clampedDeltaTime;
-            const float lightingUpdateInterval = 1.0f / 30.0f;  // 30 updates per second
-            if (lightingUpdateTimer >= lightingUpdateInterval) {
-                lightingUpdateTimer = 0.0f;
-                if (DebugState::instance().lightingEnabled.getValue()) {
-                    world.getLightingSystem()->update(clampedDeltaTime, &renderer);
+            // FREEZE: Skip lighting updates when frozen
+            if (!ConsoleCommands::isFrozen()) {
+                static float lightingUpdateTimer = 0.0f;
+                lightingUpdateTimer += clampedDeltaTime;
+                const float lightingUpdateInterval = 1.0f / 30.0f;  // 30 updates per second
+                if (lightingUpdateTimer >= lightingUpdateInterval) {
+                    lightingUpdateTimer = 0.0f;
+                    if (DebugState::instance().lightingEnabled.getValue()) {
+                        world.getLightingSystem()->update(clampedDeltaTime, &renderer);
 
-                    // PERFORMANCE OPTIMIZATION (2025-11-23): Disabled interpolated lighting
-                    // Was updating 32,768 values per chunk every frame = 40-80M operations/sec!
-                    // Now uses direct lighting values for massive CPU savings on lower-end hardware
-                    // world.updateInterpolatedLighting(clampedDeltaTime);
+                        // PERFORMANCE OPTIMIZATION (2025-11-23): Disabled interpolated lighting
+                        // Was updating 32,768 values per chunk every frame = 40-80M operations/sec!
+                        // Now uses direct lighting values for massive CPU savings on lower-end hardware
+                        // world.updateInterpolatedLighting(clampedDeltaTime);
+                    }
                 }
             }
 
@@ -1348,7 +1415,8 @@ int main(int argc, char* argv[]) {
             // Based on voxel engine best practices: smaller batches + higher frequency
             // With parallel processing (4 concurrent), can handle smaller batches efficiently
             // 10 chunks × 60Hz = 600 chunks/sec throughput (but 4 parallel = faster wall time)
-            {
+            // FREEZE: Skip decoration when frozen
+            if (!ConsoleCommands::isFrozen()) {
                 auto decorationStart = std::chrono::high_resolution_clock::now();
 
                 world.processPendingDecorations(&renderer, &worldStreaming, 10);  // Async mesh via worker threads
@@ -1388,7 +1456,7 @@ int main(int argc, char* argv[]) {
             wasConsoleOpen = console.isVisible();
             wasInventoryOpen = inventory.isOpen();
 
-            if (requestMouseReset) {
+            if (requestMouseReset && g_debugLevel != 2) {
                 player.resetMouse();
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                 requestMouseReset = false;
@@ -1397,18 +1465,22 @@ int main(int argc, char* argv[]) {
             // Update world streaming (load/unload chunks based on player position)
             // PERFORMANCE FIX: Only run streaming updates 4 times per second instead of 60 FPS
             // Reduces 374,640 iterations/second to 24,976 (99.3% reduction!)
-            static float streamingUpdateTimer = 0.0f;
-            streamingUpdateTimer += clampedDeltaTime;
-            const float STREAMING_UPDATE_INTERVAL = 0.25f;  // 4 times per second
+            // FREEZE: Skip world streaming when frozen
             const float renderDistance = 80.0f;  // Reduced from 120 for better performance
-
-            if (streamingUpdateTimer >= STREAMING_UPDATE_INTERVAL) {
-                streamingUpdateTimer = 0.0f;
-                const float loadDistance = renderDistance + 32.0f;     // Load chunks slightly beyond render distance
-                const float unloadDistance = renderDistance + 192.0f;  // Hysteresis: chunks stay loaded longer when moving away
-                worldStreaming.updatePlayerPosition(player.Position, loadDistance, unloadDistance);
-            }
             auto afterStreaming = std::chrono::high_resolution_clock::now();
+            if (!ConsoleCommands::isFrozen()) {
+                static float streamingUpdateTimer = 0.0f;
+                streamingUpdateTimer += clampedDeltaTime;
+                const float STREAMING_UPDATE_INTERVAL = 0.25f;  // 4 times per second
+
+                if (streamingUpdateTimer >= STREAMING_UPDATE_INTERVAL) {
+                    streamingUpdateTimer = 0.0f;
+                    const float loadDistance = renderDistance + 32.0f;     // Load chunks slightly beyond render distance
+                    const float unloadDistance = renderDistance + 192.0f;  // Hysteresis: chunks stay loaded longer when moving away
+                    worldStreaming.updatePlayerPosition(player.Position, loadDistance, unloadDistance);
+                }
+                afterStreaming = std::chrono::high_resolution_clock::now();
+            }
 
             // Record streaming timing and queue sizes
             {
@@ -1433,16 +1505,20 @@ int main(int argc, char* argv[]) {
             //   v1-v3: BLOCKING (thread.join) → 100-200ms stalls
             //   v4: ASYNC (detached threads) → ZERO main thread blocking!
             // Can now process more chunks per frame since we never wait
-#if USE_INDIRECT_DRAWING
-            // PERFORMANCE FIX (2025-11-26): Increased from 1 to 8 chunks per frame
-            // Phase 1 (add to world + queue mesh) is CPU-only and fast
-            // Phase 2 (GPU upload) has its own rate limiting via getRecommendedUploadCount()
-            // This 8x increase dramatically reduces "invisible chunk" lag
-            worldStreaming.processCompletedChunks(8, 5.0f);  // Max 8 chunks, 5ms budget
-#else
-            worldStreaming.processCompletedChunks(4, 6.0f);   // Conservative for legacy path
-#endif
+            // FREEZE: Skip chunk processing when frozen
             auto afterChunkProcess = std::chrono::high_resolution_clock::now();
+            if (!ConsoleCommands::isFrozen()) {
+#if USE_INDIRECT_DRAWING
+                // PERFORMANCE FIX (2025-11-26): Increased from 1 to 8 chunks per frame
+                // Phase 1 (add to world + queue mesh) is CPU-only and fast
+                // Phase 2 (GPU upload) has its own rate limiting via getRecommendedUploadCount()
+                // This 8x increase dramatically reduces "invisible chunk" lag
+                worldStreaming.processCompletedChunks(8, 5.0f);  // Max 8 chunks, 5ms budget
+#else
+                worldStreaming.processCompletedChunks(4, 6.0f);   // Conservative for legacy path
+#endif
+                afterChunkProcess = std::chrono::high_resolution_clock::now();
+            }
 
             // Record chunk processing timing
             {
@@ -1499,14 +1575,16 @@ int main(int argc, char* argv[]) {
             renderer.updateUniformBuffer(renderer.getCurrentFrame(), model, view, projection, player.Position, renderDistance, underwater,
                                        liquidFogColor, liquidFogStart, liquidFogEnd, liquidTintColor, liquidDarkenFactor);
 
-            // Update targeting system (single raycast per frame!)
-            targetingSystem.setEnabled(InputManager::instance().isGameplayEnabled());
-            targetingSystem.update(&world, player.Position, player.Front);
-
-            // Update block outline buffer if target changed
+            // Update targeting system (single raycast per frame!) - skip in editor-only mode
             const TargetInfo& target = targetingSystem.getTarget();
-            if (target.hasTarget) {
-                targetingSystem.updateOutlineBuffer(&renderer);
+            if (g_debugLevel != 2) {
+                targetingSystem.setEnabled(InputManager::instance().isGameplayEnabled());
+                targetingSystem.update(&world, player.Position, player.Front);
+
+                // Update block outline buffer if target changed
+                if (target.hasTarget) {
+                    targetingSystem.updateOutlineBuffer(&renderer);
+                }
             }
 
             // Handle block breaking on left mouse click
@@ -1596,27 +1674,31 @@ int main(int argc, char* argv[]) {
             // Reset pipeline cache at frame start (GPU optimization)
             renderer.resetPipelineCache();
 
-            // Render skybox first (renders behind everything)
-            renderer.renderSkybox();
-
-            // Render world with normal or wireframe pipeline based on debug mode
-            VkPipeline worldPipeline = DebugState::instance().wireframeMode.getValue() ?
-                renderer.getWireframePipeline() : renderer.getGraphicsPipeline();
-            renderer.bindPipelineCached(renderer.getCurrentCommandBuffer(), worldPipeline);
-            vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                   renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
-            world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, renderDistance, &renderer);
+            // Skip 3D world rendering in editor-only mode (debug 2)
             auto afterWorldRender = std::chrono::high_resolution_clock::now();
+            if (g_debugLevel != 2) {
+                // Render skybox first (renders behind everything)
+                renderer.renderSkybox();
 
-            // Render meshes (shares depth buffer with voxels)
-            meshRenderer.render(renderer.getCurrentCommandBuffer());
-
-            // Render block outline with line pipeline
-            if (target.hasTarget) {
-                renderer.bindPipelineCached(renderer.getCurrentCommandBuffer(), renderer.getLinePipeline());
+                // Render world with normal or wireframe pipeline based on debug mode
+                VkPipeline worldPipeline = DebugState::instance().wireframeMode.getValue() ?
+                    renderer.getWireframePipeline() : renderer.getGraphicsPipeline();
+                renderer.bindPipelineCached(renderer.getCurrentCommandBuffer(), worldPipeline);
                 vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                        renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
-                targetingSystem.renderBlockOutline(renderer.getCurrentCommandBuffer());
+                world.renderWorld(renderer.getCurrentCommandBuffer(), player.Position, viewProj, renderDistance, &renderer);
+                afterWorldRender = std::chrono::high_resolution_clock::now();
+
+                // Render meshes (shares depth buffer with voxels)
+                meshRenderer.render(renderer.getCurrentCommandBuffer());
+
+                // Render block outline with line pipeline
+                if (target.hasTarget) {
+                    renderer.bindPipelineCached(renderer.getCurrentCommandBuffer(), renderer.getLinePipeline());
+                    vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                           renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
+                    targetingSystem.renderBlockOutline(renderer.getCurrentCommandBuffer());
+                }
             }
 
             // Render ImGui (crosshair when playing, menu when paused, console overlay)
@@ -1666,24 +1748,32 @@ int main(int argc, char* argv[]) {
                     }
                     glfwSetWindowShouldClose(window, GLFW_TRUE);
                 }
-            } else if (!console.isVisible() && !inventory.isOpen()) {
+            } else if (!console.isVisible() && !inventory.isOpen() && g_debugLevel != 2) {
                 targetingSystem.renderCrosshair();
             }
 
             // Render console (overlays on top of everything)
             console.render();
 
+            // Render editor background (cute world simulation for debug level 2)
+            if (g_debugLevel == 2) {
+                ConsoleCommands::updateEditorBackground(clampedDeltaTime);
+                ConsoleCommands::renderEditorBackground();
+            }
+
             // Render editor windows (3D editor, particle editor)
             ConsoleCommands::updateEditors(clampedDeltaTime);
             ConsoleCommands::renderEditors();
 
-            // Render inventory UI (full inventory when open, hotbar always visible)
-            if (inventory.isOpen()) {
-                inventory.render(&renderer);
-            }
-            if (!isPaused && !console.isVisible()) {
-                inventory.renderHotbar(&renderer);
-                inventory.renderSelectedBlockPreview(&renderer);
+            // Render inventory UI (full inventory when open, hotbar always visible) - skip in editor-only mode
+            if (g_debugLevel != 2) {
+                if (inventory.isOpen()) {
+                    inventory.render(&renderer);
+                }
+                if (!isPaused && !console.isVisible()) {
+                    inventory.renderHotbar(&renderer);
+                    inventory.renderSelectedBlockPreview(&renderer);
+                }
             }
 
             // Render FPS counter if enabled

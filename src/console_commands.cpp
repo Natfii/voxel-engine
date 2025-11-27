@@ -12,6 +12,8 @@
 #include "biome_system.h"
 #include "editor/skeletal_editor.h"
 #include "editor/particle_editor.h"
+#include "editor/paint_editor.h"
+#include "editor/editor_background.h"
 // #include "engine_api.h"      // TODO: Implement EngineAPI
 // #include "event_dispatcher.h" // TODO: Implement EventDispatcher
 #include <sstream>
@@ -25,8 +27,12 @@ World* ConsoleCommands::s_world = nullptr;
 VulkanRenderer* ConsoleCommands::s_renderer = nullptr;
 float ConsoleCommands::s_timeSpeed = 1.0f;      // Default: normal speed (time flows by default)
 float ConsoleCommands::s_currentSkyTime = 0.25f; // Default: morning (sunrise)
+bool ConsoleCommands::s_isFrozen = false;        // Default: not frozen
+int ConsoleCommands::s_debugLevel = 0;           // Default: no debug mode
 std::unique_ptr<SkeletalEditor> ConsoleCommands::s_skeletalEditor = nullptr;
 std::unique_ptr<ParticleEditor> ConsoleCommands::s_particleEditor = nullptr;
+std::unique_ptr<PaintEditor> ConsoleCommands::s_paintEditor = nullptr;
+std::unique_ptr<EditorBackground> ConsoleCommands::s_editorBackground = nullptr;
 
 void ConsoleCommands::registerAll(Console* console, Player* player, World* world, VulkanRenderer* renderer) {
     s_console = console;
@@ -163,12 +169,18 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
                            "entity <list|remove|clear> [args]", cmdEntity,
                            {"list", "remove", "clear"});
 
+    registry.registerCommand("freeze", "Toggle world freeze mode (editors stay active)",
+                           "freeze", cmdFreeze,
+                           {});
+
     // Initialize and register editor commands
     s_skeletalEditor = std::make_unique<SkeletalEditor>();
     s_skeletalEditor->initialize(renderer);
 
     s_particleEditor = std::make_unique<ParticleEditor>();
     s_particleEditor->initialize(renderer);
+
+    s_paintEditor = std::make_unique<PaintEditor>();
 
     registry.registerCommand("3deditor", "Open 3D skeletal annotation editor",
                            "3deditor [model_path]", cmd3DEditor,
@@ -177,6 +189,10 @@ void ConsoleCommands::registerAll(Console* console, Player* player, World* world
     registry.registerCommand("particaleditor", "Open 2D particle effect editor",
                            "particaleditor [effect_path]", cmdParticleEditor,
                            {"assets/particles/"});
+
+    registry.registerCommand("painteditor", "Open 2D pixel paint editor",
+                           "painteditor", cmdPaintEditor,
+                           {});
 }
 
 void ConsoleCommands::cmdHelp(const std::vector<std::string>& args) {
@@ -1218,6 +1234,20 @@ void ConsoleCommands::cmdEntity(const std::vector<std::string>& args) {
     }
 }
 
+void ConsoleCommands::cmdFreeze(const std::vector<std::string>& args) {
+    s_isFrozen = !s_isFrozen;
+
+    if (s_isFrozen) {
+        s_console->addMessage("World FROZEN", ConsoleMessageType::INFO);
+        s_console->addMessage("  - World updates paused (lighting, streaming, physics)", ConsoleMessageType::INFO);
+        s_console->addMessage("  - Rendering continues (static scene visible)", ConsoleMessageType::INFO);
+        s_console->addMessage("  - Editors remain fully functional", ConsoleMessageType::INFO);
+        s_console->addMessage("Type 'freeze' again to resume", ConsoleMessageType::INFO);
+    } else {
+        s_console->addMessage("World UNFROZEN - updates resumed", ConsoleMessageType::INFO);
+    }
+}
+
 void ConsoleCommands::cmd3DEditor(const std::vector<std::string>& args) {
     if (!s_skeletalEditor) {
         s_console->addMessage("Error: Skeletal editor not initialized", ConsoleMessageType::ERROR);
@@ -1254,6 +1284,16 @@ void ConsoleCommands::cmdParticleEditor(const std::vector<std::string>& args) {
     }
 }
 
+void ConsoleCommands::cmdPaintEditor(const std::vector<std::string>& args) {
+    if (!s_paintEditor) {
+        s_console->addMessage("Error: Paint editor not initialized", ConsoleMessageType::ERROR);
+        return;
+    }
+
+    s_paintEditor->open();
+    s_console->addMessage("Paint Editor opened", ConsoleMessageType::INFO);
+}
+
 void ConsoleCommands::updateEditors(float deltaTime) {
     if (s_skeletalEditor && s_skeletalEditor->isOpen()) {
         s_skeletalEditor->update(deltaTime);
@@ -1269,5 +1309,27 @@ void ConsoleCommands::renderEditors() {
     }
     if (s_particleEditor && s_particleEditor->isOpen()) {
         s_particleEditor->render();
+    }
+    if (s_paintEditor && s_paintEditor->isOpen()) {
+        s_paintEditor->render();
+    }
+}
+
+void ConsoleCommands::initEditorBackground(int width, int height) {
+    if (!s_editorBackground) {
+        s_editorBackground = std::make_unique<EditorBackground>();
+    }
+    s_editorBackground->initialize(width, height);
+}
+
+void ConsoleCommands::updateEditorBackground(float deltaTime) {
+    if (s_editorBackground) {
+        s_editorBackground->update(deltaTime);
+    }
+}
+
+void ConsoleCommands::renderEditorBackground() {
+    if (s_editorBackground) {
+        s_editorBackground->render();
     }
 }

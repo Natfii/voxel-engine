@@ -54,6 +54,50 @@
 - [ ] Basic layers (optional v1.1): 2–4 layers with opacity and merge-down.
 - [ ] Frame-by-frame (future): simple timeline to add frames for animation previews.
 
+## QoL Features (consistent with other editors)
+- [ ] **Tooltips** - Comprehensive tooltips on ALL controls explaining what each tool/option does.
+- [ ] **File Browser** - Integrated ImGui file browser for save/load operations (reuse FileBrowser class).
+- [ ] **Save & Reload Button** - One-click save that also triggers engine's `reload` command to see textures in-game immediately.
+- [ ] **Presets** - Built-in canvas presets (blank, grid template, color palette template, sprite sheet template).
+- [ ] **Keyboard Shortcuts Panel** - Overlay showing all shortcuts (toggle with `?` key).
+- [ ] **Status Bar** - Shows current tool, coordinates, zoom level, file status (modified/saved).
+- [ ] **Color-coded UI** - Tool buttons with distinct colors for quick identification.
+- [ ] **Recent Files** - Quick access to recently opened files in File menu.
+- [ ] **Auto-save** - Periodic auto-save to temp location with crash recovery.
+
+## Save & Reload Implementation
+The "Save & Reload" button saves the current texture and triggers the engine's reload command to hot-reload all textures:
+
+```cpp
+void PaintEditor::saveAndReload() {
+    // Save the texture to disk
+    if (saveCurrentTexture()) {
+        // Trigger engine reload command to refresh all textures
+        CommandRegistry::instance().executeCommand("reload");
+        m_console->addMessage("Texture saved and reloaded!", ConsoleMessageType::SUCCESS);
+    }
+}
+
+// In toolbar rendering:
+if (ImGui::Button("Save & Reload")) {
+    saveAndReload();
+}
+if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Save texture and reload in-game (see changes immediately)");
+}
+```
+
+## Freeze Command Integration
+Use the `freeze` console command to pause world updates while keeping editors active:
+
+```cpp
+// In console: type "freeze" to toggle
+// - World updates pause (lighting, streaming, physics)
+// - Rendering continues (static scene visible)
+// - All editors remain fully functional
+// - Perfect for texture editing without distractions
+```
+
 ## Integration hooks
 - Console binding example (pseudo-C++ with ImGui):
   ```cpp
@@ -155,6 +199,40 @@
 - Should we support animation frames in v1 or keep single-frame and add timeline in v1.1?
 - Where to store autosaves (`assets/paint/tmp/`)? How to prune old files?
 - Do we need palette import/export (GPL palettes) or Aseprite palette compatibility?
+
+---
+
+## Best Practices (from research)
+
+### Pixel Art Specific
+- **Disable anti-aliasing** for all painting tools to maintain crisp pixel edges
+- **Use fixed 1-pixel brush** as foundation; larger brushes are composites of 1-pixel stamps
+- **Pixel-perfect lines** - Standard Bresenham produces extra squares; needs reworking for pixel art
+- **Constrained lines** - Shift+Click constrains to X, Y, or 45-degree diagonals
+- **Integer zoom only** - Snap to 1x, 2x, 4x, 8x, 16x to maintain pixel alignment
+- **Zoom toward cursor** - Not viewport center, for precise editing
+
+### Color Palette Best Practices
+- Start with **4-16 color base palettes**; too many colors create visual chaos
+- Ensure coverage across **hue, saturation, and brightness** values
+- Use **HSB color model** for intuitive adjustment
+- Implement **color ramps** - ranges of colors arranged by brightness
+- Balance light/medium/dark shades for depth
+- Avoid high saturation + high brightness (causes visual fatigue)
+
+### Performance (ImGui + Canvas)
+- **Hybrid approach**: ImGui for UI/tools, render canvas to GPU texture
+- Don't render individual pixels as ImGui widgets
+- Maintain pixel buffer in CPU memory, upload to OpenGL texture
+- Use `ImGui::Image()` to display the texture
+- **Update texture only when pixels change** (not every frame)
+- Use dirty rectangles to minimize texture uploads
+
+### Undo/Redo Architecture
+- Store each action as a discrete **command object** (stroke, fill, color change)
+- Maintain separate **undo and redo stacks**
+- Group related commands (drag strokes) into single undo steps
+- Limit history memory with **sparse delta buffers** or RLE compression
 
 ---
 

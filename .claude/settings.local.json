@@ -60,7 +60,9 @@
       "WebFetch(domain:wiki.bedrock.dev)",
       "WebFetch(domain:docs.iolite-engine.com)",
       "Bash(git clone:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(del \"C:\\Users\\Natal\\Documents\\GitHub\\voxel-engine\\build\\Release\\voxel-engine.exe\")",
+      "Bash(tasklist:*)"
     ],
     "deny": [],
     "ask": []

@@ -6,6 +6,7 @@
 #include "editor/skeletal_editor.h"
 #include "editor/rig_file.h"
 #include "vulkan_renderer.h"
+#include "console_commands.h"
 #include "logger.h"
 
 #include <imgui.h>
@@ -37,9 +38,16 @@ void SkeletalEditor::update(float deltaTime) {
 void SkeletalEditor::render() {
     if (!m_isOpen) return;
 
-    // Main editor window
+    // Main editor window - no close button in editor-only mode (debug 2)
+    // Pass nullptr for p_open to hide the close button entirely
     ImGui::SetNextWindowSize(ImVec2(1200, 800), ImGuiCond_FirstUseEver);
-    ImGui::Begin("3D Skeletal Editor", &m_isOpen, ImGuiWindowFlags_MenuBar);
+
+    // Prevent window move when dragging the orb
+    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_MenuBar;
+    if (m_isDraggingOrb) {
+        windowFlags |= ImGuiWindowFlags_NoMove;
+    }
+    ImGui::Begin("3D Skeletal Editor", ConsoleCommands::isEditorOnlyMode() ? nullptr : &m_isOpen, windowFlags);
 
     renderMenuBar();
     renderToolbar();
@@ -55,8 +63,9 @@ void SkeletalEditor::render() {
         ImGui::SameLine();
     }
 
-    // Center - Viewport
-    ImGui::BeginChild("ViewportPanel", ImVec2(-panelWidth - 10, 0), true);
+    // Center - Viewport (no scroll bars to not interfere with zoom)
+    ImGui::BeginChild("ViewportPanel", ImVec2(-panelWidth - 10, 0), true,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     renderViewport();
     ImGui::EndChild();
     ImGui::SameLine();
@@ -215,6 +224,82 @@ void SkeletalEditor::renderToolbar() {
         m_state.setHasTail(hasTail);
     }
 
+    ImGui::SameLine();
+    ImGui::Separator();
+    ImGui::SameLine();
+
+    // Quick rotate buttons - account for flip state (180 X-rotation swaps front/back and top/bottom)
+    // Helper lambda to reset camera target to flipped model center
+    auto resetCameraToModel = [this]() {
+        glm::vec3 center = (m_scene.boundsMin + m_scene.boundsMax) * 0.5f;
+        if (m_modelFlipped) {
+            // 180° rotation around X inverts Y and Z
+            center.y = -center.y;
+            center.z = -center.z;
+        }
+        m_camera.setTarget(center);
+    };
+
+    ImGui::Text("View:");
+    ImGui::SameLine();
+    if (ImGui::Button("Front")) {
+        m_camera.setYaw(0.0f);
+        m_camera.setPitch(0.0f);
+        resetCameraToModel();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Back")) {
+        m_camera.setYaw(180.0f);
+        m_camera.setPitch(0.0f);
+        resetCameraToModel();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Left")) {
+        m_camera.setYaw(90.0f);
+        m_camera.setPitch(0.0f);
+        resetCameraToModel();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Right")) {
+        m_camera.setYaw(-90.0f);
+        m_camera.setPitch(0.0f);
+        resetCameraToModel();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Top")) {
+        m_camera.setYaw(0.0f);
+        m_camera.setPitch(89.0f);
+        resetCameraToModel();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Bottom")) {
+        m_camera.setYaw(0.0f);
+        m_camera.setPitch(-89.0f);
+        resetCameraToModel();
+    }
+
+    ImGui::SameLine();
+    ImGui::Separator();
+    ImGui::SameLine();
+
+    // Flip 180 toggle for upside-down models
+    if (ImGui::Button(m_modelFlipped ? "Unflip" : "Flip 180")) {
+        m_modelFlipped = !m_modelFlipped;
+        // Flip the camera pitch and reset target to the flipped model center
+        float currentPitch = m_camera.getPitch();
+        m_camera.setPitch(-currentPitch);
+        // Update camera target to match flipped model position
+        glm::vec3 center = (m_scene.boundsMin + m_scene.boundsMax) * 0.5f;
+        if (m_modelFlipped) {
+            center.y = -center.y;
+            center.z = -center.z;
+        }
+        m_camera.setTarget(center);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Flip model 180 degrees (for upside-down models)\nAlso adjusts camera view");
+    }
+
     ImGui::EndChild();
 }
 
@@ -353,13 +438,17 @@ void SkeletalEditor::renderWizardPanel() {
         ImGui::Text("Bone Position:");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag the sliders or enter values to set bone position\nThe red orb in the viewport shows the preview location");
 
-        static glm::vec3 manualPos(0.0f);
+        // Get current position from state (syncs with orb dragging)
+        glm::vec3 manualPos = m_state.getPreviewPosition();
+        bool posChanged = false;
 
         // Individual axis controls with colors
         ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.5f, 0.1f, 0.1f, 0.5f));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.6f, 0.2f, 0.2f, 0.5f));
         ImGui::SetNextItemWidth(80);
-        ImGui::DragFloat("X", &manualPos.x, 0.01f, -100.0f, 100.0f, "%.2f");
+        if (ImGui::DragFloat("X", &manualPos.x, 0.01f, -100.0f, 100.0f, "%.2f")) {
+            posChanged = true;
+        }
         ImGui::PopStyleColor(2);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Left/Right position");
 
@@ -367,7 +456,9 @@ void SkeletalEditor::renderWizardPanel() {
         ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.1f, 0.5f, 0.1f, 0.5f));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.2f, 0.6f, 0.2f, 0.5f));
         ImGui::SetNextItemWidth(80);
-        ImGui::DragFloat("Y", &manualPos.y, 0.01f, -100.0f, 100.0f, "%.2f");
+        if (ImGui::DragFloat("Y", &manualPos.y, 0.01f, -100.0f, 100.0f, "%.2f")) {
+            posChanged = true;
+        }
         ImGui::PopStyleColor(2);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Up/Down position");
 
@@ -375,12 +466,16 @@ void SkeletalEditor::renderWizardPanel() {
         ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.1f, 0.1f, 0.5f, 0.5f));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.2f, 0.2f, 0.6f, 0.5f));
         ImGui::SetNextItemWidth(80);
-        ImGui::DragFloat("Z", &manualPos.z, 0.01f, -100.0f, 100.0f, "%.2f");
+        if (ImGui::DragFloat("Z", &manualPos.z, 0.01f, -100.0f, 100.0f, "%.2f")) {
+            posChanged = true;
+        }
         ImGui::PopStyleColor(2);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forward/Back position");
 
-        // Store preview position for rendering
-        m_state.setPreviewPosition(manualPos);
+        // Only update state when user manually changes values (not every frame)
+        if (posChanged) {
+            m_state.setPreviewPosition(manualPos);
+        }
 
         ImGui::Spacing();
 
@@ -422,6 +517,14 @@ void SkeletalEditor::renderViewport() {
 
     ImVec2 viewportPos = ImGui::GetCursorScreenPos();
 
+    // Invisible button to capture all mouse input in viewport area
+    ImGui::InvisibleButton("viewport_input", size,
+        ImGuiButtonFlags_MouseButtonLeft |
+        ImGuiButtonFlags_MouseButtonRight |
+        ImGuiButtonFlags_MouseButtonMiddle);
+    bool viewportHovered = ImGui::IsItemHovered();
+    bool viewportActive = ImGui::IsItemActive();
+
     // Viewport background
     ImGui::GetWindowDrawList()->AddRectFilled(
         viewportPos,
@@ -441,10 +544,90 @@ void SkeletalEditor::renderViewport() {
     // Render gizmo
     renderGizmo();
 
-    // Handle viewport input
-    if (ImGui::IsWindowHovered() || ImGui::IsWindowFocused()) {
-        ImGuiIO& io = ImGui::GetIO();
+    // === ORB INTERACTION CHECK (MUST BE BEFORE CAMERA CONTROLS) ===
+    // Calculate orb screen position for early interaction check
+    glm::mat4 earlyView = m_camera.getViewMatrix();
+    float earlyAspect = (m_viewportHeight > 0.0f) ? (m_viewportWidth / m_viewportHeight) : 1.0f;
+    glm::mat4 earlyProj = m_camera.getProjectionMatrix(earlyAspect);
+    glm::mat4 earlyModelTransform = m_modelFlipped ?
+        glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f)) :
+        glm::mat4(1.0f);
+    glm::mat4 earlyViewProj = earlyProj * earlyView * earlyModelTransform;
 
+    bool hoveringOrb = false;
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 mousePos = io.MousePos;
+
+    // Check if mouse is over the orb
+    if (!m_state.isWizardComplete()) {
+        glm::vec3 previewPos = m_state.getPreviewPosition();
+        glm::vec4 clipPos = earlyViewProj * glm::vec4(previewPos, 1.0f);
+        if (clipPos.w > 0.0f) {
+            glm::vec3 ndc = glm::vec3(clipPos) / clipPos.w;
+            float screenX = viewportPos.x + (ndc.x * 0.5f + 0.5f) * m_viewportWidth;
+            float screenY = viewportPos.y + (-ndc.y * 0.5f + 0.5f) * m_viewportHeight;
+            float distToOrb = glm::length(glm::vec2(mousePos.x - screenX, mousePos.y - screenY));
+            hoveringOrb = distToOrb < 25.0f;
+
+            // Store orb screen position for later use
+            m_orbScreenPos = glm::vec2(screenX, screenY);
+            m_orbDepth = clipPos.w;
+
+            // Handle orb drag start - left click on orb
+            if (hoveringOrb && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsUsing()) {
+                m_isDraggingOrb = true;
+            }
+        }
+    }
+
+    // Handle ongoing orb drag
+    if (m_isDraggingOrb) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            // Convert mouse position to normalized device coordinates
+            float ndcX = ((mousePos.x - viewportPos.x) / m_viewportWidth) * 2.0f - 1.0f;
+            float ndcY = -(((mousePos.y - viewportPos.y) / m_viewportHeight) * 2.0f - 1.0f);
+
+            // Get current preview position
+            glm::vec3 previewPos = m_state.getPreviewPosition();
+
+            // Use view-proj WITHOUT model transform for unprojection
+            glm::mat4 viewProjNoModel = earlyProj * earlyView;
+            glm::mat4 invViewProj = glm::inverse(viewProjNoModel);
+
+            // Unproject near and far points to create a ray
+            glm::vec4 nearPoint = invViewProj * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
+            glm::vec4 farPoint = invViewProj * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+
+            if (nearPoint.w != 0.0f && farPoint.w != 0.0f) {
+                glm::vec3 rayOrigin = glm::vec3(nearPoint) / nearPoint.w;
+                glm::vec3 rayEnd = glm::vec3(farPoint) / farPoint.w;
+                glm::vec3 rayDir = glm::normalize(rayEnd - rayOrigin);
+
+                // Get camera position and forward direction
+                glm::vec3 camPos = m_camera.getPosition();
+                glm::vec3 camTarget = m_camera.getTarget();
+                glm::vec3 camForward = glm::normalize(camTarget - camPos);
+
+                // Create a plane perpendicular to camera at orb's distance
+                float orbDist = glm::dot(previewPos - camPos, camForward);
+
+                // Ray-plane intersection: find t where ray hits the plane
+                float denom = glm::dot(rayDir, camForward);
+                if (std::abs(denom) > 0.0001f) {
+                    float t = orbDist / denom;
+                    if (t > 0.0f) {
+                        glm::vec3 newPos = rayOrigin + rayDir * t;
+                        m_state.setPreviewPosition(newPos);
+                    }
+                }
+            }
+        } else {
+            m_isDraggingOrb = false;
+        }
+    }
+
+    // Handle viewport input (camera controls - SKIP LEFT MOUSE if dragging orb)
+    if (viewportHovered || viewportActive) {
         // Arrow keys to pan
         float panSpeed = 0.05f;
         if (ImGui::IsKeyDown(ImGuiKey_LeftArrow)) {
@@ -470,14 +653,14 @@ void SkeletalEditor::renderViewport() {
             m_camera.updateZoom(-io.MouseWheel * 0.5f);
         }
 
-        // Right-drag to orbit
+        // Right-drag to orbit (not affected by orb)
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
             ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
             m_camera.updateOrbit(delta.x * 0.5f, delta.y * 0.5f);
             ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
         }
 
-        // Middle-drag to pan
+        // Middle-drag to pan (not affected by orb)
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
             ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
             m_camera.updatePan(-delta.x * 0.01f, delta.y * 0.01f);
@@ -490,7 +673,15 @@ void SkeletalEditor::renderViewport() {
     // Guard against zero viewport dimensions
     float aspectRatio = (m_viewportHeight > 0.0f) ? (m_viewportWidth / m_viewportHeight) : 1.0f;
     glm::mat4 proj = m_camera.getProjectionMatrix(aspectRatio);
-    glm::mat4 viewProj = proj * view;
+
+    // Apply 180-degree flip transform if enabled
+    glm::mat4 modelTransform = glm::mat4(1.0f);
+    if (m_modelFlipped) {
+        // Rotate 180 degrees around X-axis to flip model upside down
+        modelTransform = glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    }
+
+    glm::mat4 viewProj = proj * view * modelTransform;
 
     // Draw model as wireframe
     if (m_hasModel) {
@@ -587,20 +778,32 @@ void SkeletalEditor::renderViewport() {
         }
     }
 
-    // Draw preview orb for bone placement (red pulsing orb)
+    // Draw preview orb for bone placement (interaction handled earlier in function)
     if (!m_state.isWizardComplete()) {
-        glm::vec3 previewPos = m_state.getPreviewPosition();
-        glm::vec4 clipPos = viewProj * glm::vec4(previewPos, 1.0f);
+        // Use stored screen position from earlier interaction check
+        float screenX = m_orbScreenPos.x;
+        float screenY = m_orbScreenPos.y;
 
-        if (clipPos.w > 0.0f) {
-            glm::vec3 ndc = glm::vec3(clipPos) / clipPos.w;
-            float screenX = viewportPos.x + (ndc.x * 0.5f + 0.5f) * m_viewportWidth;
-            float screenY = viewportPos.y + (-ndc.y * 0.5f + 0.5f) * m_viewportHeight;
+        // Check if orb is visible (depth > 0 means it was calculated)
+        if (m_orbDepth > 0.0f) {
+            // Recalculate hover for visual feedback
+            float distToOrb = glm::length(glm::vec2(mousePos.x - screenX, mousePos.y - screenY));
+            bool orbHovered = distToOrb < 25.0f;
 
-            // Pulsing effect
-            float pulse = (sinf(ImGui::GetTime() * 4.0f) + 1.0f) * 0.5f;
-            float orbSize = 10.0f + pulse * 4.0f;
-            ImU32 orbColor = IM_COL32(255, 50, 50, static_cast<int>(180 + pulse * 75));
+            // Pulsing effect (faster pulse when dragging)
+            float pulseSpeed = m_isDraggingOrb ? 8.0f : 4.0f;
+            float pulse = (sinf(static_cast<float>(ImGui::GetTime()) * pulseSpeed) + 1.0f) * 0.5f;
+            float orbSize = m_isDraggingOrb ? 14.0f : (10.0f + pulse * 4.0f);
+
+            // Color changes on hover/drag
+            ImU32 orbColor;
+            if (m_isDraggingOrb) {
+                orbColor = IM_COL32(255, 150, 50, 255);  // Orange when dragging
+            } else if (orbHovered) {
+                orbColor = IM_COL32(255, 100, 100, 255);  // Brighter red on hover
+            } else {
+                orbColor = IM_COL32(255, 50, 50, static_cast<int>(180 + pulse * 75));
+            }
 
             // Draw preview orb with glow
             ImGui::GetWindowDrawList()->AddCircleFilled(
@@ -610,12 +813,22 @@ void SkeletalEditor::renderViewport() {
             ImGui::GetWindowDrawList()->AddCircle(
                 ImVec2(screenX, screenY), orbSize + 2.0f, IM_COL32(255, 255, 255, 150), 0, 2.0f);
 
-            // Label
+            // Label with drag hint
             std::string label = "Preview: " + m_state.getCurrentBoneName();
+            if (orbHovered && !m_isDraggingOrb) {
+                label += " (drag to move)";
+            }
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(screenX + 15, screenY - 5), IM_COL32(255, 200, 200, 255),
                 label.c_str());
+
+            // Change cursor when hovering orb
+            if (orbHovered || m_isDraggingOrb) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
         }
+    } else {
+        m_isDraggingOrb = false;  // Reset drag state when wizard is complete
     }
 }
 

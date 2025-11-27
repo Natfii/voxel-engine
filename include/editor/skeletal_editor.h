@@ -113,4 +113,12 @@ private:
     // Viewport
     float m_viewportWidth = 800.0f;
     float m_viewportHeight = 600.0f;
+
+    // Model transform
+    bool m_modelFlipped = false;  // 180-degree flip state for upside-down models
+
+    // Orb dragging state
+    bool m_isDraggingOrb = false;
+    glm::vec2 m_orbScreenPos = {0, 0};  // Current screen position of orb
+    float m_orbDepth = 0.0f;            // Depth for projecting mouse to world
 };

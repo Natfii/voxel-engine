@@ -42,17 +42,11 @@ ParticleEffect ParticleEffect::createDefault() {
     emitter.sizeStart = glm::vec2(1.0f, 1.0f);
     emitter.sizeEnd = glm::vec2(0.0f, 0.0f);
 
-    // Color gradient (white to transparent)
-    ColorStop start;
-    start.time = 0.0f;
-    start.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-
-    ColorStop end;
-    end.time = 1.0f;
-    end.color = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f);
-
-    emitter.colorGradient.push_back(start);
-    emitter.colorGradient.push_back(end);
+    // Color over lifetime (use simple start/end, not gradient)
+    // Keep colorGradient empty so colorStart/colorEnd are used
+    emitter.colorStart = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    emitter.colorEnd = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f);
+    // colorGradient left empty intentionally
 
     // Basic texture config
     emitter.texture.blend = ParticleBlendMode::ALPHA;

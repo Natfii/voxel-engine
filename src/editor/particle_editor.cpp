@@ -5,6 +5,7 @@
 
 #include "editor/particle_editor.h"
 #include "editor/particle_effect_file.h"
+#include "console_commands.h"
 #include "logger.h"
 
 #include <imgui.h>
@@ -62,8 +63,10 @@ void ParticleEditor::update(float deltaTime) {
 void ParticleEditor::render() {
     if (!m_isOpen) return;
 
+    // No close button in editor-only mode (debug 2)
+    // Pass nullptr for p_open to hide the close button entirely
     ImGui::SetNextWindowSize(ImVec2(1000, 700), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Particle Effect Editor", &m_isOpen, ImGuiWindowFlags_MenuBar);
+    ImGui::Begin("Particle Effect Editor", ConsoleCommands::isEditorOnlyMode() ? nullptr : &m_isOpen, ImGuiWindowFlags_MenuBar);
 
     renderMenuBar();
     renderToolbar();
@@ -138,7 +141,11 @@ void ParticleEditor::renderMenuBar() {
             }
             if (ImGui::MenuItem("Save", "Ctrl+S")) {
                 if (!m_currentPath.empty()) {
-                    ParticleEffectFile::save(m_currentPath, m_effect);
+                    if (!ParticleEffectFile::save(m_currentPath, m_effect)) {
+                        Logger::error() << "Failed to save effect, opening Save As dialog";
+                        m_browserMode = BrowserMode::SAVE;
+                        m_fileBrowser.open(FileBrowser::Mode::SAVE, "Save Effect", {".yaml", ".particle"}, "assets/particles");
+                    }
                 } else {
                     m_browserMode = BrowserMode::SAVE;
                     m_fileBrowser.open(FileBrowser::Mode::SAVE, "Save Effect", {".yaml", ".particle"}, "assets/particles");
@@ -271,6 +278,9 @@ void ParticleEditor::renderEmitterList() {
 
         auto emitter = std::make_unique<ParticleEmitter>(m_effect.emitters.back());
         m_emitters.push_back(std::move(emitter));
+
+        // Select the newly added emitter
+        m_selectedEmitter = static_cast<int>(m_emitters.size()) - 1;
     }
 }
 
@@ -285,6 +295,9 @@ void ParticleEditor::renderEmitterProperties() {
 
     EmitterConfig& config = m_effect.emitters[m_selectedEmitter];
     bool configChanged = false;
+
+    // Track if any widget is actively being edited to defer config updates
+    bool anyWidgetActive = false;
 
     // Name
     char nameBuffer[64];
@@ -315,21 +328,26 @@ void ParticleEditor::renderEmitterProperties() {
     // Shape-specific
     if (config.shape == EmitterShape::CONE) {
         configChanged |= ImGui::SliderFloat("Cone Angle", &config.coneAngle, 0.0f, 180.0f);
+        anyWidgetActive |= ImGui::IsItemActive();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spread angle of the cone");
     } else if (config.shape == EmitterShape::BOX) {
         configChanged |= ImGui::DragFloat3("Box Size", glm::value_ptr(config.boxSize), 0.1f, 0.0f, 100.0f);
+        anyWidgetActive |= ImGui::IsItemActive();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Size of spawn area (X, Y, Z)");
     } else if (config.shape == EmitterShape::CIRCLE) {
         configChanged |= ImGui::DragFloat("Circle Radius", &config.circleRadius, 0.1f, 0.0f, 100.0f);
+        anyWidgetActive |= ImGui::IsItemActive();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Radius of spawn circle");
     }
 
     // Rate
     configChanged |= ImGui::DragFloatRange2("Rate", &config.rate.min, &config.rate.max, 1.0f, 0.0f, 1000.0f, "%.0f", "%.0f");
+    anyWidgetActive |= ImGui::IsItemActive();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Particles spawned per second (min-max range)");
 
     // Duration & Loop
     configChanged |= ImGui::DragFloat("Duration", &config.duration, 0.1f, 0.0f, 60.0f, "%.1f sec");
+    anyWidgetActive |= ImGui::IsItemActive();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long the emitter runs before stopping/looping");
     configChanged |= ImGui::Checkbox("Loop", &config.loop);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Restart emitter when duration ends");
@@ -341,14 +359,17 @@ void ParticleEditor::renderEmitterProperties() {
 
     // Lifetime
     configChanged |= ImGui::DragFloatRange2("Lifetime", &config.lifetime.min, &config.lifetime.max, 0.1f, 0.0f, 30.0f, "%.1f", "%.1f");
+    anyWidgetActive |= ImGui::IsItemActive();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long each particle lives (seconds)\nRandom value between min and max");
 
     // Speed
     configChanged |= ImGui::DragFloatRange2("Speed", &config.speed.min, &config.speed.max, 0.1f, 0.0f, 100.0f);
+    anyWidgetActive |= ImGui::IsItemActive();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Initial velocity of particles\nHigher = faster movement");
 
     // Angle
     configChanged |= ImGui::DragFloatRange2("Angle", &config.angle.min, &config.angle.max, 1.0f, 0.0f, 360.0f, "%.0f°", "%.0f°");
+    anyWidgetActive |= ImGui::IsItemActive();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Direction particles travel (degrees)\n0° = right, 90° = up, 180° = left, 270° = down");
 
     ImGui::Separator();
@@ -358,9 +379,11 @@ void ParticleEditor::renderEmitterProperties() {
 
     // Gravity
     configChanged |= ImGui::DragFloat2("Gravity", glm::value_ptr(config.gravity), 0.1f, -100.0f, 100.0f);
+    anyWidgetActive |= ImGui::IsItemActive();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Constant force applied to particles (X, Y)\nPositive Y = up, Negative Y = down");
 
     configChanged |= ImGui::DragFloat("Drag", &config.drag, 0.01f, 0.0f, 10.0f);
+    anyWidgetActive |= ImGui::IsItemActive();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Air resistance - slows particles over time\n0 = no drag, higher = more slowdown");
 
     ImGui::Separator();
@@ -369,9 +392,11 @@ void ParticleEditor::renderEmitterProperties() {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Particle size changes over lifetime");
 
     configChanged |= ImGui::DragFloat2("Start Size", glm::value_ptr(config.sizeStart), 0.1f, 0.0f, 100.0f);
+    anyWidgetActive |= ImGui::IsItemActive();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Size when particle spawns (width, height)");
 
     configChanged |= ImGui::DragFloat2("End Size", glm::value_ptr(config.sizeEnd), 0.1f, 0.0f, 100.0f);
+    anyWidgetActive |= ImGui::IsItemActive();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Size when particle dies (width, height)\nSet to 0 for shrinking effect");
 
     ImGui::Separator();
@@ -379,20 +404,31 @@ void ParticleEditor::renderEmitterProperties() {
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Particle color fades from start to end");
 
+    // Clear gradient once if it has data (so colorStart/colorEnd are used instead)
+    if (!config.colorGradient.empty()) {
+        config.colorGradient.clear();
+    }
+
     // Start color
     float startCol[4] = {config.colorStart.r, config.colorStart.g, config.colorStart.b, config.colorStart.a};
-    if (ImGui::ColorEdit4("Start Color", startCol)) {
+    ImGui::PushID("StartColorPicker");
+    if (ImGui::ColorEdit4("Start Color", startCol,
+        ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview)) {
         config.colorStart = glm::vec4(startCol[0], startCol[1], startCol[2], startCol[3]);
-        configChanged = true;
     }
+    anyWidgetActive |= ImGui::IsItemActive();
+    ImGui::PopID();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Color when particle spawns\nAlpha controls transparency");
 
     // End color
     float endCol[4] = {config.colorEnd.r, config.colorEnd.g, config.colorEnd.b, config.colorEnd.a};
-    if (ImGui::ColorEdit4("End Color", endCol)) {
+    ImGui::PushID("EndColorPicker");
+    if (ImGui::ColorEdit4("End Color", endCol,
+        ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview)) {
         config.colorEnd = glm::vec4(endCol[0], endCol[1], endCol[2], endCol[3]);
-        configChanged = true;
     }
+    anyWidgetActive |= ImGui::IsItemActive();
+    ImGui::PopID();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Color when particle dies\nSet alpha to 0 for fade-out effect");
 
     ImGui::Separator();
@@ -420,9 +456,16 @@ void ParticleEditor::renderEmitterProperties() {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("How particles blend with background:\n- Alpha: Normal transparency\n- Additive: Glowing/bright (fire, sparks)\n- Premultiplied: Smooth edges");
 
-    // Update emitter if config changed
-    if (configChanged && m_selectedEmitter < static_cast<int>(m_emitters.size())) {
-        m_emitters[m_selectedEmitter]->setConfig(config);
+    // Only update emitter config when user is NOT actively dragging a widget
+    // This prevents rapid updates and potential crashes during editing
+    if (m_selectedEmitter >= 0 && m_selectedEmitter < static_cast<int>(m_emitters.size())) {
+        if (!anyWidgetActive) {
+            m_emitters[m_selectedEmitter]->setConfig(config);
+        }
+        // Reset emitter when major config changes (shape, etc) - but not during active editing
+        if (configChanged && !anyWidgetActive) {
+            m_emitters[m_selectedEmitter]->reset();
+        }
     }
 }
 
@@ -485,8 +528,12 @@ void ParticleEditor::renderViewport() {
 
             float renderSize = particle.size.x * m_zoom * 5.0f;
 
-            ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(
-                particle.color.r, particle.color.g, particle.color.b, particle.color.a));
+            // Clamp color values to valid range to prevent overflow/crashes
+            float r = glm::clamp(particle.color.r, 0.0f, 1.0f);
+            float g = glm::clamp(particle.color.g, 0.0f, 1.0f);
+            float b = glm::clamp(particle.color.b, 0.0f, 1.0f);
+            float a = glm::clamp(particle.color.a, 0.0f, 1.0f);
+            ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, a));
 
             ImVec2 center(screenX, screenY);
             ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -639,8 +686,21 @@ void ParticleEditor::open(const std::string& effectPath) {
     m_time = 0.0f;
 
     if (!effectPath.empty()) {
-        // TODO: Load effect from file
-        m_currentPath = effectPath;
+        // Load effect from file
+        if (ParticleEffectFile::load(effectPath, m_effect)) {
+            m_currentPath = effectPath;
+            // Recreate emitters from loaded effect
+            m_emitters.clear();
+            for (const auto& config : m_effect.emitters) {
+                m_emitters.push_back(std::make_unique<ParticleEmitter>(config));
+            }
+            // Handle empty emitter array edge case
+            m_selectedEmitter = m_emitters.empty() ? -1 : 0;
+            Logger::info() << "Loaded effect with " << m_emitters.size() << " emitters";
+        } else {
+            Logger::error() << "Failed to load effect: " << effectPath;
+            newEffect();
+        }
     } else {
         newEffect();
     }
