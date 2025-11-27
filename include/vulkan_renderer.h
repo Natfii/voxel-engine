@@ -310,6 +310,12 @@ public:
     VkPipeline getMeshPipeline() const { return m_meshPipeline; }               ///< Get mesh rendering pipeline
     VkPipelineLayout getPipelineLayout() const { return m_pipelineLayout; }     ///< Get pipeline layout
     VkPipelineLayout getMeshPipelineLayout() const { return m_meshPipelineLayout; }  ///< Get mesh pipeline layout
+
+    /**
+     * @brief Bind descriptor sets for mesh rendering
+     * Must be called after binding the mesh pipeline
+     */
+    void bindMeshDescriptorSets(VkCommandBuffer cmd);
     VkCommandBuffer getCurrentCommandBuffer() const { return m_commandBuffers[m_currentFrame]; }  ///< Get current cmd buffer
     VkDescriptorSetLayout getDescriptorSetLayout() const { return m_descriptorSetLayout; }  ///< Get descriptor layout
     VkDescriptorSet getCurrentDescriptorSet() const { return m_descriptorSets[m_currentFrame]; }  ///< Get current descriptor

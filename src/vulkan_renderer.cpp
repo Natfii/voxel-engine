@@ -1296,39 +1296,12 @@ void VulkanRenderer::createMeshPipeline() {
     colorBlending.attachmentCount = 1;
     colorBlending.pAttachments = &colorBlendAttachment;
 
-    // Create descriptor set layout for mesh rendering (camera UBO only for now)
-    VkDescriptorSetLayoutBinding cameraBinding{};
-    cameraBinding.binding = 0;
-    cameraBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    cameraBinding.descriptorCount = 1;
-    cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutBinding materialBinding{};
-    materialBinding.binding = 1;
-    materialBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    materialBinding.descriptorCount = 1;
-    materialBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    std::vector<VkDescriptorSetLayoutBinding> meshBindings = { cameraBinding, materialBinding };
-
-    VkDescriptorSetLayoutCreateInfo meshLayoutInfo{};
-    meshLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    meshLayoutInfo.bindingCount = static_cast<uint32_t>(meshBindings.size());
-    meshLayoutInfo.pBindings = meshBindings.data();
-
-    if (vkCreateDescriptorSetLayout(m_device, &meshLayoutInfo, nullptr, &m_meshDescriptorSetLayout) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create mesh descriptor set layout!");
-    }
-
-    // Create pipeline layout
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &m_meshDescriptorSetLayout;
-
-    if (vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_meshPipelineLayout) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create mesh pipeline layout!");
-    }
+    // Reuse the existing descriptor set layout and pipeline layout from the voxel pipeline
+    // The mesh shader only uses binding 0 (CameraUBO) which is compatible with the voxel layout
+    // This allows us to reuse the already-bound descriptor sets
+    // NOTE: The voxel layout has extra bindings (texture atlas, etc.) that mesh shader ignores
+    m_meshDescriptorSetLayout = VK_NULL_HANDLE;  // Not used - using voxel layout
+    m_meshPipelineLayout = m_pipelineLayout;     // Reuse voxel pipeline layout
 
     // Create graphics pipeline
     VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -3689,8 +3662,11 @@ void VulkanRenderer::cleanup() {
     std::cout << "    Cleaning up pipeline layout..." << '\n';
     // Pipelines are already destroyed in cleanupSwapChain()
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    vkDestroyPipelineLayout(m_device, m_meshPipelineLayout, nullptr);
-    vkDestroyDescriptorSetLayout(m_device, m_meshDescriptorSetLayout, nullptr);
+    // m_meshPipelineLayout points to m_pipelineLayout, don't double-free
+    // m_meshDescriptorSetLayout is VK_NULL_HANDLE, skip destruction
+    if (m_meshDescriptorSetLayout != VK_NULL_HANDLE && m_meshDescriptorSetLayout != m_descriptorSetLayout) {
+        vkDestroyDescriptorSetLayout(m_device, m_meshDescriptorSetLayout, nullptr);
+    }
     vkDestroyRenderPass(m_device, m_renderPass, nullptr);
 
     std::cout << "    Cleaning up sync objects..." << '\n';
@@ -3990,6 +3966,13 @@ void VulkanRenderer::bindPipelineCached(VkCommandBuffer commandBuffer, VkPipelin
 
 void VulkanRenderer::resetPipelineCache() {
     m_currentlyBoundPipeline = VK_NULL_HANDLE;
+}
+
+void VulkanRenderer::bindMeshDescriptorSets(VkCommandBuffer cmd) {
+    // Bind the camera descriptor set for mesh rendering
+    // Uses the mesh pipeline layout which expects the same camera UBO at binding 0
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_meshPipelineLayout,
+                            0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
 }
 
 void VulkanRenderer::batchCopyToMegaBuffer(VkBuffer srcVertexBuffer, VkBuffer srcIndexBuffer,

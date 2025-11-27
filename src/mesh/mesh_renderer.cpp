@@ -376,8 +376,9 @@ void MeshRenderer::render(VkCommandBuffer cmd) {
         return; // Mesh pipeline not initialized
     }
 
-    // Bind mesh pipeline
+    // Bind mesh pipeline and its descriptor sets
     m_renderer->bindPipelineCached(cmd, meshPipeline);
+    m_renderer->bindMeshDescriptorSets(cmd);
 
     // Render each mesh with its instances
     for (auto& [meshId, meshData] : m_meshes) {
