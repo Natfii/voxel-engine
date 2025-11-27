@@ -456,6 +456,7 @@ std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
             const tinygltf::Accessor* posAccessor = nullptr;
             const tinygltf::Accessor* normalAccessor = nullptr;
             const tinygltf::Accessor* uvAccessor = nullptr;
+            const tinygltf::Accessor* colorAccessor = nullptr;
 
             // Position (required)
             auto posIt = primitive.attributes.find("POSITION");
@@ -475,6 +476,12 @@ std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
             auto uvIt = primitive.attributes.find("TEXCOORD_0");
             if (uvIt != primitive.attributes.end()) {
                 uvAccessor = &model.accessors[uvIt->second];
+            }
+
+            // Vertex color (optional - used by PS1-style models)
+            auto colorIt = primitive.attributes.find("COLOR_0");
+            if (colorIt != primitive.attributes.end()) {
+                colorAccessor = &model.accessors[colorIt->second];
             }
 
             // Get buffer views
@@ -517,6 +524,47 @@ std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
                 } else {
                     vertex.texCoord = glm::vec2(0, 0);
                 }
+
+                // Vertex color (for PS1-style models)
+                if (colorAccessor) {
+                    const tinygltf::BufferView& colorView = model.bufferViews[colorAccessor->bufferView];
+                    const tinygltf::Buffer& colorBuffer = model.buffers[colorView.buffer];
+
+                    // COLOR_0 can be vec3 or vec4, and float or normalized unsigned byte/short
+                    int numComponents = (colorAccessor->type == TINYGLTF_TYPE_VEC4) ? 4 : 3;
+
+                    if (colorAccessor->componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+                        // Float colors
+                        size_t stride = numComponents * sizeof(float);
+                        const float* colorData = reinterpret_cast<const float*>(
+                            &colorBuffer.data[colorView.byteOffset + colorAccessor->byteOffset + i * stride]
+                        );
+                        vertex.color.r = colorData[0];
+                        vertex.color.g = colorData[1];
+                        vertex.color.b = colorData[2];
+                        vertex.color.a = (numComponents == 4) ? colorData[3] : 1.0f;
+                    } else if (colorAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                        // Normalized unsigned byte colors (0-255 -> 0.0-1.0)
+                        size_t stride = numComponents * sizeof(uint8_t);
+                        const uint8_t* colorData =
+                            &colorBuffer.data[colorView.byteOffset + colorAccessor->byteOffset + i * stride];
+                        vertex.color.r = colorData[0] / 255.0f;
+                        vertex.color.g = colorData[1] / 255.0f;
+                        vertex.color.b = colorData[2] / 255.0f;
+                        vertex.color.a = (numComponents == 4) ? colorData[3] / 255.0f : 1.0f;
+                    } else if (colorAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                        // Normalized unsigned short colors (0-65535 -> 0.0-1.0)
+                        size_t stride = numComponents * sizeof(uint16_t);
+                        const uint16_t* colorData = reinterpret_cast<const uint16_t*>(
+                            &colorBuffer.data[colorView.byteOffset + colorAccessor->byteOffset + i * stride]
+                        );
+                        vertex.color.r = colorData[0] / 65535.0f;
+                        vertex.color.g = colorData[1] / 65535.0f;
+                        vertex.color.b = colorData[2] / 65535.0f;
+                        vertex.color.a = (numComponents == 4) ? colorData[3] / 65535.0f : 1.0f;
+                    }
+                }
+                // Note: vertex.color defaults to white (1,1,1,1) via MeshVertex constructor
 
                 // Default tangent
                 vertex.tangent = glm::vec3(1, 0, 0);
@@ -567,6 +615,10 @@ std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
             if (primitive.material >= 0) {
                 mesh.materialIndex = static_cast<uint32_t>(primitive.material);
             }
+
+            Logger::info() << "  Mesh '" << meshName << "': " << vertices.size() << " verts, "
+                          << indices.size() / 3 << " tris"
+                          << (colorAccessor ? " (with vertex colors)" : "");
 
             meshes.push_back(std::move(mesh));
         }

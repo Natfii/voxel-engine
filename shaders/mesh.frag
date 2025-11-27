@@ -9,6 +9,7 @@ layout(location = 3) in vec3 fragTangent;
 layout(location = 4) in vec3 fragBitangent;
 layout(location = 5) in vec4 fragTintColor;
 layout(location = 6) in float fragTimeOfDay;
+layout(location = 7) in vec4 fragVertexColor;  // Vertex color (for PS1-style models)
 
 // ========== Outputs ==========
 
@@ -135,15 +136,16 @@ vec3 calculatePBRLighting(vec3 albedo, float metallic, float roughness, vec3 nor
 // ========== Main ==========
 
 void main() {
-    // Sample albedo texture or use tint color
+    // Sample albedo texture or use vertex color (for PS1-style models without textures)
     vec4 albedoSample;
     if (material.albedoTexIndex >= 0 && material.albedoTexIndex < 64) {
         albedoSample = texture(meshTextures[material.albedoTexIndex], fragTexCoord);
     } else {
-        albedoSample = vec4(1.0);  // White fallback
+        // No texture - use vertex color (defaults to white if not set)
+        albedoSample = fragVertexColor;
     }
 
-    // Apply tint color
+    // Apply instance tint color
     vec3 albedo = albedoSample.rgb * fragTintColor.rgb;
     float alpha = albedoSample.a * fragTintColor.a;
 
