@@ -11,6 +11,8 @@ if command -v glslc &> /dev/null; then
     glslc line.frag -o line_frag.spv
     glslc skybox.vert -o skybox_vert.spv
     glslc skybox.frag -o skybox_frag.spv
+    glslc mesh.vert -o mesh_vert.spv
+    glslc mesh.frag -o mesh_frag.spv
     echo "Shaders compiled successfully with glslc!"
 elif command -v glslangValidator &> /dev/null; then
     echo "Using glslangValidator to compile shaders..."
@@ -20,6 +22,8 @@ elif command -v glslangValidator &> /dev/null; then
     glslangValidator -V line.frag -o line_frag.spv
     glslangValidator -V skybox.vert -o skybox_vert.spv
     glslangValidator -V skybox.frag -o skybox_frag.spv
+    glslangValidator -V mesh.vert -o mesh_vert.spv
+    glslangValidator -V mesh.frag -o mesh_frag.spv
     echo "Shaders compiled successfully with glslangValidator!"
 else
     echo "ERROR: No shader compiler found!"

@@ -641,6 +641,17 @@ void MeshRenderer::initializeTextureResources() {
         return;
     }
 
+    // Create a default 1x1 white texture so descriptor set is always valid
+    TextureImage defaultTex;
+    defaultTex.name = "default_white";
+    defaultTex.width = 1;
+    defaultTex.height = 1;
+    defaultTex.data = {255, 255, 255, 255};  // White pixel RGBA
+    uploadTexture(defaultTex);
+
+    // Initialize descriptor set with default texture
+    updateTextureDescriptorSet();
+
     Logger::info() << "Mesh texture resources initialized (max " << MAX_TEXTURES << " textures)";
 }
 
