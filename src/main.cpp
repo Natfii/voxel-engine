@@ -49,6 +49,7 @@
 #include "raycast.h"
 #include "input_manager.h"
 #include "inventory.h"
+#include "key_bindings.h"
 #include "terrain_constants.h"
 #include "sun_tracker.h"
 #include "frustum.h"
@@ -111,6 +112,9 @@ int main(int argc, char* argv[]) {
         if (!config.loadFromFile("config.ini")) {
             std::cerr << "Warning: Failed to load config.ini, using default values" << '\n';
         }
+
+        // Load key bindings from config
+        KeyBindings::instance().loadFromConfig();
 
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // No OpenGL context
@@ -1145,8 +1149,9 @@ int main(int argc, char* argv[]) {
             // static sky light values by dynamic sun/moon intensity
             // No need to recalculate voxel lighting when sun moves!
 
-            // Handle F9 key for console
-            if (glfwGetKey(window, GLFW_KEY_F9) == GLFW_PRESS) {
+            // Handle console toggle key (default F9)
+            const auto& keys = KeyBindings::instance();
+            if (glfwGetKey(window, keys.toggleConsole) == GLFW_PRESS) {
                 if (!f9Pressed) {
                     f9Pressed = true;
                     console.toggle();
@@ -1162,8 +1167,8 @@ int main(int argc, char* argv[]) {
                 f9Pressed = false;
             }
 
-            // Handle I key for inventory (only when not in console or paused)
-            if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
+            // Handle inventory toggle key (default I) - only when not in console or paused
+            if (glfwGetKey(window, keys.toggleInventory) == GLFW_PRESS) {
                 if (!iPressed && !console.isVisible() && !isPaused) {
                     iPressed = true;
                     inventory.toggleOpen();
@@ -1179,8 +1184,8 @@ int main(int argc, char* argv[]) {
                 iPressed = false;
             }
 
-            // Handle ESC key for pause menu (but not if console or inventory is open)
-            if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+            // Handle pause key (default ESC) for pause menu (but not if console or inventory is open)
+            if (glfwGetKey(window, keys.pause) == GLFW_PRESS) {
                 if (!escPressed) {
                     escPressed = true;
 
