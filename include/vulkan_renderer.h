@@ -316,13 +316,20 @@ public:
      * Must be called after binding the mesh pipeline
      * @param cmd Command buffer
      * @param textureDescriptorSet Optional texture descriptor set (set 1)
+     * @param boneDescriptorSet Optional bone descriptor set (set 2) for skeletal animation
      */
-    void bindMeshDescriptorSets(VkCommandBuffer cmd, VkDescriptorSet textureDescriptorSet = VK_NULL_HANDLE);
+    void bindMeshDescriptorSets(VkCommandBuffer cmd, VkDescriptorSet textureDescriptorSet = VK_NULL_HANDLE,
+                               VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE);
 
     /**
      * @brief Get mesh texture descriptor set layout for creating compatible descriptor sets
      */
     VkDescriptorSetLayout getMeshTextureDescriptorSetLayout() const { return m_meshDescriptorSetLayout; }
+
+    /**
+     * @brief Get bone descriptor set layout for skeletal animation
+     */
+    VkDescriptorSetLayout getMeshBoneDescriptorSetLayout() const { return m_meshBoneDescriptorSetLayout; }
 
     /**
      * @brief Push material constants for mesh rendering
@@ -981,7 +988,8 @@ private:
     VkPipeline m_skyboxPipeline;
 
     // Mesh rendering pipeline (separate from voxel pipeline)
-    VkDescriptorSetLayout m_meshDescriptorSetLayout;
+    VkDescriptorSetLayout m_meshDescriptorSetLayout;      // Set 1: textures
+    VkDescriptorSetLayout m_meshBoneDescriptorSetLayout;  // Set 2: bone matrices
     VkPipelineLayout m_meshPipelineLayout;
     VkPipeline m_meshPipeline;
 

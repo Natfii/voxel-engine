@@ -1,8 +1,8 @@
 # Voxel Engine: Complete Handbook
 
-**Version:** 2.3
-**Last Updated:** 2025-11-27
-**Status:** Production Ready (Event System + Engine API + YAML Scripting + Editor Tools)
+**Version:** 2.4
+**Last Updated:** 2025-11-28
+**Status:** Production Ready (Event System + Engine API + YAML Scripting + Editor Tools + Skeletal Animation)
 
 ---
 
@@ -823,13 +823,16 @@ Both pipelines render in the same frame with correct depth occlusion. Meshes and
 
 ### Core Data Structures
 
-**MeshVertex** (44 bytes per vertex)
+**MeshVertex** (80 bytes per vertex)
 ```cpp
 struct MeshVertex {
     glm::vec3 position;    // 12 bytes - World-space position
     glm::vec3 normal;      // 12 bytes - Surface normal
     glm::vec2 texCoord;    // 8 bytes  - UV coordinates
     glm::vec3 tangent;     // 12 bytes - Tangent space (for normal mapping)
+    glm::vec4 color;       // 16 bytes - Vertex color (PS1-style models)
+    glm::ivec4 boneIndices;// 16 bytes - Bone indices for skinning (up to 4 bones)
+    glm::vec4 boneWeights; // 16 bytes - Bone weights for skinning (sum to 1.0)
 };
 ```
 
@@ -1124,14 +1127,142 @@ while (running) {
 }
 ```
 
-### Known Limitations (Phase 1)
+### Skeletal Animation System
 
-- **No Textures** - Material colors only (shaders support textures, loading not implemented)
-- **No glTF** - OBJ only (glTF 2.0 planned for Phase 2)
-- **No Animations** - Static meshes only (skeletal animation planned for Phase 6)
+The engine supports skeletal animation with GPU-accelerated vertex skinning for character models and animated objects.
+
+#### Architecture
+
+**Bone Buffer (UBO):**
+- Up to 64 bone matrices per mesh
+- Descriptor set 2, binding 0
+- GPU-accelerated vertex skinning in vertex shader
+
+**Vertex Skinning:**
+```glsl
+// Vertex shader skinning (mesh.vert)
+if (bones.numBones > 0 && hasBoneWeights) {
+    mat4 skinMatrix =
+        boneWeights.x * bones.boneMatrices[boneIndices.x] +
+        boneWeights.y * bones.boneMatrices[boneIndices.y] +
+        boneWeights.z * bones.boneMatrices[boneIndices.z] +
+        boneWeights.w * bones.boneMatrices[boneIndices.w];
+    worldPos = skinMatrix * vec4(inPosition, 1.0);
+}
+```
+
+#### SkeletonAnimator
+
+Procedural animation system for character rigs:
+
+```cpp
+#include "mesh/skeleton_animator.h"
+
+// Load animator from rig file
+SkeletonAnimator animator;
+animator.loadFromRig("assets/rigs/player.yaml");
+
+// Update animation (call each frame)
+float deltaTime = 0.016f;
+glm::vec3 velocity = player.getVelocity();
+animator.update(deltaTime, velocity);
+
+// Get bone matrices for GPU upload
+const auto& transforms = animator.getAllFinalTransforms();
+meshRenderer.updateBoneMatrices(transforms.data(), transforms.size());
+```
+
+**Built-in Animations:**
+- **Idle** - Subtle breathing motion
+- **Walk** - Procedural leg/arm swing based on velocity
+- **Tail Sway** - Optional tail bone animation
+
+#### Automatic Skinning from Rig Files
+
+For simple models without embedded GLTF skinning data, automatic bone weights can be calculated from rig bone positions:
+
+```cpp
+// Load mesh
+uint32_t meshId = meshRenderer.loadMeshFromGLTF("assets/models/player.glb");
+
+// Apply automatic bone weights from rig
+meshRenderer.applySkinningFromRig(meshId, "assets/rigs/player.yaml");
+```
+
+**How it works:**
+1. Loads bone positions from rig YAML
+2. For each vertex, finds nearby bones within influence radius
+3. Calculates weights based on distance with configurable falloff
+4. Normalizes weights to sum to 1.0
+5. Re-uploads mesh with bone indices and weights
+
+#### Rig File Format
+
+Rig files define bone hierarchy and skinning configuration:
+
+```yaml
+version: 1
+model: assets/models/player.glb
+has_tail: true
+
+# Skinning configuration for automatic bone weight calculation
+skinning:
+  enabled: true
+  influence_radius: 0.25     # Default radius for bone influence
+  max_bones_per_vertex: 4    # Max bones affecting each vertex
+  falloff: smooth            # linear, smooth, or sharp
+
+bones:
+  - name: spine_root
+    parent: ~                # null = root bone
+    position: [0.01, 0.39, -2.69]
+  - name: spine_tip
+    parent: spine_root
+    position: [0.01, 0.82, -2.48]
+  - name: leg_L
+    parent: spine_root
+    position: [-0.19, 0.39, -2.54]
+  - name: leg_R
+    parent: spine_root
+    position: [0.20, 0.39, -2.54]
+  - name: arm_L
+    parent: spine_tip
+    position: [-0.18, 0.65, -2.45]
+  - name: arm_R
+    parent: spine_tip
+    position: [0.18, 0.65, -2.45]
+  - name: head
+    parent: spine_tip
+    position: [0.01, 1.0, -2.38]
+  - name: tail_base        # Optional
+    parent: spine_root
+    position: [0.01, 0.28, -2.83]
+  - name: tail_tip         # Optional
+    parent: tail_base
+    position: [0.01, 0.25, -3.31]
+```
+
+**Skinning Falloff Types:**
+- **linear** - Weight decreases linearly with distance: `1 - dist/radius`
+- **smooth** - Hermite interpolation for smoother blending (default)
+- **sharp** - Quadratic falloff, tighter influence near bone
+
+**Per-Bone Radius Override:**
+```yaml
+bones:
+  - name: head
+    parent: spine_tip
+    position: [0.01, 1.0, -2.38]
+    influence_radius: 0.35   # Override default radius for this bone
+```
+
+### Known Limitations
+
+- **No Textures** - ~~Material colors only~~ glTF textures supported, OBJ textures not yet
 - **No Transparency** - Opaque meshes only (alpha blending planned for Phase 2)
 - **No Shadows** - Phase 5 feature
 - **No LOD** - Level-of-detail system planned for Phase 4
+- **Limited Animation** - Procedural only, no keyframe animation blending yet
 
 ### Future Roadmap
 
@@ -1159,11 +1290,13 @@ while (running) {
 - Point light shadows
 - Contact shadows
 
-**Phase 6: Animation**
-- Skeletal animation system
-- Keyframe interpolation
-- Animation blending
-- IK (Inverse Kinematics)
+**Phase 6: Animation** *(In Progress)*
+- ~~Skeletal animation system~~ **DONE** - GPU skinning, bone matrices, rig files
+- ~~Procedural animation~~ **DONE** - Walk, idle, tail sway
+- ~~Automatic skinning~~ **DONE** - Calculate bone weights from rig positions
+- Keyframe interpolation - *Planned*
+- Animation blending - *Planned*
+- IK (Inverse Kinematics) - *Planned*
 
 ## 3.7 Save/Load System
 

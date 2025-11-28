@@ -1121,11 +1121,17 @@ int main(int argc, char* argv[]) {
             playerMeshId = meshRenderer.loadMeshFromGLTF(playerModelPath);
 
             if (playerMeshId != 0) {
+                // Apply automatic bone weights from rig file
+                std::string playerRigPath = "assets/rigs/player.yaml";
+                if (meshRenderer.applySkinningFromRig(playerMeshId, playerRigPath)) {
+                    std::cout << "Applied automatic skinning to player model from rig" << '\n';
+                }
+
                 // Get model bounds to determine its height
                 glm::vec3 modelMin, modelMax;
                 if (meshRenderer.getMeshBounds(playerMeshId, modelMin, modelMax)) {
                     float modelHeight = modelMax.y - modelMin.y;
-                    const float TARGET_HEIGHT = 1.8f; // 1.8 blocks tall (like Minecraft player)
+                    const float TARGET_HEIGHT = 1.75f; // 1.75 blocks tall
 
                     // Safeguard against division by zero or extremely small models
                     if (modelHeight < 0.001f) {
@@ -1400,6 +1406,13 @@ int main(int argc, char* argv[]) {
 
                 playerAnimator.setFacingDirection(player.Front);
                 playerAnimator.update(clampedDeltaTime);
+
+                // Update mesh renderer bone matrices for skeletal animation
+                const auto& boneTransforms = playerAnimator.getAllFinalTransforms();
+                if (!boneTransforms.empty()) {
+                    meshRenderer.updateBoneMatrices(boneTransforms.data(),
+                                                    static_cast<int>(boneTransforms.size()));
+                }
             }
 
             // Update player model for third-person view

@@ -31,7 +31,9 @@ struct RuntimeBone {
     // Computed transforms
     glm::mat4 localTransform;
     glm::mat4 worldTransform;
-    glm::mat4 finalTransform;   // Includes inverse bind pose
+    glm::mat4 finalTransform;       // Includes inverse bind pose
+    glm::mat4 inverseBindPose;      // Inverse of initial world transform (bind pose)
+    bool bindPoseComputed = false;  // Whether inverse bind pose has been calculated
 };
 
 /**

@@ -320,8 +320,15 @@ void SkeletonAnimator::updateBoneTransforms() {
             bone.worldTransform = bone.localTransform;
         }
 
-        // Final transform (would include inverse bind pose for skinning)
-        bone.finalTransform = bone.worldTransform;
+        // Calculate inverse bind pose on first frame (rest pose)
+        if (!bone.bindPoseComputed) {
+            bone.inverseBindPose = glm::inverse(bone.worldTransform);
+            bone.bindPoseComputed = true;
+        }
+
+        // Final transform: current world transform * inverse bind pose
+        // This transforms vertices from bind pose space to current animated space
+        bone.finalTransform = bone.worldTransform * bone.inverseBindPose;
         m_finalTransforms[i] = bone.finalTransform;
     }
 }
@@ -366,9 +373,9 @@ void SkeletonAnimator::computeWalkPose(float time) {
     if (!m_skeleton) return;
 
     float walkCycle = time * 4.0f;  // Walking speed
-    float legSwing = std::sin(walkCycle) * 0.4f;
-    float armSwing = std::sin(walkCycle) * 0.3f;
-    float hipSway = std::sin(walkCycle * 2.0f) * 0.02f;
+    float legSwing = std::sin(walkCycle) * 0.6f;   // Increased from 0.4 to 0.6
+    float armSwing = std::sin(walkCycle) * 0.45f;  // Increased from 0.3 to 0.45
+    float hipSway = std::sin(walkCycle * 2.0f) * 0.03f;
 
     for (auto& bone : m_skeleton->bones) {
         bone.animPosition = bone.position;
@@ -401,9 +408,9 @@ void SkeletonAnimator::computeRunPose(float time) {
     if (!m_skeleton) return;
 
     float runCycle = time * 8.0f;  // Running speed (faster than walk)
-    float legSwing = std::sin(runCycle) * 0.7f;
-    float armSwing = std::sin(runCycle) * 0.5f;
-    float bounce = std::abs(std::sin(runCycle)) * 0.05f;
+    float legSwing = std::sin(runCycle) * 0.9f;   // Increased from 0.7 to 0.9
+    float armSwing = std::sin(runCycle) * 0.65f;  // Increased from 0.5 to 0.65
+    float bounce = std::abs(std::sin(runCycle)) * 0.07f;
 
     for (auto& bone : m_skeleton->bones) {
         bone.animPosition = bone.position;

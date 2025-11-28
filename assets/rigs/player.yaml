@@ -1,6 +1,14 @@
 version: 1
 model: assets\models\player.glb
 has_tail: true
+
+# Skinning configuration for automatic bone weight calculation
+skinning:
+  enabled: true
+  influence_radius: 0.25     # Default radius for bone influence
+  max_bones_per_vertex: 4    # Max bones affecting each vertex
+  falloff: smooth            # linear, smooth, or sharp
+
 bones:
   - name: spine_root
     parent: ~

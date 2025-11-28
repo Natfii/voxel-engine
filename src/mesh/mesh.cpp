@@ -18,7 +18,7 @@ VkVertexInputBindingDescription MeshVertex::getBindingDescription() {
 }
 
 std::vector<VkVertexInputAttributeDescription> MeshVertex::getAttributeDescriptions() {
-    std::vector<VkVertexInputAttributeDescription> attributeDescriptions(5);
+    std::vector<VkVertexInputAttributeDescription> attributeDescriptions(7);
 
     // Position (location 0)
     attributeDescriptions[0].binding = 0;
@@ -49,6 +49,18 @@ std::vector<VkVertexInputAttributeDescription> MeshVertex::getAttributeDescripti
     attributeDescriptions[4].location = 4;
     attributeDescriptions[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
     attributeDescriptions[4].offset = offsetof(MeshVertex, color);
+
+    // Bone Indices (location 5) - ivec4 as 4 signed ints
+    attributeDescriptions[5].binding = 0;
+    attributeDescriptions[5].location = 5;
+    attributeDescriptions[5].format = VK_FORMAT_R32G32B32A32_SINT;
+    attributeDescriptions[5].offset = offsetof(MeshVertex, boneIndices);
+
+    // Bone Weights (location 6)
+    attributeDescriptions[6].binding = 0;
+    attributeDescriptions[6].location = 6;
+    attributeDescriptions[6].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attributeDescriptions[6].offset = offsetof(MeshVertex, boneWeights);
 
     return attributeDescriptions;
 }
@@ -210,18 +222,18 @@ VkVertexInputBindingDescription InstanceData::getBindingDescription() {
 std::vector<VkVertexInputAttributeDescription> InstanceData::getAttributeDescriptions() {
     std::vector<VkVertexInputAttributeDescription> attributeDescriptions(5);
 
-    // mat4 transform (takes 4 attribute slots, locations 5-8)
-    // Location 4 is now used by vertex color
+    // mat4 transform (takes 4 attribute slots, locations 7-10)
+    // Locations 5-6 are now used by bone data
     for (uint32_t i = 0; i < 4; i++) {
         attributeDescriptions[i].binding = 1;
-        attributeDescriptions[i].location = 5 + i;
+        attributeDescriptions[i].location = 7 + i;
         attributeDescriptions[i].format = VK_FORMAT_R32G32B32A32_SFLOAT;
         attributeDescriptions[i].offset = offsetof(InstanceData, transform) + sizeof(glm::vec4) * i;
     }
 
-    // vec4 tintColor (location 9)
+    // vec4 tintColor (location 11)
     attributeDescriptions[4].binding = 1;
-    attributeDescriptions[4].location = 9;
+    attributeDescriptions[4].location = 11;
     attributeDescriptions[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
     attributeDescriptions[4].offset = offsetof(InstanceData, tintColor);
 

@@ -490,6 +490,20 @@ std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
                 colorAccessor = &model.accessors[colorIt->second];
             }
 
+            // Bone indices (optional - for skeletal animation)
+            const tinygltf::Accessor* jointsAccessor = nullptr;
+            auto jointsIt = primitive.attributes.find("JOINTS_0");
+            if (jointsIt != primitive.attributes.end()) {
+                jointsAccessor = &model.accessors[jointsIt->second];
+            }
+
+            // Bone weights (optional - for skeletal animation)
+            const tinygltf::Accessor* weightsAccessor = nullptr;
+            auto weightsIt = primitive.attributes.find("WEIGHTS_0");
+            if (weightsIt != primitive.attributes.end()) {
+                weightsAccessor = &model.accessors[weightsIt->second];
+            }
+
             // Get buffer views with validation
             if (posAccessor->bufferView < 0 || posAccessor->bufferView >= static_cast<int>(model.bufferViews.size())) {
                 Logger::warning() << "Invalid buffer view index for POSITION, skipping primitive";
@@ -587,6 +601,48 @@ std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
                     }
                 }
                 // Note: vertex.color defaults to white (1,1,1,1) via MeshVertex constructor
+
+                // Bone indices (for skeletal animation)
+                if (jointsAccessor) {
+                    const tinygltf::BufferView& jointsView = model.bufferViews[jointsAccessor->bufferView];
+                    const tinygltf::Buffer& jointsBuffer = model.buffers[jointsView.buffer];
+
+                    // JOINTS_0 is typically vec4 of unsigned byte or unsigned short
+                    if (jointsAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                        const uint8_t* jointsData =
+                            &jointsBuffer.data[jointsView.byteOffset + jointsAccessor->byteOffset + i * 4];
+                        vertex.boneIndices = glm::ivec4(jointsData[0], jointsData[1], jointsData[2], jointsData[3]);
+                    } else if (jointsAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                        const uint16_t* jointsData = reinterpret_cast<const uint16_t*>(
+                            &jointsBuffer.data[jointsView.byteOffset + jointsAccessor->byteOffset + i * 8]);
+                        vertex.boneIndices = glm::ivec4(jointsData[0], jointsData[1], jointsData[2], jointsData[3]);
+                    }
+                }
+
+                // Bone weights (for skeletal animation)
+                if (weightsAccessor) {
+                    const tinygltf::BufferView& weightsView = model.bufferViews[weightsAccessor->bufferView];
+                    const tinygltf::Buffer& weightsBuffer = model.buffers[weightsView.buffer];
+
+                    // WEIGHTS_0 is typically vec4 of float or normalized unsigned byte/short
+                    if (weightsAccessor->componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+                        const float* weightsData = reinterpret_cast<const float*>(
+                            &weightsBuffer.data[weightsView.byteOffset + weightsAccessor->byteOffset + i * 16]);
+                        vertex.boneWeights = glm::vec4(weightsData[0], weightsData[1], weightsData[2], weightsData[3]);
+                    } else if (weightsAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                        const uint8_t* weightsData =
+                            &weightsBuffer.data[weightsView.byteOffset + weightsAccessor->byteOffset + i * 4];
+                        vertex.boneWeights = glm::vec4(
+                            weightsData[0] / 255.0f, weightsData[1] / 255.0f,
+                            weightsData[2] / 255.0f, weightsData[3] / 255.0f);
+                    } else if (weightsAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                        const uint16_t* weightsData = reinterpret_cast<const uint16_t*>(
+                            &weightsBuffer.data[weightsView.byteOffset + weightsAccessor->byteOffset + i * 8]);
+                        vertex.boneWeights = glm::vec4(
+                            weightsData[0] / 65535.0f, weightsData[1] / 65535.0f,
+                            weightsData[2] / 65535.0f, weightsData[3] / 65535.0f);
+                    }
+                }
 
                 // Default tangent
                 vertex.tangent = glm::vec3(1, 0, 0);

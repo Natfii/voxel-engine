@@ -1314,18 +1314,37 @@ void VulkanRenderer::createMeshPipeline() {
         throw std::runtime_error("failed to create mesh texture descriptor set layout!");
     }
 
+    // Create bone descriptor set layout for skeletal animation (set 2)
+    VkDescriptorSetLayoutBinding boneUBOBinding{};
+    boneUBOBinding.binding = 0;
+    boneUBOBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    boneUBOBinding.descriptorCount = 1;
+    boneUBOBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    boneUBOBinding.pImmutableSamplers = nullptr;
+
+    VkDescriptorSetLayoutCreateInfo boneLayoutInfo{};
+    boneLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    boneLayoutInfo.bindingCount = 1;
+    boneLayoutInfo.pBindings = &boneUBOBinding;
+
+    if (vkCreateDescriptorSetLayout(m_device, &boneLayoutInfo, nullptr, &m_meshBoneDescriptorSetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create mesh bone descriptor set layout!");
+    }
+
     // Create push constant range for material data
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;
     pushConstantRange.size = sizeof(int32_t) * 2 + sizeof(float) * 2;  // albedoTexIndex, normalTexIndex, metallic, roughness
 
-    // Create mesh pipeline layout with two descriptor sets + push constants
+    // Create mesh pipeline layout with three descriptor sets + push constants
     // Set 0: Camera UBO (from voxel pipeline, reused)
     // Set 1: Mesh textures
-    std::array<VkDescriptorSetLayout, 2> meshSetLayouts = {
-        m_descriptorSetLayout,       // Set 0: Camera UBO
-        m_meshDescriptorSetLayout    // Set 1: Mesh textures
+    // Set 2: Bone matrices for skeletal animation
+    std::array<VkDescriptorSetLayout, 3> meshSetLayouts = {
+        m_descriptorSetLayout,           // Set 0: Camera UBO
+        m_meshDescriptorSetLayout,       // Set 1: Mesh textures
+        m_meshBoneDescriptorSetLayout    // Set 2: Bone matrices
     };
 
     VkPipelineLayoutCreateInfo meshLayoutInfo{};
@@ -3780,6 +3799,9 @@ void VulkanRenderer::cleanup() {
     if (m_meshDescriptorSetLayout != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(m_device, m_meshDescriptorSetLayout, nullptr);
     }
+    if (m_meshBoneDescriptorSetLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(m_device, m_meshBoneDescriptorSetLayout, nullptr);
+    }
     vkDestroyRenderPass(m_device, m_renderPass, nullptr);
 
     std::cout << "    Cleaning up sync objects..." << '\n';
@@ -4081,7 +4103,8 @@ void VulkanRenderer::resetPipelineCache() {
     m_currentlyBoundPipeline = VK_NULL_HANDLE;
 }
 
-void VulkanRenderer::bindMeshDescriptorSets(VkCommandBuffer cmd, VkDescriptorSet textureDescriptorSet) {
+void VulkanRenderer::bindMeshDescriptorSets(VkCommandBuffer cmd, VkDescriptorSet textureDescriptorSet,
+                                            VkDescriptorSet boneDescriptorSet) {
     // Bind the camera descriptor set (set 0)
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_meshPipelineLayout,
                             0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
@@ -4090,6 +4113,12 @@ void VulkanRenderer::bindMeshDescriptorSets(VkCommandBuffer cmd, VkDescriptorSet
     if (textureDescriptorSet != VK_NULL_HANDLE) {
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_meshPipelineLayout,
                                 1, 1, &textureDescriptorSet, 0, nullptr);
+    }
+
+    // Bind the bone descriptor set (set 2) if provided for skeletal animation
+    if (boneDescriptorSet != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_meshPipelineLayout,
+                                2, 1, &boneDescriptorSet, 0, nullptr);
     }
 }
 
