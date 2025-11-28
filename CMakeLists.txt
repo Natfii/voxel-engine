@@ -21,6 +21,19 @@ file(GLOB IMGUI_SOURCES
     "${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp"
 )
 
+# ImGuizmo paths
+set(IMGUIZMO_DIR "${CMAKE_SOURCE_DIR}/external/ImGuizmo")
+set(IMGUIZMO_SOURCES
+    "${IMGUIZMO_DIR}/ImGuizmo.cpp"
+)
+
+# ImPlot paths
+set(IMPLOT_DIR "${CMAKE_SOURCE_DIR}/external/implot")
+set(IMPLOT_SOURCES
+    "${IMPLOT_DIR}/implot.cpp"
+    "${IMPLOT_DIR}/implot_items.cpp"
+)
+
 include_directories(
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/include
@@ -28,6 +41,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/external/tinygltf
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
+    ${IMGUIZMO_DIR}
+    ${IMPLOT_DIR}
 )
 
 # Platform-specific configuration
@@ -57,7 +72,7 @@ file(GLOB_RECURSE ENGINE_SOURCES src/*.cpp)
 list(REMOVE_ITEM ENGINE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
 
 # Create shared library with all engine code (except main.cpp)
-add_library(voxel-engine-lib STATIC ${ENGINE_SOURCES} ${IMGUI_SOURCES})
+add_library(voxel-engine-lib STATIC ${ENGINE_SOURCES} ${IMGUI_SOURCES} ${IMGUIZMO_SOURCES} ${IMPLOT_SOURCES})
 
 target_include_directories(voxel-engine-lib PUBLIC
     ${CMAKE_SOURCE_DIR}/src
@@ -66,6 +81,8 @@ target_include_directories(voxel-engine-lib PUBLIC
     ${CMAKE_SOURCE_DIR}/external/tinygltf
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
+    ${IMGUIZMO_DIR}
+    ${IMPLOT_DIR}
     ${Vulkan_INCLUDE_DIRS}
 )
 

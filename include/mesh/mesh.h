@@ -19,6 +19,7 @@
  *
  * Includes all data needed for PBR rendering with normal mapping.
  * Layout designed to match Vulkan vertex input requirements.
+ * Supports skeletal animation with bone weights/indices.
  */
 struct MeshVertex {
     glm::vec3 position{0.0f};           ///< Local space position
@@ -26,6 +27,10 @@ struct MeshVertex {
     glm::vec2 texCoord{0.0f};           ///< UV texture coordinates
     glm::vec3 tangent{1.0f, 0.0f, 0.0f}; ///< Tangent for normal mapping (PBR)
     glm::vec4 color{1.0f};              ///< Vertex color (RGBA), defaults to white
+
+    // Skeletal animation data (up to 4 bones per vertex)
+    glm::ivec4 boneIndices{0, 0, 0, 0}; ///< Indices of bones affecting this vertex
+    glm::vec4 boneWeights{0.0f};        ///< Weights for each bone (should sum to 1.0)
 
     /**
      * @brief Get Vulkan binding description for vertex buffer
@@ -35,7 +40,7 @@ struct MeshVertex {
 
     /**
      * @brief Get Vulkan attribute descriptions for vertex shader
-     * @return Array of 5 attribute descriptions (position, normal, uv, tangent, color)
+     * @return Array of 7 attribute descriptions (position, normal, uv, tangent, color, boneIndices, boneWeights)
      */
     static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptions();
 };
@@ -216,4 +221,21 @@ struct InstanceData {
      * @return Array of 5 attributes (mat4 transform + vec4 tint)
      */
     static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptions();
+};
+
+/**
+ * @brief Maximum number of bones for skeletal animation
+ */
+static constexpr int MAX_BONES = 64;
+
+/**
+ * @brief GPU-compatible bone matrix uniform buffer
+ *
+ * Contains bone matrices for skeletal animation skinning.
+ * Layout matches GLSL std140 alignment rules.
+ */
+struct alignas(16) BoneUBO {
+    alignas(16) glm::mat4 boneMatrices[MAX_BONES]; ///< Bone transformation matrices
+    alignas(4)  int32_t numBones = 0;              ///< Number of active bones (0 = no skinning)
+    alignas(4)  float _padding[3] = {0, 0, 0};     ///< Padding to 16-byte alignment
 };

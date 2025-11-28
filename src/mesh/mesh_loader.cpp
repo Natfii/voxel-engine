@@ -5,10 +5,16 @@
 
 #include "mesh/mesh_loader.h"
 #include "logger.h"
+#define GLM_ENABLE_EXPERIMENTAL  // Required for gtx extensions
 #include <glm/gtc/constants.hpp>  // For glm::pi
+#include <glm/gtc/quaternion.hpp>  // For glm::quat
+#include <glm/gtx/quaternion.hpp>  // For glm::mat4_cast
+#include <glm/gtc/matrix_transform.hpp>  // For glm::translate, glm::rotate, glm::scale
 #include <fstream>
 #include <sstream>
 #include <cmath>
+#include <cfloat>
+#include <functional>
 #include <unordered_map>
 
 // tinygltf for GLB/GLTF loading
@@ -484,13 +490,43 @@ std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
                 colorAccessor = &model.accessors[colorIt->second];
             }
 
-            // Get buffer views
+            // Bone indices (optional - for skeletal animation)
+            const tinygltf::Accessor* jointsAccessor = nullptr;
+            auto jointsIt = primitive.attributes.find("JOINTS_0");
+            if (jointsIt != primitive.attributes.end()) {
+                jointsAccessor = &model.accessors[jointsIt->second];
+            }
+
+            // Bone weights (optional - for skeletal animation)
+            const tinygltf::Accessor* weightsAccessor = nullptr;
+            auto weightsIt = primitive.attributes.find("WEIGHTS_0");
+            if (weightsIt != primitive.attributes.end()) {
+                weightsAccessor = &model.accessors[weightsIt->second];
+            }
+
+            // Get buffer views with validation
+            if (posAccessor->bufferView < 0 || posAccessor->bufferView >= static_cast<int>(model.bufferViews.size())) {
+                Logger::warning() << "Invalid buffer view index for POSITION, skipping primitive";
+                continue;
+            }
             const tinygltf::BufferView& posView = model.bufferViews[posAccessor->bufferView];
+
+            if (posView.buffer < 0 || posView.buffer >= static_cast<int>(model.buffers.size())) {
+                Logger::warning() << "Invalid buffer index for POSITION, skipping primitive";
+                continue;
+            }
             const tinygltf::Buffer& posBuffer = model.buffers[posView.buffer];
 
             // Read vertex data
             size_t vertexCount = posAccessor->count;
             vertices.resize(vertexCount);
+
+            // Validate buffer size
+            size_t requiredPosBytes = posView.byteOffset + posAccessor->byteOffset + vertexCount * 12;
+            if (requiredPosBytes > posBuffer.data.size()) {
+                Logger::warning() << "Position buffer too small, skipping primitive";
+                continue;
+            }
 
             for (size_t i = 0; i < vertexCount; ++i) {
                 MeshVertex& vertex = vertices[i];
@@ -566,6 +602,48 @@ std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
                 }
                 // Note: vertex.color defaults to white (1,1,1,1) via MeshVertex constructor
 
+                // Bone indices (for skeletal animation)
+                if (jointsAccessor) {
+                    const tinygltf::BufferView& jointsView = model.bufferViews[jointsAccessor->bufferView];
+                    const tinygltf::Buffer& jointsBuffer = model.buffers[jointsView.buffer];
+
+                    // JOINTS_0 is typically vec4 of unsigned byte or unsigned short
+                    if (jointsAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                        const uint8_t* jointsData =
+                            &jointsBuffer.data[jointsView.byteOffset + jointsAccessor->byteOffset + i * 4];
+                        vertex.boneIndices = glm::ivec4(jointsData[0], jointsData[1], jointsData[2], jointsData[3]);
+                    } else if (jointsAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                        const uint16_t* jointsData = reinterpret_cast<const uint16_t*>(
+                            &jointsBuffer.data[jointsView.byteOffset + jointsAccessor->byteOffset + i * 8]);
+                        vertex.boneIndices = glm::ivec4(jointsData[0], jointsData[1], jointsData[2], jointsData[3]);
+                    }
+                }
+
+                // Bone weights (for skeletal animation)
+                if (weightsAccessor) {
+                    const tinygltf::BufferView& weightsView = model.bufferViews[weightsAccessor->bufferView];
+                    const tinygltf::Buffer& weightsBuffer = model.buffers[weightsView.buffer];
+
+                    // WEIGHTS_0 is typically vec4 of float or normalized unsigned byte/short
+                    if (weightsAccessor->componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+                        const float* weightsData = reinterpret_cast<const float*>(
+                            &weightsBuffer.data[weightsView.byteOffset + weightsAccessor->byteOffset + i * 16]);
+                        vertex.boneWeights = glm::vec4(weightsData[0], weightsData[1], weightsData[2], weightsData[3]);
+                    } else if (weightsAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                        const uint8_t* weightsData =
+                            &weightsBuffer.data[weightsView.byteOffset + weightsAccessor->byteOffset + i * 4];
+                        vertex.boneWeights = glm::vec4(
+                            weightsData[0] / 255.0f, weightsData[1] / 255.0f,
+                            weightsData[2] / 255.0f, weightsData[3] / 255.0f);
+                    } else if (weightsAccessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                        const uint16_t* weightsData = reinterpret_cast<const uint16_t*>(
+                            &weightsBuffer.data[weightsView.byteOffset + weightsAccessor->byteOffset + i * 8]);
+                        vertex.boneWeights = glm::vec4(
+                            weightsData[0] / 65535.0f, weightsData[1] / 65535.0f,
+                            weightsData[2] / 65535.0f, weightsData[3] / 65535.0f);
+                    }
+                }
+
                 // Default tangent
                 vertex.tangent = glm::vec3(1, 0, 0);
             }
@@ -630,6 +708,195 @@ std::vector<Mesh> MeshLoader::loadGLTF(const std::string& filepath,
 
     Logger::info() << "Loaded glTF: " << meshes.size() << " meshes, " << materials.size() << " materials";
     return meshes;
+}
+
+// ========== glTF Scene Loader with Hierarchy ==========
+
+GLTFScene MeshLoader::loadGLTFScene(const std::string& filepath) {
+    Logger::info() << "Loading glTF scene with hierarchy: " << filepath;
+
+    GLTFScene scene;
+
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    std::string err, warn;
+
+    // Determine if it's a binary GLB or text GLTF
+    bool isBinary = filepath.size() >= 4 &&
+                    (filepath.substr(filepath.size() - 4) == ".glb" ||
+                     filepath.substr(filepath.size() - 4) == ".GLB");
+
+    bool success = false;
+    if (isBinary) {
+        success = loader.LoadBinaryFromFile(&model, &err, &warn, filepath);
+    } else {
+        success = loader.LoadASCIIFromFile(&model, &err, &warn, filepath);
+    }
+
+    if (!warn.empty()) {
+        Logger::warning() << "glTF warning: " << warn;
+    }
+
+    if (!err.empty()) {
+        throw std::runtime_error("glTF error: " + err);
+    }
+
+    if (!success) {
+        throw std::runtime_error("Failed to load glTF file: " + filepath);
+    }
+
+    // Load meshes, materials, and textures using existing code
+    scene.meshes = loadGLTF(filepath, scene.materials, scene.textures);
+
+    // ========== Extract Node Hierarchy ==========
+    scene.nodes.resize(model.nodes.size());
+
+    // First pass: Extract node data and local transforms
+    for (size_t i = 0; i < model.nodes.size(); ++i) {
+        const tinygltf::Node& gltfNode = model.nodes[i];
+        GLTFNode& node = scene.nodes[i];
+
+        // Set node name
+        node.name = gltfNode.name.empty() ? "node_" + std::to_string(i) : gltfNode.name;
+
+        // Set mesh index if present
+        node.meshIndex = gltfNode.mesh;
+
+        // Store children indices
+        node.children = gltfNode.children;
+
+        // Compute local transform matrix
+        if (!gltfNode.matrix.empty() && gltfNode.matrix.size() >= 16) {
+            // Node has a direct matrix
+            // glTF uses column-major order (same as glm)
+            // matrix[col * 4 + row] = element at (row, col)
+            for (int col = 0; col < 4; ++col) {
+                for (int row = 0; row < 4; ++row) {
+                    node.localTransform[col][row] = static_cast<float>(gltfNode.matrix[col * 4 + row]);
+                }
+            }
+        } else {
+            // Compose from TRS (Translation, Rotation, Scale)
+            glm::mat4 translation = glm::mat4(1.0f);
+            glm::mat4 rotation = glm::mat4(1.0f);
+            glm::mat4 scale = glm::mat4(1.0f);
+
+            // Translation
+            if (!gltfNode.translation.empty()) {
+                translation = glm::translate(glm::mat4(1.0f),
+                    glm::vec3(
+                        static_cast<float>(gltfNode.translation[0]),
+                        static_cast<float>(gltfNode.translation[1]),
+                        static_cast<float>(gltfNode.translation[2])
+                    ));
+            }
+
+            // Rotation (quaternion)
+            if (!gltfNode.rotation.empty()) {
+                glm::quat quat(
+                    static_cast<float>(gltfNode.rotation[3]), // w
+                    static_cast<float>(gltfNode.rotation[0]), // x
+                    static_cast<float>(gltfNode.rotation[1]), // y
+                    static_cast<float>(gltfNode.rotation[2])  // z
+                );
+                rotation = glm::mat4_cast(quat);
+            }
+
+            // Scale
+            if (!gltfNode.scale.empty()) {
+                scale = glm::scale(glm::mat4(1.0f),
+                    glm::vec3(
+                        static_cast<float>(gltfNode.scale[0]),
+                        static_cast<float>(gltfNode.scale[1]),
+                        static_cast<float>(gltfNode.scale[2])
+                    ));
+            }
+
+            // Compose: T * R * S
+            node.localTransform = translation * rotation * scale;
+        }
+    }
+
+    // Second pass: Set parent indices
+    for (size_t i = 0; i < scene.nodes.size(); ++i) {
+        for (int childIdx : scene.nodes[i].children) {
+            if (childIdx >= 0 && childIdx < static_cast<int>(scene.nodes.size())) {
+                scene.nodes[childIdx].parent = static_cast<int>(i);
+            }
+        }
+    }
+
+    // ========== Calculate World Transforms and Scene Bounds ==========
+    // First, compute world transforms for all nodes
+    std::vector<glm::mat4> worldTransforms(scene.nodes.size(), glm::mat4(1.0f));
+
+    // Helper lambda to compute world transform recursively
+    std::function<glm::mat4(int, const glm::mat4&)> computeWorldTransform;
+    computeWorldTransform = [&](int nodeIdx, const glm::mat4& parentWorld) -> glm::mat4 {
+        if (nodeIdx < 0 || nodeIdx >= static_cast<int>(scene.nodes.size())) {
+            return parentWorld;
+        }
+        glm::mat4 world = parentWorld * scene.nodes[nodeIdx].localTransform;
+        worldTransforms[nodeIdx] = world;
+
+        for (int childIdx : scene.nodes[nodeIdx].children) {
+            computeWorldTransform(childIdx, world);
+        }
+        return world;
+    };
+
+    // Start from root nodes (nodes with no parent)
+    for (size_t i = 0; i < scene.nodes.size(); ++i) {
+        if (scene.nodes[i].parent < 0) {
+            computeWorldTransform(static_cast<int>(i), glm::mat4(1.0f));
+        }
+    }
+
+    // Now compute scene bounds by transforming mesh bounds by their node's world transform
+    scene.boundsMin = glm::vec3(FLT_MAX);
+    scene.boundsMax = glm::vec3(-FLT_MAX);
+
+    for (size_t nodeIdx = 0; nodeIdx < scene.nodes.size(); ++nodeIdx) {
+        const GLTFNode& node = scene.nodes[nodeIdx];
+        if (node.meshIndex >= 0 && node.meshIndex < static_cast<int>(scene.meshes.size())) {
+            const Mesh& mesh = scene.meshes[node.meshIndex];
+            const glm::mat4& worldTransform = worldTransforms[nodeIdx];
+
+            // Transform the 8 corners of the mesh bounding box
+            glm::vec3 corners[8] = {
+                glm::vec3(mesh.boundsMin.x, mesh.boundsMin.y, mesh.boundsMin.z),
+                glm::vec3(mesh.boundsMax.x, mesh.boundsMin.y, mesh.boundsMin.z),
+                glm::vec3(mesh.boundsMin.x, mesh.boundsMax.y, mesh.boundsMin.z),
+                glm::vec3(mesh.boundsMax.x, mesh.boundsMax.y, mesh.boundsMin.z),
+                glm::vec3(mesh.boundsMin.x, mesh.boundsMin.y, mesh.boundsMax.z),
+                glm::vec3(mesh.boundsMax.x, mesh.boundsMin.y, mesh.boundsMax.z),
+                glm::vec3(mesh.boundsMin.x, mesh.boundsMax.y, mesh.boundsMax.z),
+                glm::vec3(mesh.boundsMax.x, mesh.boundsMax.y, mesh.boundsMax.z)
+            };
+
+            for (int c = 0; c < 8; ++c) {
+                glm::vec4 transformed = worldTransform * glm::vec4(corners[c], 1.0f);
+                glm::vec3 worldPos = glm::vec3(transformed) / transformed.w;
+                scene.boundsMin = glm::min(scene.boundsMin, worldPos);
+                scene.boundsMax = glm::max(scene.boundsMax, worldPos);
+            }
+        }
+    }
+
+    // If no meshes had nodes, fall back to direct mesh bounds
+    if (scene.boundsMin.x == FLT_MAX) {
+        for (const Mesh& mesh : scene.meshes) {
+            scene.boundsMin = glm::min(scene.boundsMin, mesh.boundsMin);
+            scene.boundsMax = glm::max(scene.boundsMax, mesh.boundsMax);
+        }
+    }
+
+    Logger::info() << "Loaded glTF scene: " << scene.nodes.size() << " nodes, "
+                  << scene.meshes.size() << " meshes, "
+                  << scene.materials.size() << " materials, "
+                  << scene.textures.size() << " textures";
+
+    return scene;
 }
 
 // ========== Procedural Mesh Generators ==========

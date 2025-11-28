@@ -7,6 +7,8 @@
 #include "vulkan_renderer.h"
 #include "logger.h"
 #include <glm/gtc/matrix_transform.hpp>
+#include <yaml-cpp/yaml.h>
+#include <algorithm>
 
 // ========== Construction/Destruction ==========
 
@@ -59,6 +61,9 @@ MeshRenderer::~MeshRenderer() {
 
     // Clean up textures
     cleanupTextures();
+
+    // Clean up bone buffer
+    cleanupBoneBuffer();
 
     Logger::info() << "MeshRenderer cleanup complete";
 }
@@ -423,9 +428,9 @@ void MeshRenderer::render(VkCommandBuffer cmd) {
         return; // Mesh pipeline not initialized
     }
 
-    // Bind mesh pipeline and its descriptor sets (including textures)
+    // Bind mesh pipeline and its descriptor sets (including textures and bones)
     m_renderer->bindPipelineCached(cmd, meshPipeline);
-    m_renderer->bindMeshDescriptorSets(cmd, m_textureDescriptorSet);
+    m_renderer->bindMeshDescriptorSets(cmd, m_textureDescriptorSet, m_boneDescriptorSet);
 
     // Render each mesh with its instances
     for (auto& [meshId, meshData] : m_meshes) {
@@ -597,6 +602,220 @@ uint32_t MeshRenderer::loadMeshFromGLTF(const std::string& filepath) {
     }
 }
 
+// ========== Automatic Skinning from Rig ==========
+
+bool MeshRenderer::applySkinningFromRig(uint32_t meshId, const std::string& rigPath,
+                                         float influenceRadius) {
+    Logger::info() << "applySkinningFromRig called: meshId=" << meshId << ", rigPath=" << rigPath;
+
+    // Find the mesh
+    auto meshIt = m_meshes.find(meshId);
+    if (meshIt == m_meshes.end()) {
+        Logger::error() << "Cannot apply skinning: mesh " << meshId << " not found";
+        return false;
+    }
+
+    MeshData& meshData = meshIt->second;
+    if (meshData.mesh.vertices.empty()) {
+        Logger::error() << "Cannot apply skinning: mesh has no vertices";
+        return false;
+    }
+
+    try {
+        // Load rig YAML
+        YAML::Node root = YAML::LoadFile(rigPath);
+
+        // Parse skinning config if present
+        float radius = influenceRadius;
+        std::string falloffType = "smooth";
+        int maxBonesPerVertex = 4;
+
+        if (root["skinning"]) {
+            const YAML::Node& skinning = root["skinning"];
+            if (skinning["influence_radius"]) {
+                radius = skinning["influence_radius"].as<float>(radius);
+            }
+            if (skinning["falloff"]) {
+                falloffType = skinning["falloff"].as<std::string>("smooth");
+            }
+            if (skinning["max_bones_per_vertex"]) {
+                maxBonesPerVertex = skinning["max_bones_per_vertex"].as<int>(4);
+            }
+        }
+
+        // Load bones from rig
+        struct RigBone {
+            std::string name;
+            glm::vec3 position;
+            float influenceRadius;
+        };
+        std::vector<RigBone> bones;
+
+        if (!root["bones"]) {
+            Logger::error() << "Rig has no bones";
+            return false;
+        }
+
+        for (const auto& boneNode : root["bones"]) {
+            RigBone bone;
+            bone.name = boneNode["name"].as<std::string>("bone");
+            bone.influenceRadius = radius;
+
+            // Per-bone radius override
+            if (boneNode["influence_radius"]) {
+                bone.influenceRadius = boneNode["influence_radius"].as<float>(radius);
+            }
+
+            // Position - support array [x,y,z] format
+            if (boneNode["position"]) {
+                const YAML::Node& posNode = boneNode["position"];
+                if (posNode.IsSequence() && posNode.size() >= 3) {
+                    bone.position.x = posNode[0].as<float>(0.0f);
+                    bone.position.y = posNode[1].as<float>(0.0f);
+                    bone.position.z = posNode[2].as<float>(0.0f);
+                }
+            }
+
+            bones.push_back(bone);
+        }
+
+        if (bones.empty()) {
+            Logger::error() << "No bones loaded from rig";
+            return false;
+        }
+
+        // Calculate model bounds to auto-adjust radius if needed
+        glm::vec3 modelMin(FLT_MAX), modelMax(-FLT_MAX);
+        for (const auto& vertex : meshData.mesh.vertices) {
+            modelMin = glm::min(modelMin, vertex.position);
+            modelMax = glm::max(modelMax, vertex.position);
+        }
+        float modelSize = glm::length(modelMax - modelMin);
+
+        // If radius is too small relative to model size, auto-adjust
+        if (radius < modelSize * 0.3f) {
+            float oldRadius = radius;
+            radius = modelSize * 0.5f;  // Use 50% of model diagonal as default
+            Logger::info() << "Auto-adjusted influence radius from " << oldRadius
+                          << " to " << radius << " (model size: " << modelSize << ")";
+
+            // Update all bones to use the new radius (unless they have per-bone override)
+            for (auto& bone : bones) {
+                if (bone.influenceRadius == oldRadius) {
+                    bone.influenceRadius = radius;
+                }
+            }
+        }
+
+        Logger::info() << "Applying skinning from rig with " << bones.size()
+                      << " bones, radius=" << radius;
+
+        // Debug: track vertices with weights
+        int verticesWithWeights = 0;
+
+        // Calculate bone weights for each vertex
+        for (auto& vertex : meshData.mesh.vertices) {
+            // Collect bone influences
+            struct BoneInfluence {
+                int boneIndex;
+                float weight;
+            };
+            std::vector<BoneInfluence> influences;
+
+            for (size_t i = 0; i < bones.size(); ++i) {
+                float dist = glm::distance(vertex.position, bones[i].position);
+                float boneRadius = bones[i].influenceRadius;
+
+                if (dist < boneRadius) {
+                    float normalizedDist = dist / boneRadius;
+                    float weight = 0.0f;
+
+                    // Calculate weight based on falloff type
+                    if (falloffType == "linear") {
+                        weight = 1.0f - normalizedDist;
+                    } else if (falloffType == "sharp") {
+                        weight = 1.0f - normalizedDist * normalizedDist;
+                    } else {  // smooth (default)
+                        // Smooth hermite interpolation
+                        weight = 1.0f - (3.0f * normalizedDist * normalizedDist -
+                                        2.0f * normalizedDist * normalizedDist * normalizedDist);
+                    }
+
+                    if (weight > 0.001f) {
+                        influences.push_back({static_cast<int>(i), weight});
+                    }
+                }
+            }
+
+            // Sort by weight (highest first)
+            std::sort(influences.begin(), influences.end(),
+                     [](const BoneInfluence& a, const BoneInfluence& b) {
+                         return a.weight > b.weight;
+                     });
+
+            // Keep only top N bones
+            if (influences.size() > static_cast<size_t>(maxBonesPerVertex)) {
+                influences.resize(maxBonesPerVertex);
+            }
+
+            // Normalize weights to sum to 1.0
+            float totalWeight = 0.0f;
+            for (const auto& inf : influences) {
+                totalWeight += inf.weight;
+            }
+
+            // Set vertex bone data
+            vertex.boneIndices = glm::ivec4(0);
+            vertex.boneWeights = glm::vec4(0.0f);
+
+            for (size_t i = 0; i < influences.size() && i < 4; ++i) {
+                vertex.boneIndices[static_cast<int>(i)] = influences[i].boneIndex;
+                vertex.boneWeights[static_cast<int>(i)] = totalWeight > 0.001f
+                    ? influences[i].weight / totalWeight : 0.0f;
+            }
+
+            // Track vertices that got weights
+            if (!influences.empty()) {
+                verticesWithWeights++;
+            }
+        }
+
+        Logger::info() << "Skinning applied: " << verticesWithWeights << "/"
+                      << meshData.mesh.vertices.size() << " vertices have bone weights";
+
+        if (verticesWithWeights == 0) {
+            Logger::warning() << "No vertices received bone weights! Check bone positions vs model vertices.";
+            // Print first vertex position and first bone position for debugging
+            if (!meshData.mesh.vertices.empty() && !bones.empty()) {
+                const auto& v = meshData.mesh.vertices[0];
+                Logger::info() << "  First vertex: (" << v.position.x << ", " << v.position.y << ", " << v.position.z << ")";
+                Logger::info() << "  First bone: " << bones[0].name << " at ("
+                              << bones[0].position.x << ", " << bones[0].position.y << ", " << bones[0].position.z << ")";
+            }
+        }
+
+        // Re-upload mesh to GPU with new bone weights
+        if (meshData.mesh.hasGPUBuffers()) {
+            // Destroy old buffers
+            m_renderer->destroyMeshBuffers(meshData.mesh.vertexBuffer, meshData.mesh.indexBuffer,
+                                          meshData.mesh.vertexMemory, meshData.mesh.indexMemory);
+            meshData.mesh.vertexBuffer = VK_NULL_HANDLE;
+            meshData.mesh.indexBuffer = VK_NULL_HANDLE;
+            meshData.mesh.vertexMemory = VK_NULL_HANDLE;
+            meshData.mesh.indexMemory = VK_NULL_HANDLE;
+        }
+        uploadMesh(meshData);
+
+        Logger::info() << "Applied automatic skinning to mesh " << meshId
+                      << " (" << meshData.mesh.vertices.size() << " vertices)";
+        return true;
+
+    } catch (const std::exception& e) {
+        Logger::error() << "Failed to apply skinning from " << rigPath << ": " << e.what();
+        return false;
+    }
+}
+
 // ========== Texture Management ==========
 
 void MeshRenderer::initializeTextureResources() {
@@ -753,4 +972,179 @@ void MeshRenderer::cleanupTextures() {
     }
 
     Logger::info() << "Cleaned up mesh textures";
+}
+
+// ========== Skeletal Animation (Bone Buffer) ==========
+
+void MeshRenderer::initializeBoneBuffer() {
+    if (m_boneBufferInitialized) {
+        return;
+    }
+
+    VkDevice device = m_renderer->getDevice();
+
+    // Create bone uniform buffer
+    VkDeviceSize bufferSize = sizeof(BoneUBO);
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = bufferSize;
+    bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateBuffer(device, &bufferInfo, nullptr, &m_boneBuffer) != VK_SUCCESS) {
+        Logger::error() << "Failed to create bone uniform buffer";
+        return;
+    }
+
+    // Get memory requirements and allocate
+    VkMemoryRequirements memRequirements;
+    vkGetBufferMemoryRequirements(device, m_boneBuffer, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = m_renderer->findMemoryType(memRequirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &m_boneMemory) != VK_SUCCESS) {
+        Logger::error() << "Failed to allocate bone buffer memory";
+        vkDestroyBuffer(device, m_boneBuffer, nullptr);
+        m_boneBuffer = VK_NULL_HANDLE;
+        return;
+    }
+
+    vkBindBufferMemory(device, m_boneBuffer, m_boneMemory, 0);
+
+    // Persistently map the buffer
+    vkMapMemory(device, m_boneMemory, 0, bufferSize, 0, &m_boneMapped);
+
+    // Initialize to identity matrices (no skinning)
+    BoneUBO initialData;
+    initialData.numBones = 0;
+    for (int i = 0; i < MAX_BONES; ++i) {
+        initialData.boneMatrices[i] = glm::mat4(1.0f);
+    }
+    memcpy(m_boneMapped, &initialData, sizeof(BoneUBO));
+
+    // Create descriptor pool for bone descriptor set
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize.descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.maxSets = 1;
+
+    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &m_boneDescriptorPool) != VK_SUCCESS) {
+        Logger::error() << "Failed to create bone descriptor pool";
+        cleanupBoneBuffer();
+        return;
+    }
+
+    // Get the bone descriptor set layout from renderer
+    VkDescriptorSetLayout boneLayout = m_renderer->getMeshBoneDescriptorSetLayout();
+    if (boneLayout == VK_NULL_HANDLE) {
+        Logger::error() << "Bone descriptor set layout not available";
+        cleanupBoneBuffer();
+        return;
+    }
+
+    // Allocate descriptor set
+    VkDescriptorSetAllocateInfo descAllocInfo{};
+    descAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    descAllocInfo.descriptorPool = m_boneDescriptorPool;
+    descAllocInfo.descriptorSetCount = 1;
+    descAllocInfo.pSetLayouts = &boneLayout;
+
+    if (vkAllocateDescriptorSets(device, &descAllocInfo, &m_boneDescriptorSet) != VK_SUCCESS) {
+        Logger::error() << "Failed to allocate bone descriptor set";
+        cleanupBoneBuffer();
+        return;
+    }
+
+    // Update descriptor set with bone buffer
+    VkDescriptorBufferInfo boneBufferInfo{};
+    boneBufferInfo.buffer = m_boneBuffer;
+    boneBufferInfo.offset = 0;
+    boneBufferInfo.range = sizeof(BoneUBO);
+
+    VkWriteDescriptorSet descriptorWrite{};
+    descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite.dstSet = m_boneDescriptorSet;
+    descriptorWrite.dstBinding = 0;
+    descriptorWrite.dstArrayElement = 0;
+    descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrite.descriptorCount = 1;
+    descriptorWrite.pBufferInfo = &boneBufferInfo;
+
+    vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+
+    m_boneBufferInitialized = true;
+    Logger::info() << "Bone buffer initialized (max " << MAX_BONES << " bones)";
+}
+
+void MeshRenderer::cleanupBoneBuffer() {
+    VkDevice device = m_renderer->getDevice();
+
+    if (m_boneMapped != nullptr) {
+        vkUnmapMemory(device, m_boneMemory);
+        m_boneMapped = nullptr;
+    }
+
+    if (m_boneBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, m_boneBuffer, nullptr);
+        m_boneBuffer = VK_NULL_HANDLE;
+    }
+
+    if (m_boneMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, m_boneMemory, nullptr);
+        m_boneMemory = VK_NULL_HANDLE;
+    }
+
+    // Destroy descriptor pool (also frees descriptor set)
+    if (m_boneDescriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, m_boneDescriptorPool, nullptr);
+        m_boneDescriptorPool = VK_NULL_HANDLE;
+    }
+    m_boneDescriptorSet = VK_NULL_HANDLE;
+    m_boneBufferInitialized = false;
+}
+
+void MeshRenderer::updateBoneMatrices(const glm::mat4* matrices, int count) {
+    if (!m_boneBufferInitialized) {
+        initializeBoneBuffer();
+    }
+
+    if (m_boneMapped == nullptr || count <= 0) {
+        return;
+    }
+
+    // Clamp count to max bones
+    int actualCount = std::min(count, MAX_BONES);
+
+    // Update the mapped buffer
+    BoneUBO* boneData = static_cast<BoneUBO*>(m_boneMapped);
+    boneData->numBones = actualCount;
+
+    for (int i = 0; i < actualCount; ++i) {
+        boneData->boneMatrices[i] = matrices[i];
+    }
+
+    // Fill remaining slots with identity (shouldn't be accessed, but just in case)
+    for (int i = actualCount; i < MAX_BONES; ++i) {
+        boneData->boneMatrices[i] = glm::mat4(1.0f);
+    }
+}
+
+void MeshRenderer::clearBoneMatrices() {
+    if (!m_boneBufferInitialized || m_boneMapped == nullptr) {
+        return;
+    }
+
+    // Set numBones to 0 to disable skinning
+    BoneUBO* boneData = static_cast<BoneUBO*>(m_boneMapped);
+    boneData->numBones = 0;
 }

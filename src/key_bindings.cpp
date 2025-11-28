@@ -218,6 +218,7 @@ void KeyBindings::loadFromConfig() {
     loadKey("key_console", toggleConsole, GLFW_KEY_F9);
     loadKey("key_inventory", toggleInventory, GLFW_KEY_I);
     loadKey("key_pause", pause, GLFW_KEY_ESCAPE);
+    loadKey("key_cursor_unlock", cursorUnlock, GLFW_KEY_RIGHT_ALT);
 
     // Load other settings
     mouseSensitivity = config.getFloat("Controls", "mouse_sensitivity", 0.1f);

@@ -58,6 +58,20 @@ public:
     uint32_t loadMeshFromGLTF(const std::string& filepath);
 
     /**
+     * @brief Apply automatic bone weights from a rig file to a loaded mesh
+     *
+     * Calculates bone weights for each vertex based on distance to bone positions.
+     * This allows simple models without embedded skinning data to be animated.
+     *
+     * @param meshId Mesh to apply weights to
+     * @param rigPath Path to rig YAML file
+     * @param influenceRadius Maximum distance a bone can affect (default 0.5)
+     * @return True on success
+     */
+    bool applySkinningFromRig(uint32_t meshId, const std::string& rigPath,
+                              float influenceRadius = 0.5f);
+
+    /**
      * @brief Create procedural mesh
      * @param mesh Mesh data
      * @return Mesh ID
@@ -197,6 +211,20 @@ public:
      */
     bool getMeshBounds(uint32_t meshId, glm::vec3& outMin, glm::vec3& outMax) const;
 
+    // ========== Skeletal Animation ==========
+
+    /**
+     * @brief Update bone matrices for skeletal animation
+     * @param matrices Array of bone transformation matrices
+     * @param count Number of bones
+     */
+    void updateBoneMatrices(const glm::mat4* matrices, int count);
+
+    /**
+     * @brief Clear bone matrices (disable skinning)
+     */
+    void clearBoneMatrices();
+
 private:
     struct MeshData {
         Mesh mesh;
@@ -267,6 +295,14 @@ private:
     uint64_t m_frameNumber = 0;
     static constexpr uint64_t FRAMES_TO_KEEP = 3;  // Keep buffers for 3 frames before deletion
 
+    // Bone matrix buffer for skeletal animation
+    VkBuffer m_boneBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_boneMemory = VK_NULL_HANDLE;
+    void* m_boneMapped = nullptr;
+    VkDescriptorPool m_boneDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet m_boneDescriptorSet = VK_NULL_HANDLE;
+    bool m_boneBufferInitialized = false;
+
     /**
      * @brief Queue buffer for deferred deletion
      */
@@ -313,4 +349,14 @@ private:
      * @brief Clean up all texture resources
      */
     void cleanupTextures();
+
+    /**
+     * @brief Initialize bone buffer resources
+     */
+    void initializeBoneBuffer();
+
+    /**
+     * @brief Clean up bone buffer resources
+     */
+    void cleanupBoneBuffer();
 };

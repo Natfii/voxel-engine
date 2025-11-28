@@ -1,11 +1,16 @@
 #pragma once
 
 #include "console.h"
+#include <memory>
 
 // Forward declarations
 class Player;
 class World;
 class VulkanRenderer;
+class SkeletalEditor;
+class ParticleEditor;
+class PaintEditor;
+class EditorBackground;
 
 // Register all built-in console commands
 class ConsoleCommands {
@@ -17,6 +22,28 @@ public:
     static float getCurrentSkyTime() { return s_currentSkyTime; }
     static void updateSkyTime(float deltaTime);
 
+    // Freeze mode - pauses world updates but keeps editors/rendering active
+    static bool isFrozen() { return s_isFrozen; }
+    static void setFrozen(bool frozen) { s_isFrozen = frozen; }
+
+    // Debug level access (for editors to check if in editor-only mode)
+    static int getDebugLevel() { return s_debugLevel; }
+    static void setDebugLevel(int level) { s_debugLevel = level; }
+    static bool isEditorOnlyMode() { return s_debugLevel == 2; }
+
+    // Editor access
+    static SkeletalEditor* getSkeletalEditor() { return s_skeletalEditor.get(); }
+    static ParticleEditor* getParticleEditor() { return s_particleEditor.get(); }
+    static PaintEditor* getPaintEditor() { return s_paintEditor.get(); }
+    static EditorBackground* getEditorBackground() { return s_editorBackground.get(); }
+    static void updateEditors(float deltaTime);
+    static void renderEditors();
+
+    // Editor background (for debug level 2)
+    static void initEditorBackground(int width, int height);
+    static void updateEditorBackground(float deltaTime);
+    static void renderEditorBackground();
+
 private:
     static Console* s_console;
     static Player* s_player;
@@ -26,6 +53,12 @@ private:
     // Sky time control
     static float s_timeSpeed;      // Time progression speed (0 = paused, 1 = normal)
     static float s_currentSkyTime; // Current time of day (0-1)
+
+    // Freeze mode
+    static bool s_isFrozen;        // World updates frozen, editors still active
+
+    // Debug level (0=off, 1=debug, 2=editor-only)
+    static int s_debugLevel;
 
     // Built-in commands
     static void cmdHelp(const std::vector<std::string>& args);
@@ -47,4 +80,16 @@ private:
     static void cmdBrush(const std::vector<std::string>& args);
     static void cmdSpawn(const std::vector<std::string>& args);
     static void cmdEntity(const std::vector<std::string>& args);
+    static void cmdFreeze(const std::vector<std::string>& args);
+
+    // Editor commands
+    static void cmd3DEditor(const std::vector<std::string>& args);
+    static void cmdParticleEditor(const std::vector<std::string>& args);
+    static void cmdPaintEditor(const std::vector<std::string>& args);
+
+    // Editor instances
+    static std::unique_ptr<SkeletalEditor> s_skeletalEditor;
+    static std::unique_ptr<ParticleEditor> s_particleEditor;
+    static std::unique_ptr<PaintEditor> s_paintEditor;
+    static std::unique_ptr<EditorBackground> s_editorBackground;
 };

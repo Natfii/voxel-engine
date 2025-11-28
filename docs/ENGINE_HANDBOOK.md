@@ -1,8 +1,8 @@
 # Voxel Engine: Complete Handbook
 
-**Version:** 2.2
-**Last Updated:** 2025-11-26
-**Status:** Production Ready (Event System + Engine API + YAML Scripting)
+**Version:** 2.4
+**Last Updated:** 2025-11-28
+**Status:** Production Ready (Event System + Engine API + YAML Scripting + Editor Tools + Skeletal Animation)
 
 ---
 
@@ -40,424 +40,6 @@ If you're Claude Code or another AI assistant working on this project:
 ## Overview
 
 A modern voxel-based game engine built with **Vulkan**, featuring procedural terrain generation, infinite world streaming, dynamic lighting, and advanced rendering techniques. The engine provides a complete framework for voxel-based games with Minecraft-inspired mechanics and optimizations.
-
-## Recent Updates
-
-**November 26, 2025 - Event System & Engine API (Major Release):**
-
-### **Event System Activation (Critical Fix)**
-- ✅ **EventDispatcher Initialization** - Fixed critical bug where EventDispatcher was never started
-- ✅ **Async Event Processing** - Events now properly processed on handler thread
-- ✅ **Proper Shutdown** - EventDispatcher stopped cleanly on application exit
-
-### **Script Action Execution**
-- ✅ **EngineAPI Integration** - Script actions now execute through EngineAPI singleton
-- ✅ **Command Execution** - RUN_COMMAND action executes console commands via CommandRegistry
-- ✅ **Particle Spawning** - SPAWN_PARTICLES action integrated with particle system
-- ✅ **Structure Spawning** - SPAWN_STRUCTURE action uses EngineAPI::spawnStructure()
-
-### **Conditional Actions (New Feature)**
-- ✅ **CONDITIONAL Action Type** - If/else logic in YAML scripts
-- ✅ **Condition Types** - `random_chance`, `block_is`, `block_is_not`, `time_is_day`, `time_is_night`
-- ✅ **Nested Actions** - `then` and `else` branches with multiple actions
-
-### **Script Variables (New Feature)**
-- ✅ **ScriptVariableRegistry** - Global state storage for scripts
-- ✅ **SET_VARIABLE Action** - Store key-value pairs
-- ✅ **GET_VARIABLE Action** - Retrieve stored values
-- ✅ **INCREMENT_VAR / DECREMENT_VAR** - Numeric variable operations
-- ✅ **Thread-Safe** - Mutex-protected variable access
-
-### **Biome Event Handlers (New Feature)**
-- ✅ **on_enter** - Triggered when player enters biome
-- ✅ **on_exit** - Triggered when player leaves biome
-- ✅ **on_chunk_generate** - Triggered during chunk generation in biome
-- ✅ **Biome YAML Support** - Event handlers in biome definition files
-
-### **Build System Update**
-- ✅ **Strict Version Checking** - CMake 3.29+, Build Tools 2019+, Vulkan 1.4+
-- ✅ **Download Links** - Direct download URLs in error messages
-- ✅ **VS Generator Selection** - Automatic VS 2019/2022 generator detection
-
-**Files Modified:**
-- `src/main.cpp` - Added EventDispatcher start/stop calls
-- `src/script_action.cpp` - Implemented action execution with EngineAPI
-- `include/script_action.h` - Added conditional/variable types
-- `src/engine_api.cpp` - Added spawnParticles() method
-- `build.bat` - Strict version checking
-- `README.md` - Updated requirements and features
-- `docs/ENGINE_HANDBOOK.md` - Updated documentation
-
-**Impact:**
-- Block event handlers now fire and execute script actions
-- Content creators can use conditional logic in YAML scripts
-- Script state can be stored and retrieved across events
-- Biomes can have event-driven behaviors
-- Build system ensures compatible tool versions
-
----
-
-**November 25, 2025 - Spinning Loading Sphere:**
-
-### **Loading Screen Animation**
-- ✅ **3D Spinning Sphere** - Replaces static square with rotating 3D sphere
-- ✅ **Time-Based Animation** - Smooth rotation using elapsed time (not frame count)
-- ✅ **Visual Freeze Prevention** - Continuous animation indicates app is responsive
-- ✅ **Semi-Transparent Overlay** - Sphere visible through ImGui overlay (85% opacity)
-
-**Technical Implementation:**
-1. **LoadingSphere Class** (`loading_sphere.h`, `loading_sphere.cpp`)
-   - UV sphere mesh generated with configurable segments (32×32)
-   - Uses existing voxel Vertex format for compatibility
-   - Time-based rotation: 30 degrees/second (configurable)
-
-2. **Rendering** (`main.cpp:209-213`)
-   - Sphere rendered before ImGui overlay
-   - Semi-transparent background allows sphere visibility
-   - Automatic timer reset on subsequent world loads
-
-**Files Added:**
-- `include/loading_sphere.h` - LoadingSphere class declaration
-- `src/loading_sphere.cpp` - Sphere mesh generation and rendering
-
----
-
-**November 25, 2025 - Vulkan Streaming Optimizations (Edge Lag Fix):**
-
-### **GPU Transfer Queue Optimizations**
-- ✅ **Dedicated Transfer Queue** - Async GPU uploads now use dedicated transfer queue (runs parallel with rendering)
-- ✅ **VK_SHARING_MODE_CONCURRENT** - Mega-buffers accessible by both transfer and graphics queues
-- ✅ **Memory Barrier Sync** - Proper synchronization ensures transfer writes visible before rendering
-- ✅ **Staging Buffer Pool** - 16 pre-allocated, persistently mapped 4MB staging buffers (64MB total)
-- ✅ **Queue Family Indices** - Stored for proper buffer sharing and barrier configuration
-
-**Technical Implementation:**
-1. **Transfer Queue Usage** (`vulkan_renderer.cpp:2477-2479`)
-   - Async uploads submitted to m_transferQueue (separate from m_graphicsQueue)
-   - Runs in parallel with rendering commands, eliminating edge lag
-
-2. **Concurrent Mega-Buffers** (`vulkan_renderer.cpp:3503-3587`)
-   - Mega-buffers created with VK_SHARING_MODE_CONCURRENT when dedicated transfer queue available
-   - Queue family indices: {graphicsFamily, transferFamily} shared access
-
-3. **Memory Synchronization** (`vulkan_renderer.cpp:1654-1677`)
-   - VkMemoryBarrier at frame start ensures transfer writes visible
-   - srcAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT
-   - dstAccessMask: VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT
-
-4. **StagingBufferPool Class** (`vulkan_renderer.h:91-157`, `vulkan_renderer.cpp:30-141`)
-   - Persistent mapping: vkMapMemory called once at creation, never unmapped
-   - Thread-safe: mutex-protected acquire/release
-   - Pool size: 16 × 4MB = 64MB pre-allocated
-
-**Measured Impact:**
-- Edge lag when approaching chunk boundaries: **Eliminated** (transfer runs parallel)
-- Staging buffer map/unmap overhead: **Eliminated** (persistent mapping)
-- GPU-CPU synchronization: **Improved** (dedicated transfer queue)
-
-**Files Modified:**
-- `include/vulkan_renderer.h` - StagingBufferPool class, queue family indices
-- `src/vulkan_renderer.cpp` - Transfer queue usage, concurrent buffers, memory barriers
-
----
-
-**November 25, 2025 - World Streaming Optimization & Save System V2:**
-
-### **Memory & Performance Optimizations**
-- ✅ **Lazy Interpolated Lighting** - 256KB allocated only when needed, freed when chunk cached (57% memory reduction per cached chunk)
-- ✅ **LOD Tier System** - Distant chunks skip decoration and mesh generation (FULL, MESH_ONLY, TERRAIN_ONLY tiers)
-- ✅ **Spawn Anchor System** - Minecraft-style spawn chunks that never unload (13×13×13 cube at world origin)
-- ✅ **Parallel Spawn Generation** - Surface and underground chunks generated on separate threads (2× faster world gen)
-- ✅ **Terrain Buffer Radius** - Pre-generates 2× spawn radius for seamless exploration
-- ✅ **Chunk Neighbor Caching** - Eliminates 72M hash lookups/sec in mesh generation
-- ✅ **Water UV Encoding Fix** - Liquids now use stretched UV for shader parallax scrolling
-
-### **Save System V2**
-- ✅ **World Metadata V2** - Saves biome biases (temperature, moisture, age) for consistent terrain
-- ✅ **Backward Compatible** - Loads V1 saves with default biases
-- ✅ **Biome Map Recreation** - Loaded worlds use correct biases for new chunk generation
-- ✅ **Spawn Anchor Persistence** - Origin chunks stay loaded across save/load
-
-### **UI Improvements**
-- ✅ **Delete World Button** - Load dialog now has delete with confirmation ("Del" → "Sure?")
-- ✅ **Spawn Radius Slider Removed** - Fixed 6-chunk radius like Minecraft
-
-**Files Modified:**
-- `include/chunk.h`, `src/chunk.cpp` - Lazy interpolated lighting allocation
-- `include/world.h`, `src/world.cpp` - Biome bias storage, Save System V2
-- `include/world_streaming.h`, `src/world_streaming.cpp` - LOD tiers, spawn anchor, neighbor caching
-- `src/main.cpp` - Spawn anchor setup, parallel generation
-- `src/main_menu_load_dialog.cpp` - Delete world button
-- `shaders/shader.frag` - Water UV fix for stretched encoding
-
-**Measured Impact:**
-- Memory per cached chunk: **~450KB → ~194KB** (57% reduction from lazy lighting)
-- Chunk hash lookups: **72M/sec → ~0** (neighbor caching)
-- World generation: **2× faster** (parallel surface/underground)
-- Save file version: **V1 → V2** (with biome biases)
-
----
-
-**November 24, 2025 - Mesh Rendering Pipeline Implementation:**
-
-The engine now supports rendering arbitrary 3D meshes alongside voxel terrain! A complete PBR (Physically Based Rendering) mesh pipeline has been implemented with the following features:
-
-- ✅ **Separate Mesh Pipeline** - Independent from voxel rendering with own shaders and buffers
-- ✅ **PBR Material System** - Cook-Torrance BRDF with metallic-roughness workflow
-- ✅ **OBJ Mesh Loading** - Full Wavefront OBJ support with vertex deduplication
-- ✅ **Procedural Mesh Generation** - Built-in generators for cube, sphere, cylinder, plane
-- ✅ **Instanced Rendering** - Efficient rendering of multiple mesh copies with per-instance transforms
-- ✅ **Material Management** - Create and update PBR materials with GPU uniform buffers
-- ✅ **High-Level API** - MeshRenderer class provides easy-to-use mesh/material/instance management
-
-**Technical Implementation:**
-1. **New Mesh Data Structures** (`include/mesh/mesh.h`)
-   - MeshVertex: position, normal, UV, tangent (44 bytes, normal mapping ready)
-   - PBRMaterial: baseColor, metallic, roughness, emissive
-   - InstanceData: transform matrix + tint color (80 bytes)
-
-2. **PBR Shaders** (`shaders/mesh.vert`, `shaders/mesh.frag`)
-   - Full Cook-Torrance BRDF implementation
-   - GGX normal distribution, Schlick-GGX geometry, Fresnel-Schlick
-   - Dynamic sun lighting synchronized with voxel world time
-   - Tone mapping (Reinhard) + gamma correction
-
-3. **Mesh Loading System** (`src/mesh/mesh_loader.cpp`)
-   - OBJ loader with automatic normal/tangent generation
-   - Procedural generators with proper UV mapping
-   - Vertex deduplication for memory efficiency
-
-4. **Vulkan Integration** (`src/vulkan_renderer.cpp`)
-   - Separate mesh pipeline with per-vertex + per-instance attributes
-   - Descriptor sets: camera UBO (shared) + material UBO (per-mesh)
-   - Staging buffer uploads with device-local memory
-   - Depth testing shared with voxels (correct occlusion)
-
-5. **MeshRenderer API** (`include/mesh/mesh_renderer.h`, `src/mesh/mesh_renderer.cpp`)
-   - High-level mesh/material/instance management
-   - Automatic instance buffer updates when transforms change
-   - GPU memory tracking and cleanup
-
-**Files Created:**
-- `include/mesh/mesh.h`, `src/mesh/mesh.cpp` - Core data structures
-- `include/mesh/mesh_loader.h`, `src/mesh/mesh_loader.cpp` - Loading and generation
-- `include/mesh/mesh_renderer.h`, `src/mesh/mesh_renderer.cpp` - High-level API
-- `shaders/mesh.vert`, `shaders/mesh.frag` - PBR shaders
-- `docs/MESH_PIPELINE_DESIGN.md` - Technical specification (320 lines)
-- `docs/MESH_PIPELINE_PROGRESS.md` - Development progress
-- `docs/MESH_PIPELINE_IMPLEMENTATION_COMPLETE.md` - Complete summary
-
-**Files Modified:**
-- `include/vulkan_renderer.h`, `src/vulkan_renderer.cpp` - Mesh pipeline + buffer management
-- `src/main.cpp` - MeshRenderer integration with test scene
-- `shaders/compile.bat` - Mesh shader compilation
-
-**Performance Characteristics:**
-- Mesh vertex: 44 bytes (position, normal, UV, tangent)
-- Instance data: 80 bytes (4×4 transform + vec4 tint)
-- Expected: 500+ unique meshes @ 60 FPS, 5,000+ instanced meshes @ 60 FPS
-- Draw calls: <50 per frame with instancing
-
-**Use Cases:**
-- Trees, rocks, structures (world decoration)
-- NPCs, creatures, vehicles (future features)
-- Props, furniture, tools (interactive objects)
-- Custom models loaded from OBJ files
-
-**November 23, 2025 - CRITICAL Performance Overhaul (MASSIVE 10× IMPROVEMENT):**
-
-### **Phase 1: GPU Indirect Drawing + Fast Chunk Unloading**
-- ✅ **Indirect Drawing System** - Reduced draw calls from 300+ → **2 per frame** (99.3% reduction!)
-- ✅ **Mega-Buffer Architecture** - 1GB GPU buffers hold all chunk geometry
-- ✅ **Fast Chunk Unloading** - 50x faster unloading (50 chunks/call vs 1 chunk/call)
-- ✅ **Pipeline State Caching** - Eliminates redundant vkCmdBindPipeline calls
-- ✅ **MAX_PENDING_UPLOADS Increase** - 10 → 25 concurrent async uploads
-
-### **Phase 2: Critical Bug Fixes (Eliminated 300ms+ lag)**
-- ✅ **Mega-Buffer Memory Leak** - Chunks reuse allocations on regeneration (was leaking 71 MB/sec)
-- ✅ **Frame Fence Synchronization Stall** - Moved vkWaitForFences before image acquire (eliminated 50-200ms CPU stalls)
-- ✅ **Unbounded Staging Buffer Deletion** - Limited to 10 completions/frame (prevents multi-second GPU stalls)
-- ✅ **Double Mesh Generation Bug** - Fixed markLightingDirty() on fresh chunks (eliminated 100-300ms duplicate work)
-- ✅ **Triple Mesh Generation Bug** - Fixed markLightingDirty() in decorations (eliminated another 10-50ms waste)
-
-### **Phase 3: Throughput Increases**
-- ✅ **Chunk Processing Rate** - Increased 1 → 5 → **10 chunks/frame** (600 chunks/second!)
-- ✅ **Decoration Processing** - Faster retry (20ms → 16ms) + more chunks (3 → 5) = 2× throughput
-- ✅ **Upload Completion Rate** - Doubled from 5 → 10 per frame to match chunk processing
-
-### **Phase 4: Advanced Parallelization (HUGE PERFORMANCE BOOST)**
-- ✅ **Parallel Decorations** - All chunks decorated simultaneously using std::thread (3× faster)
-- ✅ **Parallel Mesh Generation** - All chunks meshed simultaneously (5× faster, thread-safe via shared_lock)
-- ✅ **Batched GPU Uploads** - Single vkQueueSubmit for all chunks (90% reduction in submission overhead)
-
-**Technical Implementation:**
-1. **Parallel Decorations** (`world.cpp:526-618`)
-   - Phase 1: Collect chunks ready for decoration
-   - Phase 2: Spawn one thread per chunk, decorate all simultaneously
-   - Phase 3: Serial lighting initialization (neighbor access)
-   - Phase 4: Parallel mesh generation using shared locks
-   - Phase 5: Batched GPU upload in single vkQueueSubmit
-   - Expected speedup: 3× for decoration phase
-
-2. **Parallel Mesh Generation** (`world_streaming.cpp:254-295`, `world.cpp:596-628`)
-   - World::getBlockAt() uses std::shared_lock for thread-safe concurrent reads
-   - All chunks mesh simultaneously in separate threads
-   - No synchronization needed - mesh generation is read-only
-   - Expected speedup: 5× for mesh generation (CPU-bound operation)
-
-3. **Batched GPU Uploads** (`vulkan_renderer.cpp:2137-2195`, `world_streaming.cpp:297-320`)
-   - New API: beginBatchedChunkUploads(), addChunkToBatch(), submitBatchedChunkUploads()
-   - Collects all chunk uploads into single command buffer
-   - Single vkQueueSubmit replaces N individual submits (10 chunks → 1 submit = 90% overhead reduction)
-   - All staging buffers tracked together for async cleanup
-
-**Files Modified (Phase 4):**
-- `include/vulkan_renderer.h` - Added batched upload API declarations, m_batchStagingBuffers member
-- `src/vulkan_renderer.cpp` - Implemented batched upload methods
-- `include/world.h` - Added deferGPUUpload and deferMeshGeneration parameters
-- `src/world.cpp` - Parallel decorations, parallel mesh generation, deferred upload/mesh support
-- `src/world_streaming.cpp` - 3-phase pipeline: decoration/lighting → parallel mesh → batched GPU upload
-
-**Measured Impact (Exploring New Areas):**
-- **FPS: 2-19 → 30-60 FPS** (3-10× improvement!)
-- **Frame time: 65-526ms → 16-33ms** (70-90% reduction)
-- **Chunks/second: 60 → 600** (10× faster)
-- **Queue processing: 2-4 seconds → <0.5 seconds** (4-8× faster)
-- **CPU/GPU usage: Low (idle) → High (working)** - Proper utilization!
-- **Lag when moving: ELIMINATED** - Smooth exploration
-
-**Technical Details:**
-- Feature flag: `USE_INDIRECT_DRAWING` in `vulkan_renderer.h` (enabled by default)
-- Uses `vkCmdDrawIndexedIndirect()` with command buffers built per frame
-- Chunks no longer own individual GPU buffers (write to mega-buffers instead)
-- Fence wait moved before swap chain acquire for better GPU-CPU overlap
-- Staging buffer deletion rate-limited to prevent stalls
-
-**Files Modified:**
-- `include/vulkan_renderer.h` - Mega-buffer infrastructure, getters, feature flag
-- `src/vulkan_renderer.cpp` - Mega-buffer init/allocation, fence timing fix, batched upload, cleanup limits
-- `include/chunk.h` - Mega-buffer offset tracking
-- `src/chunk.cpp` - Mega-buffer allocation reuse, conditional upload path, fast destroyBuffers()
-- `src/world.cpp` - Indirect rendering, removed markLightingDirty() from fresh chunks
-- `src/world_streaming.cpp` - Dynamic unload rate, increased chunk processing
-- `src/main.cpp` - Increased chunks/frame (1→5→10), faster decoration processing
-
-**November 23, 2025 - Lighting Optimization + Zombie Code Purge:**
-- ✅ **Chunk Lookup Caching** - Implemented spatial coherence cache (eliminates 70-80% of hash lookups)
-- ✅ **Lighting Persistence** - Added chunk file version 3 with RLE-compressed lighting data (instant world loads!)
-- ✅ **Redundant isTransparent() Fix** - Uses cached chunk lookup (eliminates double lookups)
-- ✅ **Bit Shift Optimizations** - Replaced all `* 32` with `<< 5` and `/ 32` with `>> 5` (30x faster)
-- ✅ **ZOMBIE CODE PURGE** - Discovered and removed **3 duplicate sky light systems** running simultaneously!
-- ✅ **generateSunlightColumn()** - Deleted 100 lines of zombie code (never actually used by renderer)
-- ✅ **initializeChunkLighting()** - Rewrote to skip redundant sky light (90% faster)
-- ✅ **Terrain Generation** - Reduced extreme mountains by 50% (20 block base, 1.5x max scaling)
-- ✅ **Backward Compatibility** - Maintains support for chunk file versions 1, 2, and 3
-
-**Measured Impact:**
-- World load lighting: **3-5 seconds → ~0.1-0.3 seconds** (90-95% reduction!) or **instant** (with v3 chunks)
-- Zombie system removal: **6.8M wasted lookups eliminated** + **99% smaller BFS queue**
-- Chunk generation: **~1,000 BFS nodes/chunk → <10** (only emissive blocks)
-- Runtime lighting updates: **~50-60% faster** (chunk caching + bit shifts)
-- Terrain: **50% less extreme mountains** (max variation 120→60 blocks)
-- Code: **~100 lines of zombie code removed** (cleaner, more maintainable)
-
-**November 23, 2025 - Bug Fixes & Quality of Life Improvements:**
-- ✅ **Fixed Water Source Flow** - Water sources now properly flow to adjacent blocks
-- ✅ **Fixed Block Outline Highlighting** - Now highlights only the visible face (Minecraft-style)
-- ✅ **Fixed Ice Transparency** - Ice now behaves like solid block (transparency 0.4→0.0)
-- ✅ **Verified Leaf Lighting** - Confirmed leaves use normal block lighting (transparency=0.0)
-
-**Measured Impact:**
-- Water simulation: **Now works correctly** - source blocks maintain level and spread water
-- Block targeting: **Much clearer** - only the face you're looking at is highlighted
-- Ice rendering: **Fixed see-through bug** - ice now solid for lighting, texture renders properly
-- Leaves: **Already optimal** - use solid block lighting for better performance
-
-**November 23, 2025 - Performance Optimization (Low-End Hardware):**
-- ✅ **Disabled Interpolated Lighting** - Was updating 32,768 values per chunk every frame
-- ✅ **Eliminated 40-80M operations/sec** - Interpolation now skipped entirely
-- ✅ **Direct Lighting Values** - getInterpolatedSkyLight/BlockLight return immediate values
-- ✅ **Massive CPU Savings** - Lower-end hardware now runs much smoother
-
-**Measured Impact:**
-- CPU load: **30-50% reduction** on lower-end hardware
-- Frame time: **Significant improvement** (no more 40-80M interpolations/sec)
-- Visual: **Instant lighting** (smooth transitions disabled but acceptable trade-off)
-- Memory: **No change** (m_interpolatedLightData still allocated but unused)
-
-**November 23, 2025 - Vulkan Renderer Optimizations:**
-- ✅ **Batched Pipeline Barriers** - Consolidated multiple vkCmdPipelineBarrier calls into single batched calls
-- ✅ **Cube Map Transition Batching** - Day/night skybox transitions now batched (2 barriers → 1 batched call)
-- ✅ **Command Buffer Reduction** - Reduced command buffer submissions by 50% during initialization
-- ✅ **BC7 Evaluation** - Assessed texture compression (not applicable - no GPU lightmaps, minimal benefit)
-
-**Measured Impact:**
-- Initialization: **50% fewer command buffer submissions** for skybox creation
-- Synchronization: **Reduced CPU-GPU sync points** during texture initialization
-- Code: **Cleaner batching API** for future texture additions
-
-**November 23, 2025 - Build System Modernization:**
-- ✅ **Enhanced Build Script** - Auto-detects CMake, Visual Studio 2017/2019/2022, and Vulkan SDK
-- ✅ **Backward Compatibility** - Supports CMake 3.10+ and Visual Studio 2017+ (prefers latest)
-- ✅ **Smart Tool Detection** - Checks PATH and common install locations for CMake
-- ✅ **Helpful Error Messages** - Provides download links and installation instructions if tools are missing
-- ✅ **Build Flags** - Added -clean and -help flags for easier workflow
-- ✅ **Modern CMake** - Updated CMakeLists.txt with improved features and compatibility
-- ✅ **Documentation Updates** - Comprehensive build guides in README and handbook
-
-**November 22, 2025 - Lighting Overhaul & Performance:**
-- ✅ **Heightmap-Based Sky Lighting** - Replaced BFS flood-fill with O(1) heightmap lookups (100x+ faster lighting)
-- ✅ **Heightmap Transparency Fix** - Only fully opaque blocks (transparency == 0.0) block sunlight, water/ice now properly lit
-- ✅ **Transparent Block Lighting** - Water/ice/leaves now allow sunlight through (proper heightmap opacity checks)
-- ✅ **Heightmap Initialization** - Fixed garbage memory bugs in chunk constructor and pooling
-- ✅ **Shader Lighting Fix** - Fixed inverted normals causing "lit from below" appearance
-- ✅ **Water Flow Fix** - Source blocks now properly registered with simulation (gravity + spreading now work)
-- ✅ **Lighting Update Throttle** - Reduced from 60 FPS to 30 FPS (50% CPU savings, imperceptible latency)
-- ✅ **Collision Optimization** - Skip horizontal checks when velocity < 0.001 (60% savings when stationary)
-- ✅ **Water Simulation Throttle** - Reduced from 10x/sec to 5x/sec (50% CPU savings, still smooth)
-- ✅ **Ice Block Properties** - Removed unsupported ice_properties, ice now renders correctly as transparent block
-- ✅ **Main Menu Back Button Fix** - World generation menu back button now returns to main menu instead of starting game
-- ✅ **Transparent Rendering Verification** - Confirmed correct 2-pass rendering (opaque first, transparent sorted back-to-front)
-- ✅ **Documentation Cleanup** - Removed stray investigation docs, consolidated to handbook
-
-**Estimated Impact:** 50-70% reduction in frame time, 100x+ faster sky light calculation, proper water flow, correct directional lighting, correct transparent block illumination
-
-**November 2025 - Performance Sprint:**
-- ✅ **Critical Terrain Height Fix** - Eliminated 32x redundant calculations per column (2-3x faster cave gen)
-- ✅ **Mountain Density Caching** - 99.9% reduction in noise samples for mountains (5-8x faster)
-- ✅ **Chunk Initialization Optimization** - memset replaces loops (10-20x faster)
-- ✅ **Tree Generation Optimization** - sqrt elimination (2-3x faster tree canopy generation)
-- ✅ **Thread-Local RNG** - Eliminated mutex contention (2-4x faster parallel decoration)
-- ✅ **Transparent Block Face Culling** - Fixed invisible leaves bug, proper rendering for glass/leaves
-- ✅ **Biome Noise Range Optimization** - Auto-scales noise to biome ranges for even distribution
-- ✅ **Decoration Throughput Boost** - 12.5x faster (400→5000 chunks/sec), eliminates pop-in
-- ✅ **RAM Cache Strategy** - Chunks unload to cache first, disk only when full (90%+ I/O reduction)
-- ✅ **GPU Buffer Deletion Rate Limiting** - Prevents 600ms frame stalls (10 deletions/frame max)
-- ✅ **Chunk Loading Lock Optimization** - Eliminated 1,331 lock acquisitions with hash set caching
-- ✅ **Zero-Copy Chunk Iteration** - Callback pattern eliminates 432-coord vector copying
-- ✅ **GPU Warm-Up Phase** - Waits for GPU during load screen for instant 60 FPS gameplay
-- ✅ **World Loading Fix** - Properly discovers chunk files from disk, fixes lighting on load
-- ✅ **Documentation Consolidation** - All scattered docs merged into this handbook
-- ✅ **Lighting Propagation Batching** - Prevents 50+ sec freeze during world load (10K nodes/batch with progress reporting)
-- ✅ **Lighting Config Persistence** - lightingEnabled ConVar now persists to config.ini
-- ✅ **World Loading Lighting Fix** - Initialize lighting for loaded worlds (prevents 900-1100ms GPU stalls)
-- ✅ **Triple Mesh Elimination** - Removed wasted mesh generations (lighting → mesh instead of mesh → lighting → mesh)
-- ✅ **Console Output Optimization** - Reduced progress reporting 10x (100K interval vs 10K)
-- ✅ **Lighting Batch Tuning** - Optimized per-frame limits (350 adds, 15 mesh regens)
-- ✅ **Voxel Math Bit Shifts** - Replaced division by 32 with bit shifts (24-39x faster coordinate conversions)
-- ✅ **Loading Screen Fix** - Reset flag for subsequent world loads in same session
-- ✅ **Lighting Progress Display** - Loading screen shows real-time progress during lighting propagation (updates every 50K nodes)
-- ✅ **Parallel Asset Loading** - Load block/structure/biome registries concurrently (3x faster startup, ~330ms saved)
-- ✅ **Water Simulation Containers** - Replaced std::set with std::unordered_set for O(1) lookups (3-5x faster water propagation)
-- ✅ **Water Vector Reserves** - Pre-allocate neighbor vectors to prevent reallocations in hot path
-- ✅ **Chunk Filename Generation** - Use ostringstream instead of string concatenation (3x faster, single allocation)
-- ✅ **Transparent Chunk Sort Caching** - Only re-sort when camera moves >5 blocks (reduces O(n log n) overhead)
-- ✅ **Player Collision Fix** - Re-check ground state after movement to eliminate bobbing bug
-- ✅ **Hollow Mountains Fix** - Biome-aware cave suppression for solid mountainous terrain (50-95% cave reduction at high elevations)
-- ✅ **FPS Counter Safety** - Guard against NaN/infinite/negative deltaTime values to prevent crashes
-- ✅ **Raycast Safety** - Guard against zero-length direction vectors to prevent NaN propagation
-
-**Estimated Overall Speedup:** 4-8x faster initial world generation, 6-16 seconds faster world loads, 20-30% faster coordinate conversions, 3x faster startup, 3-5x faster water simulation, stable ground collision, solid mountains, robust error handling, instant 60 FPS gameplay, no lighting freezes or GPU stalls
 
 ## Key Features
 
@@ -508,6 +90,33 @@ The engine now supports rendering arbitrary 3D meshes alongside voxel terrain! A
 - **ConVar System** - Persistent console variables
 - **Debug Overlays** - FPS, position, target info
 - **Markdown Viewer** - In-game documentation viewer
+
+### Editor Tools
+- **3D Skeletal Annotation Editor** - Annotate character models with animation skeletons
+  - **Console Command:** `3deditor [model_path]`
+  - **Model Support:** glTF and OBJ formats
+  - **Bone Placement Wizard:** Step-by-step guided workflow
+  - **Interactive Gizmos:** ImGuizmo 3D translation controls
+  - **Undo/Redo:** Full command history support
+  - **Required Bones:** spine_root, spine_tip, leg_L, leg_R, arm_L, arm_R, head
+  - **Optional Bones:** tail_base, tail_tip (for tailed characters)
+  - **Camera Controls:** Orbit with middle-mouse, pan with Shift+middle-mouse, zoom with scroll
+  - **Bone Hierarchy:** Visual skeleton structure display
+  - **Rig Files:** YAML format saved to `assets/rigs/`
+  - **Animation Preview:** Real-time preview of procedural animations (walk, idle, tail sway)
+
+- **2D Particle Effect Editor** - Create and edit particle effects
+  - **Console Command:** `particaleditor [effect_path]`
+  - **Multi-Emitter:** Support for multiple emitters per effect
+  - **Emitter Shapes:** Point, cone, box, and circle emission patterns
+  - **Property Curves:** Size and color over particle lifetime
+  - **Burst Emission:** Configurable burst patterns
+  - **Physics:** Gravity and drag simulation
+  - **Blend Modes:** Alpha, additive, and premultiplied alpha blending
+  - **Real-Time Preview:** Live viewport with particle simulation
+  - **Timeline Controls:** Play, pause, reset, and scrubbing
+  - **Effect Files:** YAML format saved to `assets/particles/`
+  - **Hot-Reload:** Changes apply immediately to preview
 
 ## Technical Specifications
 
@@ -1112,133 +721,6 @@ textures:
 - Spawn chunks have full lighting before gameplay begins
 - RAM cache provides instant lighting for recently visited chunks (no pop-in on return)
 
-### Lighting Optimizations Completed (2025-11-23)
-
-The lighting system has been comprehensively optimized with 6 major performance enhancements:
-
-**Implemented Optimizations:**
-
-1. ✅ **Chunk Lookup Caching** (`lighting_system.h:331-334, lighting_system.cpp:223-256`)
-   - Implemented spatial coherence cache with last accessed chunk
-   - Cache hit rate: 70-80% (BFS has high spatial locality)
-   - **Result**: Eliminates 2.1M → 420K hash lookups (80% reduction)
-
-2. ✅ **Lighting Persistence** (`chunk.cpp:1792-1849, 1977-2127`)
-   - Added chunk file version 3 with RLE-compressed lighting data
-   - Compression: 32 KB → 1-3 KB (90%+ reduction)
-   - Backward compatible with versions 1 and 2
-   - **Result**: World loads now instant (no 3-5s recalculation)
-
-3. ✅ **Redundant isTransparent() Removal** (`lighting_system.cpp:355-389`)
-   - Uses cached chunk lookup instead of `world->getBlockAt()`
-   - Direct chunk access with bit-masked local coordinates
-   - **Result**: Eliminates double chunk lookups (15-20% faster)
-
-4. ✅ **Bit Shift Optimizations** (throughout `lighting_system.cpp`)
-   - Replaced `* 32` with `<< 5` and `/ 32` with `>> 5`
-   - Applied to all coordinate conversion and local coord calculations
-   - **Result**: 24-39x faster coordinate operations
-
-5. ✅ **Heightmap Sky Light Optimization** (`lighting_system.cpp:500-509`)
-   - Skip BFS queueing for deep air blocks (Y < maxY - 16)
-   - Only queue blocks near surface or at chunk boundaries
-   - **Result**: 70-80% reduction in BFS queue size
-
-6. ✅ **Fast Path Coordinate Conversion** (`world_utils.h:70-72`)
-   - Conditional floor(): fast cast for positive, floor() only for negative
-   - Positive coordinates are 99% of typical gameplay
-   - **Result**: 3x faster coordinate conversion for positive values
-
-**Remaining Low-Priority Optimizations:**
-
-7. **Light Queue Allocations** - Replace std::deque with pre-allocated ring buffer (~5-10% gain)
-8. **Batch Neighbor Lookups** - Cache 6 neighbor chunk pointers (~3-5% gain)
-9. **Viewport Lighting Incremental** - Spread over multiple frames (~smoother frame times)
-
-**Overall Performance Impact:**
-- **World Load**: 3-5 seconds → **instant** (with v3 chunks)
-- **Runtime Lighting**: **50-60% faster** (cache + bit shifts + BFS reduction)
-- **Disk Space**: +1-3 KB/chunk compressed (v3), backward compatible
-- **Memory**: Minimal (+16 bytes for cache)
-
-### Critical Bug Fix: Duplicate Sky Light System (2025-11-23)
-
-**🔴 MAJOR INEFFICIENCY DISCOVERED AND FIXED**
-
-The engine was running **TWO separate sky light systems simultaneously**, with one completely wasted:
-
-**System 1: BFS Sky Light (REMOVED)**
-- `LightingSystem::generateSunlightColumn()` scanned 320 blocks per column
-- 327,680 block lookups per chunk (1024 columns × 320 blocks)
-- Called `setSkyLight()` to write to `m_lightData`
-- Queued ~300K BFS nodes for horizontal propagation
-- **Cost**: ~2-3 seconds during world load
-
-**System 2: Heightmap Sky Light (KEPT - ACTUALLY USED)**
-- `Chunk::calculateSkyLightFromHeightmap()` provides O(1) lookup
-- Mesh generation calls this directly (chunk.cpp:820, 831)
-- **This is what actually renders on screen!**
-
-**The Bug:**
-The expensive BFS sky light system wrote to `m_lightData`, but the mesh generation ignored it and used heightmaps instead. **6.8 million wasted block lookups** during typical world loads!
-
-**The Fix:**
-- Removed sky light generation from `initializeWorldLighting()`
-- Now only scans for emissive blocks (torches, lava) for block light
-- Sky light is 100% heightmap-based (already built during chunk generation)
-- **Result**: ~70% reduction in lighting initialization time
-
-**Performance Impact:**
-- World load: 3-5s → ~0.5s (with block light only)
-- BFS queue size: 300K nodes → <5K nodes (only emissive blocks)
-- Memory: Same (heightmaps already existed)
-- Quality: Identical (mesh was always using heightmaps)
-
-**Shader Verification:**
-- ✅ Vertex shader correctly receives sky light + block light separately
-- ✅ Fragment shader applies sun/moon intensity to sky light only
-- ✅ Block light stays constant (torches don't change with time)
-- ✅ All lighting channels correctly synchronized
-
-### Zombie Code Purge: 3 Duplicate Sky Light Systems Removed! (2025-11-23)
-
-**🔴 MAJOR DISCOVERY: Three separate sky light systems were running simultaneously!**
-
-During optimization, we discovered the engine was calculating sky light **three times**:
-
-1. **LightingSystem::initializeWorldLighting()** - Scanned 320 blocks per column
-2. **LightingSystem::generateSunlightColumn()** - Another scan of 320 blocks per column
-3. **World::initializeChunkLighting()** - ANOTHER scan of all 32,768 blocks per chunk
-
-**All three were completely wasted!** Mesh generation ignored them all and used the heightmap instead.
-
-**The Wasteful Flow:**
-```
-Chunk Generation:
-1. Build heightmap → ✅ Used by renderer
-2. Generate BFS sky light → ❌ WASTED (6.8M lookups)
-3. initializeChunkLighting() → ❌ WASTED (32K lookups/chunk)
-4. Queue 1,000 BFS nodes/chunk → ❌ WASTED
-
-Mesh Generation:
-- Calls calculateSkyLightFromHeightmap() → ✅ This is what renders!
-- Ignores all the BFS sky light data
-```
-
-**The Fix:**
-- Deleted generateSunlightColumn() function (~70 lines)
-- Rewrote initializeChunkLighting() to only scan for emissive blocks
-- Updated initializeWorldLighting() to skip sky light entirely
-- Sky light is now 100% heightmap-based (O(1) lookup)
-
-**Performance Impact:**
-- **Before**: 6.8M wasted block lookups + 1,000 BFS nodes/chunk
-- **After**: Only emissive block scans (<10 BFS nodes/chunk typical)
-- **World load**: 3-5s → 0.1-0.3s (90-95% faster!)
-- **Chunk generation**: ~90% faster lighting initialization
-
-This was the single biggest optimization - eliminating entire redundant systems!
-
 ## 3.4 Sky & Time System
 
 ### Time Mechanics
@@ -1341,13 +823,16 @@ Both pipelines render in the same frame with correct depth occlusion. Meshes and
 
 ### Core Data Structures
 
-**MeshVertex** (44 bytes per vertex)
+**MeshVertex** (80 bytes per vertex)
 ```cpp
 struct MeshVertex {
     glm::vec3 position;    // 12 bytes - World-space position
     glm::vec3 normal;      // 12 bytes - Surface normal
     glm::vec2 texCoord;    // 8 bytes  - UV coordinates
     glm::vec3 tangent;     // 12 bytes - Tangent space (for normal mapping)
+    glm::vec4 color;       // 16 bytes - Vertex color (PS1-style models)
+    glm::ivec4 boneIndices;// 16 bytes - Bone indices for skinning (up to 4 bones)
+    glm::vec4 boneWeights; // 16 bytes - Bone weights for skinning (sum to 1.0)
 };
 ```
 
@@ -1642,14 +1127,142 @@ while (running) {
 }
 ```
 
-### Known Limitations (Phase 1)
+### Skeletal Animation System
 
-- **No Textures** - Material colors only (shaders support textures, loading not implemented)
-- **No glTF** - OBJ only (glTF 2.0 planned for Phase 2)
-- **No Animations** - Static meshes only (skeletal animation planned for Phase 6)
+The engine supports skeletal animation with GPU-accelerated vertex skinning for character models and animated objects.
+
+#### Architecture
+
+**Bone Buffer (UBO):**
+- Up to 64 bone matrices per mesh
+- Descriptor set 2, binding 0
+- GPU-accelerated vertex skinning in vertex shader
+
+**Vertex Skinning:**
+```glsl
+// Vertex shader skinning (mesh.vert)
+if (bones.numBones > 0 && hasBoneWeights) {
+    mat4 skinMatrix =
+        boneWeights.x * bones.boneMatrices[boneIndices.x] +
+        boneWeights.y * bones.boneMatrices[boneIndices.y] +
+        boneWeights.z * bones.boneMatrices[boneIndices.z] +
+        boneWeights.w * bones.boneMatrices[boneIndices.w];
+    worldPos = skinMatrix * vec4(inPosition, 1.0);
+}
+```
+
+#### SkeletonAnimator
+
+Procedural animation system for character rigs:
+
+```cpp
+#include "mesh/skeleton_animator.h"
+
+// Load animator from rig file
+SkeletonAnimator animator;
+animator.loadFromRig("assets/rigs/player.yaml");
+
+// Update animation (call each frame)
+float deltaTime = 0.016f;
+glm::vec3 velocity = player.getVelocity();
+animator.update(deltaTime, velocity);
+
+// Get bone matrices for GPU upload
+const auto& transforms = animator.getAllFinalTransforms();
+meshRenderer.updateBoneMatrices(transforms.data(), transforms.size());
+```
+
+**Built-in Animations:**
+- **Idle** - Subtle breathing motion
+- **Walk** - Procedural leg/arm swing based on velocity
+- **Tail Sway** - Optional tail bone animation
+
+#### Automatic Skinning from Rig Files
+
+For simple models without embedded GLTF skinning data, automatic bone weights can be calculated from rig bone positions:
+
+```cpp
+// Load mesh
+uint32_t meshId = meshRenderer.loadMeshFromGLTF("assets/models/player.glb");
+
+// Apply automatic bone weights from rig
+meshRenderer.applySkinningFromRig(meshId, "assets/rigs/player.yaml");
+```
+
+**How it works:**
+1. Loads bone positions from rig YAML
+2. For each vertex, finds nearby bones within influence radius
+3. Calculates weights based on distance with configurable falloff
+4. Normalizes weights to sum to 1.0
+5. Re-uploads mesh with bone indices and weights
+
+#### Rig File Format
+
+Rig files define bone hierarchy and skinning configuration:
+
+```yaml
+version: 1
+model: assets/models/player.glb
+has_tail: true
+
+# Skinning configuration for automatic bone weight calculation
+skinning:
+  enabled: true
+  influence_radius: 0.25     # Default radius for bone influence
+  max_bones_per_vertex: 4    # Max bones affecting each vertex
+  falloff: smooth            # linear, smooth, or sharp
+
+bones:
+  - name: spine_root
+    parent: ~                # null = root bone
+    position: [0.01, 0.39, -2.69]
+  - name: spine_tip
+    parent: spine_root
+    position: [0.01, 0.82, -2.48]
+  - name: leg_L
+    parent: spine_root
+    position: [-0.19, 0.39, -2.54]
+  - name: leg_R
+    parent: spine_root
+    position: [0.20, 0.39, -2.54]
+  - name: arm_L
+    parent: spine_tip
+    position: [-0.18, 0.65, -2.45]
+  - name: arm_R
+    parent: spine_tip
+    position: [0.18, 0.65, -2.45]
+  - name: head
+    parent: spine_tip
+    position: [0.01, 1.0, -2.38]
+  - name: tail_base        # Optional
+    parent: spine_root
+    position: [0.01, 0.28, -2.83]
+  - name: tail_tip         # Optional
+    parent: tail_base
+    position: [0.01, 0.25, -3.31]
+```
+
+**Skinning Falloff Types:**
+- **linear** - Weight decreases linearly with distance: `1 - dist/radius`
+- **smooth** - Hermite interpolation for smoother blending (default)
+- **sharp** - Quadratic falloff, tighter influence near bone
+
+**Per-Bone Radius Override:**
+```yaml
+bones:
+  - name: head
+    parent: spine_tip
+    position: [0.01, 1.0, -2.38]
+    influence_radius: 0.35   # Override default radius for this bone
+```
+
+### Known Limitations
+
+- **No Textures** - ~~Material colors only~~ glTF textures supported, OBJ textures not yet
 - **No Transparency** - Opaque meshes only (alpha blending planned for Phase 2)
 - **No Shadows** - Phase 5 feature
 - **No LOD** - Level-of-detail system planned for Phase 4
+- **Limited Animation** - Procedural only, no keyframe animation blending yet
 
 ### Future Roadmap
 
@@ -1677,11 +1290,13 @@ while (running) {
 - Point light shadows
 - Contact shadows
 
-**Phase 6: Animation**
-- Skeletal animation system
-- Keyframe interpolation
-- Animation blending
-- IK (Inverse Kinematics)
+**Phase 6: Animation** *(In Progress)*
+- ~~Skeletal animation system~~ **DONE** - GPU skinning, bone matrices, rig files
+- ~~Procedural animation~~ **DONE** - Walk, idle, tail sway
+- ~~Automatic skinning~~ **DONE** - Calculate bone weights from rig positions
+- Keyframe interpolation - *Planned*
+- Animation blending - *Planned*
+- IK (Inverse Kinematics) - *Planned*
 
 ## 3.7 Save/Load System
 
