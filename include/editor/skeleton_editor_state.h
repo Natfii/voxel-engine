@@ -28,6 +28,7 @@ public:
     void startWizard();
     void nextBone();
     void previousBone();
+    void completeWizard();  // Mark wizard as complete (e.g., after loading rig)
     bool isWizardComplete() const;
     int getCurrentBoneIndex() const { return m_currentBoneIndex; }
     std::string getCurrentBoneName() const;

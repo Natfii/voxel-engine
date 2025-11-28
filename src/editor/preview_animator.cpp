@@ -17,15 +17,16 @@ void PreviewAnimator::setBones(const std::vector<Bone>& bones) {
     m_bones = bones;
     m_transforms.clear();
 
-    // Check for tail bones
+    // Check for tail bones and initialize all transforms
     m_hasTail = false;
     for (const auto& bone : bones) {
+        // Initialize identity transform for every bone
+        m_transforms[bone.name] = glm::mat4(1.0f);
+
+        // Check if this is a tail bone
         if (bone.name == "tail_base" || bone.name == "tail_tip") {
             m_hasTail = true;
-            break;
         }
-        // Initialize identity transforms
-        m_transforms[bone.name] = glm::mat4(1.0f);
     }
 }
 

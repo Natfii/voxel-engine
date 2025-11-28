@@ -28,6 +28,15 @@ void SkeletonEditorState::previousBone() {
     }
 }
 
+void SkeletonEditorState::completeWizard() {
+    // Set bone index past all required bones to mark wizard complete
+    int requiredCount = static_cast<int>(REQUIRED_BONES.size());
+    if (m_hasTail) {
+        requiredCount += 2; // tail_base and tail_tip
+    }
+    m_currentBoneIndex = requiredCount;
+}
+
 bool SkeletonEditorState::isWizardComplete() const {
     // Wizard is complete when all required bones are placed
     // Plus tail bones if hasTail is true

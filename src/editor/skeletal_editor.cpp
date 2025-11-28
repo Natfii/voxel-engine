@@ -14,6 +14,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <filesystem>
+#include <unordered_map>
 
 SkeletalEditor::SkeletalEditor() {
     // Initialize camera with reasonable defaults
@@ -33,6 +34,11 @@ bool SkeletalEditor::initialize(VulkanRenderer* renderer) {
 void SkeletalEditor::update(float deltaTime) {
     if (!m_isOpen) return;
     // Camera updates handled via processInput
+
+    // Update animation preview if enabled
+    if (m_showAnimationPreview && m_state.isWizardComplete()) {
+        m_animator.update(deltaTime);
+    }
 }
 
 void SkeletalEditor::render() {
@@ -79,6 +85,58 @@ void SkeletalEditor::render() {
     if (m_showProperties) {
         renderPropertiesPanel();
     }
+
+    // Animation Preview section (only when wizard is complete)
+    if (m_state.isWizardComplete()) {
+        ImGui::Separator();
+        ImGui::Text("Animation Preview");
+        ImGui::SameLine(); ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Preview procedural animations on your skeleton");
+        ImGui::Separator();
+
+        // Enable/disable toggle
+        if (ImGui::Checkbox("Enable Preview", &m_showAnimationPreview)) {
+            if (m_showAnimationPreview) {
+                // Sync bones with animator when enabling
+                m_animator.setBones(m_state.getBones());
+                m_animator.setPlaying(true);
+            } else {
+                m_animator.reset();
+            }
+        }
+
+        if (m_showAnimationPreview) {
+            // Animation type selection
+            const char* animTypes[] = { "None", "Idle", "Walk", "Tail Wag" };
+            int currentAnim = static_cast<int>(m_animator.getAnimation());
+            if (ImGui::Combo("Animation", &currentAnim, animTypes, 4)) {
+                m_animator.setAnimation(static_cast<PreviewAnimationType>(currentAnim));
+            }
+
+            // Speed control
+            float speed = m_animator.getSpeed();
+            if (ImGui::SliderFloat("Speed", &speed, 0.1f, 3.0f, "%.1fx")) {
+                m_animator.setSpeed(speed);
+            }
+
+            // Play/pause button
+            if (m_animator.isPlaying()) {
+                if (ImGui::Button("Pause")) {
+                    m_animator.setPlaying(false);
+                }
+            } else {
+                if (ImGui::Button("Play")) {
+                    m_animator.setPlaying(true);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reset")) {
+                m_animator.reset();
+                m_animator.setBones(m_state.getBones());
+            }
+        }
+    }
+
     ImGui::EndChild();
 
     renderStatusBar();
@@ -99,6 +157,7 @@ void SkeletalEditor::render() {
                 case BrowserMode::LOAD_RIG:
                     if (RigFile::load(selectedPath, m_state)) {
                         m_currentRigPath = selectedPath;
+                        m_state.completeWizard();  // Mark wizard complete so preview is available
                         if (!m_state.getModelPath().empty()) {
                             loadModel(m_state.getModelPath());
                         }
@@ -382,6 +441,14 @@ void SkeletalEditor::renderWizardPanel() {
     ImGui::Text("Bone Placement Wizard");
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step-by-step guide to place all required bones\nFollow the prompts to build your skeleton rig");
+
+    // Close/hide wizard button
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20);
+    if (ImGui::SmallButton("X")) {
+        m_showWizard = false;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide wizard panel\nUse View menu to show again");
+
     ImGui::Separator();
 
     if (m_state.isWizardComplete()) {
@@ -401,6 +468,12 @@ void SkeletalEditor::renderWizardPanel() {
             m_state.startWizard();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start over and place all bones again");
+
+        ImGui::SameLine();
+        if (ImGui::Button("Hide Wizard")) {
+            m_showWizard = false;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide this panel\nUse View menu to show again");
     } else {
         std::string currentBone = m_state.getCurrentBoneName();
         int currentIdx = m_state.getCurrentBoneIndex();
@@ -421,9 +494,9 @@ void SkeletalEditor::renderWizardPanel() {
             ImGui::TextWrapped("Place at the top of the spine (chest/neck base). The spine will connect from root to tip.");
         } else if (currentBone == "head") {
             ImGui::TextWrapped("Place at the center of the head. This controls head rotation.");
-        } else if (currentBone == "leg_left" || currentBone == "leg_right") {
+        } else if (currentBone == "leg_L" || currentBone == "leg_R") {
             ImGui::TextWrapped("Place at the hip joint where the leg connects to the body.");
-        } else if (currentBone == "arm_left" || currentBone == "arm_right") {
+        } else if (currentBone == "arm_L" || currentBone == "arm_R") {
             ImGui::TextWrapped("Place at the shoulder joint where the arm connects to the torso.");
         } else if (currentBone.find("tail") != std::string::npos) {
             ImGui::TextWrapped("Place along the tail. tail_root at base, tail_tip at end.");
@@ -544,85 +617,29 @@ void SkeletalEditor::renderViewport() {
     // Render gizmo
     renderGizmo();
 
-    // === ORB INTERACTION CHECK (MUST BE BEFORE CAMERA CONTROLS) ===
-    // Calculate orb screen position for early interaction check
-    glm::mat4 earlyView = m_camera.getViewMatrix();
-    float earlyAspect = (m_viewportHeight > 0.0f) ? (m_viewportWidth / m_viewportHeight) : 1.0f;
-    glm::mat4 earlyProj = m_camera.getProjectionMatrix(earlyAspect);
-    glm::mat4 earlyModelTransform = m_modelFlipped ?
-        glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f)) :
-        glm::mat4(1.0f);
-    glm::mat4 earlyViewProj = earlyProj * earlyView * earlyModelTransform;
-
-    bool hoveringOrb = false;
+    // Calculate orb screen position for visual indicator (ImGuizmo handles actual interaction)
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 mousePos = io.MousePos;
 
-    // Check if mouse is over the orb
     if (!m_state.isWizardComplete()) {
+        glm::mat4 earlyView = m_camera.getViewMatrix();
+        float earlyAspect = (m_viewportHeight > 0.0f) ? (m_viewportWidth / m_viewportHeight) : 1.0f;
+        glm::mat4 earlyProj = m_camera.getProjectionMatrix(earlyAspect);
+        glm::mat4 earlyModelTransform = m_modelFlipped ?
+            glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f)) :
+            glm::mat4(1.0f);
+        glm::mat4 earlyViewProj = earlyProj * earlyView * earlyModelTransform;
+
         glm::vec3 previewPos = m_state.getPreviewPosition();
         glm::vec4 clipPos = earlyViewProj * glm::vec4(previewPos, 1.0f);
         if (clipPos.w > 0.0f) {
             glm::vec3 ndc = glm::vec3(clipPos) / clipPos.w;
             float screenX = viewportPos.x + (ndc.x * 0.5f + 0.5f) * m_viewportWidth;
             float screenY = viewportPos.y + (-ndc.y * 0.5f + 0.5f) * m_viewportHeight;
-            float distToOrb = glm::length(glm::vec2(mousePos.x - screenX, mousePos.y - screenY));
-            hoveringOrb = distToOrb < 25.0f;
 
-            // Store orb screen position for later use
+            // Store orb screen position for visual indicator
             m_orbScreenPos = glm::vec2(screenX, screenY);
             m_orbDepth = clipPos.w;
-
-            // Handle orb drag start - left click on orb
-            if (hoveringOrb && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsUsing()) {
-                m_isDraggingOrb = true;
-            }
-        }
-    }
-
-    // Handle ongoing orb drag
-    if (m_isDraggingOrb) {
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            // Convert mouse position to normalized device coordinates
-            float ndcX = ((mousePos.x - viewportPos.x) / m_viewportWidth) * 2.0f - 1.0f;
-            float ndcY = -(((mousePos.y - viewportPos.y) / m_viewportHeight) * 2.0f - 1.0f);
-
-            // Get current preview position
-            glm::vec3 previewPos = m_state.getPreviewPosition();
-
-            // Use view-proj WITHOUT model transform for unprojection
-            glm::mat4 viewProjNoModel = earlyProj * earlyView;
-            glm::mat4 invViewProj = glm::inverse(viewProjNoModel);
-
-            // Unproject near and far points to create a ray
-            glm::vec4 nearPoint = invViewProj * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
-            glm::vec4 farPoint = invViewProj * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
-
-            if (nearPoint.w != 0.0f && farPoint.w != 0.0f) {
-                glm::vec3 rayOrigin = glm::vec3(nearPoint) / nearPoint.w;
-                glm::vec3 rayEnd = glm::vec3(farPoint) / farPoint.w;
-                glm::vec3 rayDir = glm::normalize(rayEnd - rayOrigin);
-
-                // Get camera position and forward direction
-                glm::vec3 camPos = m_camera.getPosition();
-                glm::vec3 camTarget = m_camera.getTarget();
-                glm::vec3 camForward = glm::normalize(camTarget - camPos);
-
-                // Create a plane perpendicular to camera at orb's distance
-                float orbDist = glm::dot(previewPos - camPos, camForward);
-
-                // Ray-plane intersection: find t where ray hits the plane
-                float denom = glm::dot(rayDir, camForward);
-                if (std::abs(denom) > 0.0001f) {
-                    float t = orbDist / denom;
-                    if (t > 0.0f) {
-                        glm::vec3 newPos = rayOrigin + rayDir * t;
-                        m_state.setPreviewPosition(newPos);
-                    }
-                }
-            }
-        } else {
-            m_isDraggingOrb = false;
         }
     }
 
@@ -734,8 +751,68 @@ void SkeletalEditor::renderViewport() {
     // Draw bones as spheres in viewport
     const auto& bones = m_state.getBones();
 
+    // Cache for animated positions (needed for hierarchical animation)
+    std::unordered_map<std::string, glm::vec3> animatedPositions;
+
+    // Helper to get animated bone position with proper hierarchy
+    auto getAnimatedPosition = [&](const Bone& bone) -> glm::vec3 {
+        // Check cache first
+        auto cached = animatedPositions.find(bone.name);
+        if (cached != animatedPositions.end()) {
+            return cached->second;
+        }
+
+        glm::vec3 result = bone.position;
+
+        if (m_showAnimationPreview && m_animator.isPlaying()) {
+            glm::mat4 animTransform = m_animator.getBoneTransform(bone.name);
+
+            // Extract translation from transform
+            glm::vec3 translation = glm::vec3(animTransform[3]);
+
+            if (!bone.parent.empty()) {
+                // Get parent's animated position
+                const Bone* parentBone = m_state.getBone(bone.parent);
+                if (parentBone) {
+                    glm::vec3 parentAnimPos = parentBone->position;
+                    auto parentCached = animatedPositions.find(bone.parent);
+                    if (parentCached != animatedPositions.end()) {
+                        parentAnimPos = parentCached->second;
+                    }
+
+                    // Calculate local offset from parent
+                    glm::vec3 localOffset = bone.position - parentBone->position;
+
+                    // Apply rotation to the local offset (rotate around parent)
+                    glm::vec3 rotatedOffset = glm::vec3(animTransform * glm::vec4(localOffset, 0.0f));
+
+                    // New position = parent position + rotated offset + translation
+                    result = parentAnimPos + rotatedOffset + translation;
+                }
+            } else {
+                // Root bone - just apply translation
+                result = bone.position + translation;
+            }
+        }
+
+        animatedPositions[bone.name] = result;
+        return result;
+    };
+
+    // Pre-compute all animated positions in hierarchy order
+    // Process bones without parents first, then children
     for (const auto& bone : bones) {
-        glm::vec4 clipPos = viewProj * glm::vec4(bone.position, 1.0f);
+        if (bone.parent.empty()) {
+            getAnimatedPosition(bone);
+        }
+    }
+    for (const auto& bone : bones) {
+        getAnimatedPosition(bone);
+    };
+
+    for (const auto& bone : bones) {
+        glm::vec3 animPos = getAnimatedPosition(bone);
+        glm::vec4 clipPos = viewProj * glm::vec4(animPos, 1.0f);
         if (clipPos.w > 0.0f) {
             glm::vec3 ndc = glm::vec3(clipPos) / clipPos.w;
             float screenX = viewportPos.x + (ndc.x * 0.5f + 0.5f) * m_viewportWidth;
@@ -758,8 +835,10 @@ void SkeletalEditor::renderViewport() {
         if (!bone.parent.empty()) {
             const Bone* parent = m_state.getBone(bone.parent);
             if (parent) {
-                glm::vec4 clipPos1 = viewProj * glm::vec4(bone.position, 1.0f);
-                glm::vec4 clipPos2 = viewProj * glm::vec4(parent->position, 1.0f);
+                glm::vec3 animPos1 = getAnimatedPosition(bone);
+                glm::vec3 animPos2 = getAnimatedPosition(*parent);
+                glm::vec4 clipPos1 = viewProj * glm::vec4(animPos1, 1.0f);
+                glm::vec4 clipPos2 = viewProj * glm::vec4(animPos2, 1.0f);
 
                 if (clipPos1.w > 0.0f && clipPos2.w > 0.0f) {
                     glm::vec3 ndc1 = glm::vec3(clipPos1) / clipPos1.w;
@@ -778,32 +857,22 @@ void SkeletalEditor::renderViewport() {
         }
     }
 
-    // Draw preview orb for bone placement (interaction handled earlier in function)
+    // Draw preview orb indicator for bone placement (gizmo handles interaction)
     if (!m_state.isWizardComplete()) {
-        // Use stored screen position from earlier interaction check
         float screenX = m_orbScreenPos.x;
         float screenY = m_orbScreenPos.y;
 
         // Check if orb is visible (depth > 0 means it was calculated)
         if (m_orbDepth > 0.0f) {
-            // Recalculate hover for visual feedback
-            float distToOrb = glm::length(glm::vec2(mousePos.x - screenX, mousePos.y - screenY));
-            bool orbHovered = distToOrb < 25.0f;
-
-            // Pulsing effect (faster pulse when dragging)
+            // Pulsing effect (faster pulse when using gizmo)
             float pulseSpeed = m_isDraggingOrb ? 8.0f : 4.0f;
             float pulse = (sinf(static_cast<float>(ImGui::GetTime()) * pulseSpeed) + 1.0f) * 0.5f;
             float orbSize = m_isDraggingOrb ? 14.0f : (10.0f + pulse * 4.0f);
 
-            // Color changes on hover/drag
-            ImU32 orbColor;
-            if (m_isDraggingOrb) {
-                orbColor = IM_COL32(255, 150, 50, 255);  // Orange when dragging
-            } else if (orbHovered) {
-                orbColor = IM_COL32(255, 100, 100, 255);  // Brighter red on hover
-            } else {
-                orbColor = IM_COL32(255, 50, 50, static_cast<int>(180 + pulse * 75));
-            }
+            // Color changes when using gizmo
+            ImU32 orbColor = m_isDraggingOrb ?
+                IM_COL32(255, 150, 50, 255) :  // Orange when using gizmo
+                IM_COL32(255, 50, 50, static_cast<int>(180 + pulse * 75));
 
             // Draw preview orb with glow
             ImGui::GetWindowDrawList()->AddCircleFilled(
@@ -813,29 +882,16 @@ void SkeletalEditor::renderViewport() {
             ImGui::GetWindowDrawList()->AddCircle(
                 ImVec2(screenX, screenY), orbSize + 2.0f, IM_COL32(255, 255, 255, 150), 0, 2.0f);
 
-            // Label with drag hint
-            std::string label = "Preview: " + m_state.getCurrentBoneName();
-            if (orbHovered && !m_isDraggingOrb) {
-                label += " (drag to move)";
-            }
+            // Label
+            std::string label = m_state.getCurrentBoneName();
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(screenX + 15, screenY - 5), IM_COL32(255, 200, 200, 255),
                 label.c_str());
-
-            // Change cursor when hovering orb
-            if (orbHovered || m_isDraggingOrb) {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            }
         }
-    } else {
-        m_isDraggingOrb = false;  // Reset drag state when wizard is complete
     }
 }
 
 void SkeletalEditor::renderGizmo() {
-    Bone* selected = m_state.getSelectedBone();
-    if (!selected) return;
-
     ImGuizmo::BeginFrame();
     ImGuizmo::SetOrthographic(false);
 
@@ -857,19 +913,56 @@ void SkeletalEditor::renderGizmo() {
     float aspectRatio = (m_viewportHeight > 0.0f) ? (m_viewportWidth / m_viewportHeight) : 1.0f;
     glm::mat4 proj = m_camera.getProjectionMatrix(aspectRatio);
 
-    glm::mat4 boneMatrix = glm::translate(glm::mat4(1.0f), selected->position);
+    // Apply model flip transform to the view matrix so gizmo axes align with flipped model
+    glm::mat4 modelTransform = glm::mat4(1.0f);
+    if (m_modelFlipped) {
+        modelTransform = glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    }
+    glm::mat4 adjustedView = view * modelTransform;
 
-    ImGuizmo::Manipulate(
-        glm::value_ptr(view),
-        glm::value_ptr(proj),
-        ImGuizmo::TRANSLATE,
-        ImGuizmo::WORLD,
-        glm::value_ptr(boneMatrix)
-    );
+    // Priority: Preview orb gizmo (during wizard), then selected bone gizmo
+    if (!m_state.isWizardComplete()) {
+        // Show gizmo for preview orb position
+        glm::vec3 previewPos = m_state.getPreviewPosition();
+        glm::mat4 previewMatrix = glm::translate(glm::mat4(1.0f), previewPos);
 
-    if (ImGuizmo::IsUsing()) {
-        glm::vec3 newPos = glm::vec3(boneMatrix[3]);
-        m_state.updateBonePosition(selected->name, newPos);
+        // Use a different color/style for the preview gizmo
+        ImGuizmo::PushID(0);
+        ImGuizmo::Manipulate(
+            glm::value_ptr(adjustedView),
+            glm::value_ptr(proj),
+            ImGuizmo::TRANSLATE,
+            ImGuizmo::WORLD,
+            glm::value_ptr(previewMatrix)
+        );
+        ImGuizmo::PopID();
+
+        if (ImGuizmo::IsUsing()) {
+            glm::vec3 newPos = glm::vec3(previewMatrix[3]);
+            m_state.setPreviewPosition(newPos);
+            m_isDraggingOrb = true;  // Keep this flag for UI feedback
+        } else {
+            m_isDraggingOrb = false;
+        }
+    } else {
+        // Show gizmo for selected bone (wizard complete)
+        Bone* selected = m_state.getSelectedBone();
+        if (!selected) return;
+
+        glm::mat4 boneMatrix = glm::translate(glm::mat4(1.0f), selected->position);
+
+        ImGuizmo::Manipulate(
+            glm::value_ptr(adjustedView),
+            glm::value_ptr(proj),
+            ImGuizmo::TRANSLATE,
+            ImGuizmo::WORLD,
+            glm::value_ptr(boneMatrix)
+        );
+
+        if (ImGuizmo::IsUsing()) {
+            glm::vec3 newPos = glm::vec3(boneMatrix[3]);
+            m_state.updateBonePosition(selected->name, newPos);
+        }
     }
 }
 

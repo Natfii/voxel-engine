@@ -21,8 +21,26 @@ bool SkeletonAnimator::loadSkeleton(const std::string& rigPath) {
         YAML::Node root = YAML::LoadFile(rigPath);
 
         m_skeleton = std::make_unique<RuntimeSkeleton>();
-        m_skeleton->name = root["name"].as<std::string>("unnamed");
-        m_skeleton->modelPath = root["model_path"].as<std::string>("");
+
+        // Support both editor format (model) and legacy format (model_path, name)
+        if (root["model"]) {
+            m_skeleton->modelPath = root["model"].as<std::string>("");
+            // Derive name from model path
+            std::string modelPath = m_skeleton->modelPath;
+            size_t lastSlash = modelPath.find_last_of("/\\");
+            size_t lastDot = modelPath.find_last_of('.');
+            if (lastSlash != std::string::npos && lastDot != std::string::npos) {
+                m_skeleton->name = modelPath.substr(lastSlash + 1, lastDot - lastSlash - 1);
+            } else {
+                m_skeleton->name = "unnamed";
+            }
+        } else {
+            m_skeleton->name = root["name"].as<std::string>("unnamed");
+            m_skeleton->modelPath = root["model_path"].as<std::string>("");
+        }
+
+        // Temporary storage for parent names (editor format uses names, not indices)
+        std::vector<std::string> parentNames;
 
         // Load bones
         if (root["bones"]) {
@@ -30,14 +48,23 @@ bool SkeletonAnimator::loadSkeleton(const std::string& rigPath) {
                 RuntimeBone bone;
                 bone.name = boneNode["name"].as<std::string>("bone");
 
-                // Position
+                // Position - support both array [x,y,z] and object {x:, y:, z:} formats
                 if (boneNode["position"]) {
-                    bone.position.x = boneNode["position"]["x"].as<float>(0.0f);
-                    bone.position.y = boneNode["position"]["y"].as<float>(0.0f);
-                    bone.position.z = boneNode["position"]["z"].as<float>(0.0f);
+                    const YAML::Node& posNode = boneNode["position"];
+                    if (posNode.IsSequence() && posNode.size() >= 3) {
+                        // Editor format: [x, y, z]
+                        bone.position.x = posNode[0].as<float>(0.0f);
+                        bone.position.y = posNode[1].as<float>(0.0f);
+                        bone.position.z = posNode[2].as<float>(0.0f);
+                    } else {
+                        // Legacy format: {x:, y:, z:}
+                        bone.position.x = posNode["x"].as<float>(0.0f);
+                        bone.position.y = posNode["y"].as<float>(0.0f);
+                        bone.position.z = posNode["z"].as<float>(0.0f);
+                    }
                 }
 
-                // Rotation (stored as euler angles in degrees)
+                // Rotation (stored as euler angles in degrees) - legacy format only
                 if (boneNode["rotation"]) {
                     float pitch = glm::radians(boneNode["rotation"]["pitch"].as<float>(0.0f));
                     float yaw = glm::radians(boneNode["rotation"]["yaw"].as<float>(0.0f));
@@ -47,7 +74,7 @@ bool SkeletonAnimator::loadSkeleton(const std::string& rigPath) {
                     bone.rotation = glm::quat(1, 0, 0, 0);
                 }
 
-                // Scale
+                // Scale - legacy format only
                 if (boneNode["scale"]) {
                     bone.scale.x = boneNode["scale"]["x"].as<float>(1.0f);
                     bone.scale.y = boneNode["scale"]["y"].as<float>(1.0f);
@@ -56,8 +83,21 @@ bool SkeletonAnimator::loadSkeleton(const std::string& rigPath) {
                     bone.scale = glm::vec3(1.0f);
                 }
 
-                // Parent
-                bone.parentIndex = boneNode["parent"].as<int>(-1);
+                // Parent - support both name (editor) and index (legacy) formats
+                bone.parentIndex = -1;  // Default to root
+                std::string parentName;
+                if (boneNode["parent"]) {
+                    if (boneNode["parent"].IsScalar()) {
+                        // Could be int or string
+                        try {
+                            bone.parentIndex = boneNode["parent"].as<int>(-1);
+                        } catch (...) {
+                            // It's a string (editor format)
+                            parentName = boneNode["parent"].as<std::string>("");
+                        }
+                    }
+                }
+                parentNames.push_back(parentName);
 
                 // Initialize animation state to bind pose
                 bone.animPosition = bone.position;
@@ -67,6 +107,14 @@ bool SkeletonAnimator::loadSkeleton(const std::string& rigPath) {
                 int boneIndex = static_cast<int>(m_skeleton->bones.size());
                 m_skeleton->boneNameToIndex[bone.name] = boneIndex;
                 m_skeleton->bones.push_back(bone);
+            }
+
+            // Resolve parent names to indices (editor format)
+            for (size_t i = 0; i < m_skeleton->bones.size(); ++i) {
+                if (!parentNames[i].empty()) {
+                    int parentIdx = m_skeleton->findBone(parentNames[i]);
+                    m_skeleton->bones[i].parentIndex = parentIdx;
+                }
             }
 
             // Build child relationships
@@ -327,22 +375,22 @@ void SkeletonAnimator::computeWalkPose(float time) {
         bone.animRotation = bone.rotation;
         bone.animScale = bone.scale;
 
-        // Leg animation
-        if (bone.name.find("leg") != std::string::npos ||
-            bone.name.find("thigh") != std::string::npos) {
-            float swing = bone.name.find("left") != std::string::npos ? legSwing : -legSwing;
-            bone.animRotation = bone.rotation * glm::angleAxis(swing, glm::vec3(1, 0, 0));
+        // Leg animation - support both naming conventions
+        if (bone.name == "leg_L" || bone.name.find("leg") != std::string::npos && bone.name.find("left") != std::string::npos) {
+            bone.animRotation = bone.rotation * glm::angleAxis(legSwing, glm::vec3(1, 0, 0));
+        } else if (bone.name == "leg_R" || bone.name.find("leg") != std::string::npos && bone.name.find("right") != std::string::npos) {
+            bone.animRotation = bone.rotation * glm::angleAxis(-legSwing, glm::vec3(1, 0, 0));
         }
 
-        // Arm swing (opposite to legs)
-        if (bone.name.find("arm") != std::string::npos ||
-            bone.name.find("shoulder") != std::string::npos) {
-            float swing = bone.name.find("left") != std::string::npos ? -armSwing : armSwing;
-            bone.animRotation = bone.rotation * glm::angleAxis(swing, glm::vec3(1, 0, 0));
+        // Arm swing (opposite to legs) - support both naming conventions
+        if (bone.name == "arm_L" || bone.name.find("arm") != std::string::npos && bone.name.find("left") != std::string::npos) {
+            bone.animRotation = bone.rotation * glm::angleAxis(-armSwing, glm::vec3(1, 0, 0));
+        } else if (bone.name == "arm_R" || bone.name.find("arm") != std::string::npos && bone.name.find("right") != std::string::npos) {
+            bone.animRotation = bone.rotation * glm::angleAxis(armSwing, glm::vec3(1, 0, 0));
         }
 
-        // Hip sway
-        if (bone.name.find("hip") != std::string::npos ||
+        // Hip/spine root sway
+        if (bone.name == "spine_root" || bone.name.find("hip") != std::string::npos ||
             bone.name.find("pelvis") != std::string::npos) {
             bone.animPosition.y += hipSway;
         }
@@ -362,21 +410,22 @@ void SkeletonAnimator::computeRunPose(float time) {
         bone.animRotation = bone.rotation;
         bone.animScale = bone.scale;
 
-        // Leg animation (more exaggerated)
-        if (bone.name.find("leg") != std::string::npos ||
-            bone.name.find("thigh") != std::string::npos) {
-            float swing = bone.name.find("left") != std::string::npos ? legSwing : -legSwing;
-            bone.animRotation = bone.rotation * glm::angleAxis(swing, glm::vec3(1, 0, 0));
+        // Leg animation - support both naming conventions
+        if (bone.name == "leg_L" || bone.name.find("leg") != std::string::npos && bone.name.find("left") != std::string::npos) {
+            bone.animRotation = bone.rotation * glm::angleAxis(legSwing, glm::vec3(1, 0, 0));
+        } else if (bone.name == "leg_R" || bone.name.find("leg") != std::string::npos && bone.name.find("right") != std::string::npos) {
+            bone.animRotation = bone.rotation * glm::angleAxis(-legSwing, glm::vec3(1, 0, 0));
         }
 
-        // Arm swing
-        if (bone.name.find("arm") != std::string::npos) {
-            float swing = bone.name.find("left") != std::string::npos ? -armSwing : armSwing;
-            bone.animRotation = bone.rotation * glm::angleAxis(swing, glm::vec3(1, 0, 0));
+        // Arm swing - support both naming conventions
+        if (bone.name == "arm_L" || bone.name.find("arm") != std::string::npos && bone.name.find("left") != std::string::npos) {
+            bone.animRotation = bone.rotation * glm::angleAxis(-armSwing, glm::vec3(1, 0, 0));
+        } else if (bone.name == "arm_R" || bone.name.find("arm") != std::string::npos && bone.name.find("right") != std::string::npos) {
+            bone.animRotation = bone.rotation * glm::angleAxis(armSwing, glm::vec3(1, 0, 0));
         }
 
         // Body bounce
-        if (bone.name.find("hip") != std::string::npos ||
+        if (bone.name == "spine_root" || bone.name.find("hip") != std::string::npos ||
             bone.name.find("root") != std::string::npos) {
             bone.animPosition.y += bounce;
         }

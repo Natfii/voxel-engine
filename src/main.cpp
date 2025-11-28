@@ -59,6 +59,7 @@
 #include "frustum.h"
 #include "mesh/mesh_renderer.h"
 #include "mesh/mesh_loader.h"
+#include "animation/skeleton_animator.h"
 #include "map_preview.h"
 #include "loading_sphere.h"
 #include "event_dispatcher.h"
@@ -1174,6 +1175,20 @@ int main(int argc, char* argv[]) {
             std::cout << "Place player.glb in assets/models/ for third-person view" << '\n';
         }
 
+        // Initialize player skeleton animator for procedural animations
+        SkeletonAnimator playerAnimator;
+        bool playerAnimatorLoaded = false;
+        try {
+            std::string playerRigPath = "assets/rigs/player.yaml";
+            if (playerAnimator.loadSkeleton(playerRigPath)) {
+                playerAnimator.playProcedural(ProceduralAnimation::IDLE);
+                playerAnimatorLoaded = true;
+                std::cout << "Player skeleton loaded with " << playerAnimator.getBoneCount() << " bones" << '\n';
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Warning: Could not load player skeleton: " << e.what() << '\n';
+        }
+
         bool isPaused = false;
         bool escPressed = false;
         bool requestMouseReset = false;
@@ -1359,6 +1374,32 @@ int main(int argc, char* argv[]) {
             if (g_debugLevel != 2) {
                 bool canProcessInput = InputManager::instance().canMove();
                 player.update(window, clampedDeltaTime, &world, canProcessInput);
+            }
+
+            // Update player animation state based on movement
+            if (playerAnimatorLoaded) {
+                // Determine animation based on player state
+                glm::vec3 horizontalVel = glm::vec3(player.Front.x, 0, player.Front.z);
+                float speed = glm::length(horizontalVel);
+
+                // Check if player is moving (WASD keys pressed)
+                bool isMoving = glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
+                               glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ||
+                               glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ||
+                               glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS;
+
+                bool isSprinting = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
+
+                if (isMoving && isSprinting) {
+                    playerAnimator.playProcedural(ProceduralAnimation::RUN);
+                } else if (isMoving) {
+                    playerAnimator.playProcedural(ProceduralAnimation::WALK);
+                } else {
+                    playerAnimator.playProcedural(ProceduralAnimation::IDLE);
+                }
+
+                playerAnimator.setFacingDirection(player.Front);
+                playerAnimator.update(clampedDeltaTime);
             }
 
             // Update player model for third-person view

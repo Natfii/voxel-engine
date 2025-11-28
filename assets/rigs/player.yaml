@@ -1,0 +1,31 @@
+version: 1
+model: assets\models\player.glb
+has_tail: true
+bones:
+  - name: spine_root
+    parent: ~
+    position: [0.00999999978, 0.389999986, -2.69000006]
+  - name: spine_tip
+    parent: spine_root
+    position: [0.00999999978, 0.819999993, -2.48000002]
+  - name: leg_L
+    parent: spine_root
+    position: [-0.189999998, 0.389999986, -2.53999996]
+  - name: leg_R
+    parent: spine_root
+    position: [0.200000003, 0.389999986, -2.53999996]
+  - name: arm_L
+    parent: spine_tip
+    position: [-0.180000007, 0.649999976, -2.45000005]
+  - name: arm_R
+    parent: spine_tip
+    position: [0.180000007, 0.649999976, -2.45000005]
+  - name: head
+    parent: spine_tip
+    position: [0.00999999978, 1, -2.38000011]
+  - name: tail_base
+    parent: spine_root
+    position: [0.00999999978, 0.280000001, -2.82999992]
+  - name: tail_tip
+    parent: tail_base
+    position: [0.00999999978, 0.25, -3.30999994]

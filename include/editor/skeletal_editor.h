@@ -8,6 +8,7 @@
 #include "editor/editor_camera.h"
 #include "editor/skeleton_editor_state.h"
 #include "editor/file_browser.h"
+#include "editor/preview_animator.h"
 #include "mesh/mesh_loader.h"
 #include <memory>
 #include <string>
@@ -117,8 +118,12 @@ private:
     // Model transform
     bool m_modelFlipped = false;  // 180-degree flip state for upside-down models
 
-    // Orb dragging state
-    bool m_isDraggingOrb = false;
-    glm::vec2 m_orbScreenPos = {0, 0};  // Current screen position of orb
-    float m_orbDepth = 0.0f;            // Depth for projecting mouse to world
+    // Orb visual state (ImGuizmo handles interaction)
+    bool m_isDraggingOrb = false;       // True when gizmo is being used
+    glm::vec2 m_orbScreenPos = {0, 0};  // Screen position for visual indicator
+    float m_orbDepth = 0.0f;            // Depth for visibility check
+
+    // Animation preview
+    PreviewAnimator m_animator;
+    bool m_showAnimationPreview = false;
 };
