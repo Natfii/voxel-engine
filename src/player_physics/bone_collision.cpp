@@ -53,22 +53,23 @@ void BoneCollisionManager::createDefaultCapsules() {
         glm::vec3 offset;
     };
 
-    // Capsule definitions - tuned for player model proportions
+    // Capsule definitions - larger radii for easier collision detection
+    // and more visible squish effects
     const CapsuleDef definitions[] = {
-        // Main body
-        {"spine_root",  0.15f, 0.30f, glm::vec3(0.0f, 0.0f, 0.0f)},
-        {"spine_tip",   0.12f, 0.25f, glm::vec3(0.0f, 0.0f, 0.0f)},
-        {"head",        0.10f, 0.15f, glm::vec3(0.0f, 0.0f, 0.0f)},
+        // Main body - larger for more visible squish
+        {"spine_root",  0.25f, 0.35f, glm::vec3(0.0f, 0.0f, 0.0f)},
+        {"spine_tip",   0.20f, 0.30f, glm::vec3(0.0f, 0.0f, 0.0f)},
+        {"head",        0.18f, 0.20f, glm::vec3(0.0f, 0.05f, 0.0f)},
 
-        // Limbs
-        {"leg_L",       0.05f, 0.25f, glm::vec3(0.0f, -0.1f, 0.0f)},
-        {"leg_R",       0.05f, 0.25f, glm::vec3(0.0f, -0.1f, 0.0f)},
-        {"arm_L",       0.04f, 0.20f, glm::vec3(0.0f, 0.0f, 0.0f)},
-        {"arm_R",       0.04f, 0.20f, glm::vec3(0.0f, 0.0f, 0.0f)},
+        // Limbs - slightly larger
+        {"leg_L",       0.10f, 0.30f, glm::vec3(0.0f, -0.1f, 0.0f)},
+        {"leg_R",       0.10f, 0.30f, glm::vec3(0.0f, -0.1f, 0.0f)},
+        {"arm_L",       0.08f, 0.25f, glm::vec3(0.0f, 0.0f, 0.0f)},
+        {"arm_R",       0.08f, 0.25f, glm::vec3(0.0f, 0.0f, 0.0f)},
 
-        // Tail
-        {"tail_base",   0.06f, 0.20f, glm::vec3(0.0f, 0.0f, 0.0f)},
-        {"tail_tip",    0.04f, 0.25f, glm::vec3(0.0f, 0.0f, 0.0f)},
+        // Tail - larger for fun squish
+        {"tail_base",   0.12f, 0.25f, glm::vec3(0.0f, 0.0f, 0.0f)},
+        {"tail_tip",    0.10f, 0.30f, glm::vec3(0.0f, 0.0f, 0.0f)},
     };
 
     for (const auto& def : definitions) {

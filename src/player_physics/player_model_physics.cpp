@@ -171,12 +171,12 @@ void PlayerModelPhysics::processCollisions(const glm::vec3& velocity) {
                                        strongestCollision->contactNormal);
         impactForce *= glm::max(velocityDot, 0.0f);
 
-        // Trigger squish at collision point
-        if (m_config.enableSquish && impactForce > 0.5f) {
+        // Trigger squish at collision point (lowered threshold for better responsiveness)
+        if (m_config.enableSquish && impactForce > 0.1f) {
             m_squishSystem.onCollision(
                 strongestCollision->contactPoint,
                 strongestCollision->contactNormal,
-                impactForce
+                impactForce * 3.0f  // Amplify for more visible deformation
             );
         }
     }

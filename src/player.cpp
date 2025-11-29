@@ -48,11 +48,15 @@ void Player::initializeModelPhysics(SkeletonAnimator* animator) {
     config.enableSquish = true;
     config.enableHeadTracking = true;
 
-    // Tune squish parameters for a satisfying "squishy" feel
-    config.squishParams.springStiffness = 25.0f;
-    config.squishParams.dampingRatio = 0.5f;
-    config.squishParams.maxCompression = 0.65f;
-    config.squishParams.influenceRadius = 0.8f;
+    // Tune squish parameters for exaggerated "cartoon squishy" feel
+    config.squishParams.springStiffness = 15.0f;   // Lower = slower recovery (more visible)
+    config.squishParams.dampingRatio = 0.3f;       // Lower = more bouncy
+    config.squishParams.maxCompression = 0.4f;     // More compression allowed (was 0.65)
+    config.squishParams.maxExpansion = 1.8f;       // More expansion for volume preservation
+    config.squishParams.influenceRadius = 1.5f;    // Larger radius for more bones affected
+    config.squishParams.impactMultiplier = 0.5f;   // Higher = more squish per impact
+    config.squishParams.volumePreservation = 0.8f; // Higher = bulge more when compressed
+    config.squishParams.recoverySpeed = 2.0f;      // Slower recovery = more visible
 
     // Head tracking parameters
     config.headTrackingParams.maxYawAngle = 70.0f;
@@ -500,11 +504,13 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
                                            boneCollision.contactNormal);
             impactForce *= glm::max(velocityDot, 0.0f);
 
-            if (impactForce > 0.5f) {
+            // Lower threshold for more responsive squish (was 0.5f)
+            if (impactForce > 0.1f) {
+                // Amplify impact force for more visible effect
                 m_modelPhysics->getSquishSystem().onCollision(
                     boneCollision.contactPoint,
                     boneCollision.contactNormal,
-                    impactForce
+                    impactForce * 3.0f  // Amplify for visibility
                 );
             }
         }
