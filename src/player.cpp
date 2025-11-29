@@ -34,7 +34,7 @@ Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     // Initialize tongue grapple system
     m_tongueGrapple = std::make_unique<PlayerPhysics::TongueGrapple>();
     PlayerPhysics::TongueGrappleConfig tongueConfig;
-    tongueConfig.tongueSpeed = 60.0f;     // Fast tongue travel
+    tongueConfig.tongueSpeed = 120.0f;    // Very fast - reaches 20 blocks in 0.17s
     tongueConfig.maxRange = 25.0f;        // 25 blocks max
     tongueConfig.cooldownTime = 0.5f;     // 0.5 second cooldown
     tongueConfig.ropeSpring = 10.0f;      // Springy rope
