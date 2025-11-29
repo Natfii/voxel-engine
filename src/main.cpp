@@ -1190,6 +1190,9 @@ int main(int argc, char* argv[]) {
                 playerAnimator.playProcedural(ProceduralAnimation::IDLE);
                 playerAnimatorLoaded = true;
                 std::cout << "Player skeleton loaded with " << playerAnimator.getBoneCount() << " bones" << '\n';
+
+                // Initialize player model physics (bone collision, squish, tongue grapple)
+                player.initializeModelPhysics(&playerAnimator);
             }
         } catch (const std::exception& e) {
             std::cerr << "Warning: Could not load player skeleton: " << e.what() << '\n';

@@ -81,6 +81,7 @@ void LoadingSphere::setMapPreview(MapPreview* mapPreview) {
     m_mapPreview = mapPreview;
     m_hasMapTexture = false;  // Will be set to true when we create the descriptor set
     m_descriptorSet = VK_NULL_HANDLE;  // Reset - will be recreated on next render
+    m_triedCreatingDescriptor = false;  // Reset so we can try creating descriptor for new map preview
 }
 
 void LoadingSphere::generateSphereMesh() {
@@ -273,14 +274,11 @@ void LoadingSphere::render() {
     // Try to use map preview texture if available
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
 
-    // Only attempt to create descriptor set once per map preview
-    static bool triedCreatingDescriptor = false;
-
     if (m_mapPreview && m_mapPreview->isReady() && m_hasMapTexture) {
         descriptorSet = m_descriptorSet;
-    } else if (m_mapPreview && m_mapPreview->isReady() && !triedCreatingDescriptor) {
-        // Create descriptor set for map preview texture (only try once)
-        triedCreatingDescriptor = true;
+    } else if (m_mapPreview && m_mapPreview->isReady() && !m_triedCreatingDescriptor) {
+        // Create descriptor set for map preview texture (only try once per map preview)
+        m_triedCreatingDescriptor = true;
         m_descriptorSet = m_renderer->createCustomTextureDescriptorSet(
             m_mapPreview->getImageView(),
             m_mapPreview->getSampler()
