@@ -27,9 +27,21 @@ Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
       m_submergence(0.0f), m_nKeyPressed(false), m_f3KeyPressed(false), NoclipMode(false),
       ThirdPersonMode(false), ThirdPersonDistance(5.5f), m_isSprinting(false),
       m_sprintKeyPressed(false), m_animator(nullptr), m_useModelPhysics(false),
-      m_bodyYaw(yaw), m_bodyYawVelocity(0.0f)
+      m_bodyYaw(yaw), m_bodyYawVelocity(0.0f), m_jumpPressedLastFrame(false)
 {
     updateVectors();
+
+    // Initialize tongue grapple system
+    m_tongueGrapple = std::make_unique<PlayerPhysics::TongueGrapple>();
+    PlayerPhysics::TongueGrappleConfig tongueConfig;
+    tongueConfig.tongueSpeed = 60.0f;     // Fast tongue travel
+    tongueConfig.maxRange = 25.0f;        // 25 blocks max
+    tongueConfig.cooldownTime = 0.5f;     // 0.5 second cooldown
+    tongueConfig.ropeSpring = 10.0f;      // Springy rope
+    tongueConfig.ropeDamping = 0.7f;      // Bouncy but controlled
+    tongueConfig.releaseBoost = 5.0f;     // Nice upward boost on release
+    tongueConfig.maxSwingSpeed = 40.0f;   // Fast swinging
+    m_tongueGrapple->initialize(nullptr, tongueConfig);  // No skeleton needed yet
 }
 
 void Player::initializeModelPhysics(SkeletonAnimator* animator) {
@@ -339,7 +351,11 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     glm::vec3 horizontalVel = wishDir * moveSpeed;
 
     // Jumping (only if processing input)
-    if (processInput && glfwGetKey(window, keys.jump) == GLFW_PRESS) {
+    bool jumpPressed = processInput && glfwGetKey(window, keys.jump) == GLFW_PRESS;
+    bool jumpPressEdge = jumpPressed && !m_jumpPressedLastFrame;  // Just pressed this frame
+    m_jumpPressedLastFrame = jumpPressed;
+
+    if (jumpPressed) {
         if (m_inLiquid) {
             // Jump strength scales with submergence
             // Less submerged = stronger jump (can exit water easier)
@@ -349,6 +365,24 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
             // Jump if on ground
             m_velocity.y = JUMP_VELOCITY;
         }
+    }
+
+    // ========== TONGUE GRAPPLE CONTROLS ==========
+    // Press jump while in air (not water) to shoot tongue or release if attached
+    if (m_tongueGrapple && jumpPressEdge && !m_onGround && !m_inLiquid) {
+        if (m_tongueGrapple->isAttached()) {
+            // Already swinging - release and keep momentum
+            m_tongueGrapple->release(m_velocity);
+        } else if (m_tongueGrapple->canShoot()) {
+            // Shoot tongue toward camera direction
+            m_tongueGrapple->shoot(Position, Front, world);
+        }
+    }
+
+    // Update tongue physics (swing forces, shooting progress, cooldown)
+    if (m_tongueGrapple) {
+        m_tongueGrapple->update(deltaTime, world, Position, m_velocity,
+                                 Front, GRAVITY, m_onGround, m_inLiquid);
     }
 
     // Water physics overrides ground detection

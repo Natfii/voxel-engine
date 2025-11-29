@@ -13,6 +13,7 @@
 #include <memory>
 
 #include "player_physics/player_model_physics.h"
+#include "player_physics/tongue_grapple.h"
 
 // Forward declarations
 class World;
@@ -177,6 +178,24 @@ public:
     SkeletonAnimator* getAnimator() { return m_animator; }
     const SkeletonAnimator* getAnimator() const { return m_animator; }
 
+    // ========== Tongue Grapple System ==========
+
+    /**
+     * @brief Get the tongue grapple system
+     */
+    PlayerPhysics::TongueGrapple* getTongueGrapple() { return m_tongueGrapple.get(); }
+    const PlayerPhysics::TongueGrapple* getTongueGrapple() const { return m_tongueGrapple.get(); }
+
+    /**
+     * @brief Check if tongue is currently attached (swinging)
+     */
+    bool isTongueAttached() const { return m_tongueGrapple && m_tongueGrapple->isAttached(); }
+
+    /**
+     * @brief Check if tongue is shooting
+     */
+    bool isTongueShooting() const { return m_tongueGrapple && m_tongueGrapple->isShooting(); }
+
     // ========== Public Camera State ==========
     // Public for easy access from rendering and gameplay code
 
@@ -226,6 +245,10 @@ private:
     static constexpr float BODY_LAG_SPRING = 4.0f;           ///< Spring stiffness (lower = bouncier)
     static constexpr float BODY_LAG_DAMPING = 0.4f;          ///< Damping (< 0.5 = underdamped/bouncy)
     static constexpr float BODY_LAG_MAX_SPEED = 400.0f;      ///< Max rotation speed (degrees/second)
+
+    // ========== Tongue Grapple System ==========
+    std::unique_ptr<PlayerPhysics::TongueGrapple> m_tongueGrapple;  ///< Tongue grappling system
+    bool m_jumpPressedLastFrame;           ///< For detecting jump press edge
 
     // ========== Player Dimensions ==========
     // All dimensions in world units (blocks are 1.0 world units)
