@@ -11,6 +11,7 @@
 #include "logger.h"
 #include "terrain_constants.h"
 #include "key_bindings.h"
+#include "animation/skeleton_animator.h"
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -25,9 +26,45 @@ Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
       m_velocity(0.0f), m_onGround(false), m_inLiquid(false), m_cameraUnderwater(false),
       m_submergence(0.0f), m_nKeyPressed(false), m_f3KeyPressed(false), NoclipMode(false),
       ThirdPersonMode(false), ThirdPersonDistance(5.5f), m_isSprinting(false),
-      m_sprintKeyPressed(false)
+      m_sprintKeyPressed(false), m_animator(nullptr), m_useModelPhysics(false)
 {
     updateVectors();
+}
+
+void Player::initializeModelPhysics(SkeletonAnimator* animator) {
+    m_animator = animator;
+
+    if (!animator || !animator->hasSkeletonLoaded()) {
+        Logger::warning() << "Player::initializeModelPhysics: No skeleton loaded";
+        m_useModelPhysics = false;
+        return;
+    }
+
+    // Create and initialize model physics
+    m_modelPhysics = std::make_unique<PlayerPhysics::PlayerModelPhysics>();
+
+    PlayerPhysics::PlayerModelPhysicsConfig config;
+    config.enableBoneCollision = true;
+    config.enableSquish = true;
+    config.enableHeadTracking = true;
+
+    // Tune squish parameters for a satisfying "squishy" feel
+    config.squishParams.springStiffness = 25.0f;
+    config.squishParams.dampingRatio = 0.5f;
+    config.squishParams.maxCompression = 0.65f;
+    config.squishParams.influenceRadius = 0.8f;
+
+    // Head tracking parameters
+    config.headTrackingParams.maxYawAngle = 70.0f;
+    config.headTrackingParams.maxPitchAngle = 45.0f;
+    config.headTrackingParams.trackingSpeed = 10.0f;
+    config.headTrackingParams.enableNeckBlend = true;
+    config.headTrackingParams.neckBlendRatio = 0.25f;
+
+    m_modelPhysics->initialize(animator->getSkeleton(), config);
+    m_useModelPhysics = true;
+
+    Logger::info() << "Player model physics initialized (bone collision, squish, head tracking)";
 }
 
 void Player::update(GLFWwindow* window, float deltaTime, World* world, bool processInput) {
@@ -98,6 +135,27 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
     } else {
         // Physics mode: always apply physics, but only process input if allowed
         updatePhysics(window, deltaTime, world, processInput);
+    }
+
+    // Update model physics (head tracking, squish deformation)
+    if (m_useModelPhysics && m_modelPhysics && m_animator) {
+        // Calculate body forward direction (horizontal only)
+        glm::vec3 bodyForward = glm::normalize(glm::vec3(Front.x, 0.0f, Front.z));
+
+        // Update model physics with current state
+        m_modelPhysics->update(deltaTime, world, Position, m_velocity, Front, bodyForward);
+
+        // Update bone transforms from animator
+        if (m_animator->hasSkeletonLoaded()) {
+            const auto& transforms = m_animator->getAllFinalTransforms();
+            glm::mat4 modelTransform = glm::translate(glm::mat4(1.0f), getBodyPosition());
+            // Apply yaw rotation to model
+            modelTransform = glm::rotate(modelTransform, glm::radians(Yaw + 90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            m_modelPhysics->updateBoneTransforms(transforms, modelTransform);
+        }
+
+        // Apply squish and head tracking to animator
+        m_modelPhysics->applyToAnimator(*m_animator);
     }
 }
 
@@ -428,6 +486,29 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
 void Player::resolveCollisions(glm::vec3& movement, World* world) {
     // AABB collision resolution using axis-by-axis approach
     // Position is at eye level, feet are PLAYER_EYE_HEIGHT below
+
+    // ===== Model Physics: Bone Collision Detection =====
+    // Check for collisions using per-bone capsules (for squish effect)
+    // This runs in parallel with AABB collision - bone collision triggers squish,
+    // while AABB collision handles the actual movement resolution
+    if (m_useModelPhysics && m_modelPhysics) {
+        PlayerPhysics::CollisionResult boneCollision;
+        if (m_modelPhysics->getBoneCollision().checkCollision(world, boneCollision)) {
+            // Bone collision detected - trigger squish deformation
+            float impactForce = glm::length(m_velocity);
+            float velocityDot = -glm::dot(glm::normalize(m_velocity + glm::vec3(0.0001f)),
+                                           boneCollision.contactNormal);
+            impactForce *= glm::max(velocityDot, 0.0f);
+
+            if (impactForce > 0.5f) {
+                m_modelPhysics->getSquishSystem().onCollision(
+                    boneCollision.contactPoint,
+                    boneCollision.contactNormal,
+                    impactForce
+                );
+            }
+        }
+    }
 
     // Resolve Y axis FIRST (like Minecraft)
     // This prevents edge clipping by settling vertical position before horizontal movement

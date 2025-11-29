@@ -10,9 +10,13 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <GLFW/glfw3.h>
 #include <string>
+#include <memory>
 
-// Forward declaration
+#include "player_physics/player_model_physics.h"
+
+// Forward declarations
 class World;
+class SkeletonAnimator;
 
 /**
  * @brief First-person player controller with realistic physics simulation
@@ -139,6 +143,40 @@ public:
      */
     bool loadPlayerState(const std::string& worldPath);
 
+    // ========== Player Model Physics ==========
+
+    /**
+     * @brief Initialize the player model physics system
+     * @param animator Skeleton animator for the player model
+     *
+     * Call this after loading the player model and skeleton.
+     * Enables per-bone collision, squish deformation, and head tracking.
+     */
+    void initializeModelPhysics(SkeletonAnimator* animator);
+
+    /**
+     * @brief Get the player model physics system
+     * @return Pointer to physics system, or nullptr if not initialized
+     */
+    PlayerPhysics::PlayerModelPhysics* getModelPhysics() { return m_modelPhysics.get(); }
+    const PlayerPhysics::PlayerModelPhysics* getModelPhysics() const { return m_modelPhysics.get(); }
+
+    /**
+     * @brief Check if model physics is enabled
+     */
+    bool isModelPhysicsEnabled() const { return m_useModelPhysics && m_modelPhysics != nullptr; }
+
+    /**
+     * @brief Enable/disable model physics (per-bone collision vs AABB)
+     */
+    void setModelPhysicsEnabled(bool enabled) { m_useModelPhysics = enabled; }
+
+    /**
+     * @brief Get the skeleton animator
+     */
+    SkeletonAnimator* getAnimator() { return m_animator; }
+    const SkeletonAnimator* getAnimator() const { return m_animator; }
+
     // ========== Public Camera State ==========
     // Public for easy access from rendering and gameplay code
 
@@ -173,6 +211,11 @@ private:
     bool m_f3KeyPressed;     ///< Tracks F3 key state for third-person toggle
     bool m_isSprinting;      ///< True if currently sprinting
     bool m_sprintKeyPressed; ///< Tracks sprint key state for toggle mode (reserved)
+
+    // ========== Player Model Physics ==========
+    std::unique_ptr<PlayerPhysics::PlayerModelPhysics> m_modelPhysics; ///< Model physics system
+    SkeletonAnimator* m_animator;  ///< Skeleton animator (not owned)
+    bool m_useModelPhysics;        ///< Whether to use model physics vs AABB
 
     // ========== Player Dimensions ==========
     // All dimensions in world units (blocks are 1.0 world units)
