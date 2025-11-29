@@ -93,7 +93,12 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
             NoclipMode = !NoclipMode;
             m_nKeyPressed = true;
             Logger::info() << "Noclip mode: " << (NoclipMode ? "ON" : "OFF");
-            if (!NoclipMode) {
+            if (NoclipMode) {
+                // Reset tongue grapple when entering noclip
+                if (m_tongueGrapple) {
+                    m_tongueGrapple->reset();
+                }
+            } else {
                 // Reset velocity when entering physics mode
                 m_velocity = glm::vec3(0.0f);
             }
