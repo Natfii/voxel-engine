@@ -7,6 +7,7 @@
 #include "animation/skeleton_animator.h"
 #include "logger.h"
 
+#include <glm/glm.hpp>
 #include <cmath>
 #include <algorithm>
 
@@ -149,7 +150,7 @@ void SquishSystem::applyToAnimator(SkeletonAnimator& animator) {
     // For now, we can access the skeleton through the animator
     // and apply scales directly to animPosition/animScale
 
-    RuntimeSkeleton* skeleton = const_cast<RuntimeSkeleton*>(animator.getSkeleton());
+    RuntimeSkeleton* skeleton = animator.getSkeleton();
     if (!skeleton) return;
 
     for (size_t i = 0; i < m_boneStates.size() && i < skeleton->bones.size(); ++i) {

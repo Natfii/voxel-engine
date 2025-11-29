@@ -3,6 +3,8 @@
  * @brief Procedural head tracking implementation
  */
 
+#define GLM_ENABLE_EXPERIMENTAL
+
 #include "player_physics/head_tracking.h"
 #include "animation/skeleton_animator.h"
 #include "logger.h"
@@ -154,7 +156,7 @@ void HeadTracking::buildRotations() {
 void HeadTracking::applyToAnimator(SkeletonAnimator& animator) {
     if (!m_skeleton || !m_enabled) return;
 
-    RuntimeSkeleton* skeleton = const_cast<RuntimeSkeleton*>(animator.getSkeleton());
+    RuntimeSkeleton* skeleton = animator.getSkeleton();
     if (!skeleton) return;
 
     // Apply head rotation
