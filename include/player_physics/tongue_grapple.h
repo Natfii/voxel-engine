@@ -42,6 +42,10 @@ struct TongueGrappleConfig {
     float maxRange = 25.0f;             ///< Maximum tongue length (blocks)
     float cooldownTime = 0.5f;          ///< Time before can shoot again (sec)
 
+    // Reel-in
+    float reelSpeed = 8.0f;             ///< How fast rope shortens when reeling (blocks/sec)
+    float minRopeLength = 2.0f;         ///< Minimum rope length when fully reeled
+
     // Swing physics (tuned for fun, bouncy feel)
     float ropeSpring = 12.0f;           ///< Spring constant for rope tension
     float ropeDamping = 0.6f;           ///< Damping ratio (< 1 = bouncy)
@@ -110,6 +114,14 @@ public:
      * @return True if was attached and released
      */
     bool release(glm::vec3& playerVelocity);
+
+    /**
+     * @brief Reel in the rope (shorten it) for momentum gain
+     * @param deltaTime Frame time
+     * @param playerPos Current player position
+     * Call this while holding left-click during swing
+     */
+    void reelIn(float deltaTime, const glm::vec3& playerPos);
 
     // ========== Getters ==========
 

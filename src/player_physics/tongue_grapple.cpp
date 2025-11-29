@@ -135,6 +135,29 @@ bool TongueGrapple::release(glm::vec3& playerVelocity) {
     return true;
 }
 
+void TongueGrapple::reelIn(float deltaTime, const glm::vec3& playerPos) {
+    if (m_state != TongueState::ATTACHED) {
+        return;
+    }
+
+    // Calculate current distance to anchor
+    float currentDist = glm::length(m_anchorPoint - playerPos);
+
+    // Shorten the rope length (smoothly)
+    float reelAmount = m_config.reelSpeed * deltaTime;
+    m_ropeLength -= reelAmount;
+
+    // Clamp to minimum length
+    if (m_ropeLength < m_config.minRopeLength) {
+        m_ropeLength = m_config.minRopeLength;
+    }
+
+    // Also can't reel shorter than current distance (would teleport)
+    if (m_ropeLength < currentDist * 0.5f) {
+        m_ropeLength = currentDist * 0.5f;
+    }
+}
+
 void TongueGrapple::updateShooting(float deltaTime, World* world) {
     // Advance tongue tip
     float travelThisFrame = m_config.tongueSpeed * deltaTime;

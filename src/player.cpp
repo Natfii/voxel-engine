@@ -374,13 +374,22 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
 
     // ========== TONGUE GRAPPLE CONTROLS ==========
     // Press jump while in air (not water) to shoot tongue or release if attached
-    if (m_tongueGrapple && jumpPressEdge && !m_onGround && !m_inLiquid) {
+    // Less strict check: allow if not on ground OR if moving upward (just jumped)
+    bool canUseTongue = !m_onGround || m_velocity.y > 2.0f;  // 2.0 threshold for "just jumped"
+    if (m_tongueGrapple && jumpPressEdge && canUseTongue && !m_inLiquid) {
         if (m_tongueGrapple->isAttached()) {
             // Already swinging - release and keep momentum
             m_tongueGrapple->release(m_velocity);
         } else if (m_tongueGrapple->canShoot()) {
             // Shoot tongue toward camera direction
             m_tongueGrapple->shoot(Position, Front, world);
+        }
+    }
+
+    // Reel in with left mouse button while swinging
+    if (m_tongueGrapple && m_tongueGrapple->isAttached()) {
+        if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+            m_tongueGrapple->reelIn(deltaTime, Position);
         }
     }
 
