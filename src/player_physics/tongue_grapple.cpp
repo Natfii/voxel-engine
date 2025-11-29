@@ -4,7 +4,7 @@
  */
 
 #include "player_physics/tongue_grapple.h"
-#include "animation/runtime_skeleton.h"
+#include "animation/skeleton_animator.h"
 #include "world.h"
 #include "block_system.h"
 #include "logger.h"
