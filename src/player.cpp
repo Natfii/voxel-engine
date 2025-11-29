@@ -25,7 +25,7 @@ Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
       MovementSpeed(5.0f), MouseSensitivity(0.1f), m_firstMouse(true),
       m_velocity(0.0f), m_onGround(false), m_inLiquid(false), m_cameraUnderwater(false),
       m_submergence(0.0f), m_nKeyPressed(false), m_f3KeyPressed(false), NoclipMode(false),
-      ThirdPersonMode(false), ThirdPersonDistance(2.0f), m_isSprinting(false),
+      ThirdPersonMode(false), ThirdPersonDistance(7.5f), m_isSprinting(false),
       m_sprintKeyPressed(false), m_animator(nullptr), m_useModelPhysics(false),
       m_bodyYaw(yaw), m_bodyYawVelocity(0.0f), m_jumpPressedLastFrame(false)
 {
