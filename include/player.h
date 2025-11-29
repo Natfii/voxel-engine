@@ -217,6 +217,16 @@ private:
     SkeletonAnimator* m_animator;  ///< Skeleton animator (not owned)
     bool m_useModelPhysics;        ///< Whether to use model physics vs AABB
 
+    // ========== Body Rotation Lag (inflatable costume style) ==========
+    float m_bodyYaw;               ///< Model's actual facing direction (lags behind camera)
+    float m_bodyYawVelocity;       ///< Angular velocity for spring physics
+
+    // Body lag parameters - tuned for bouncy inflatable feel
+    static constexpr float BODY_LAG_THRESHOLD = 60.0f;       ///< Head angle before body starts rotating
+    static constexpr float BODY_LAG_SPRING = 4.0f;           ///< Spring stiffness (lower = bouncier)
+    static constexpr float BODY_LAG_DAMPING = 0.4f;          ///< Damping (< 0.5 = underdamped/bouncy)
+    static constexpr float BODY_LAG_MAX_SPEED = 400.0f;      ///< Max rotation speed (degrees/second)
+
     // ========== Player Dimensions ==========
     // All dimensions in world units (blocks are 1.0 world units)
     static constexpr float PLAYER_WIDTH = 0.5f;       ///< Player width (0.5 blocks wide, tighter than Minecraft)
@@ -326,4 +336,14 @@ private:
      * @return True if any solid block is detected below feet
      */
     bool checkGroundAtPosition(const glm::vec3& position, World* world);
+
+    /**
+     * @brief Updates body yaw with spring physics for inflatable costume effect
+     *
+     * The body lags behind the camera - head turns first, body follows when
+     * head rotation exceeds threshold. Creates a bouncy, springy feel.
+     *
+     * @param deltaTime Time step for spring physics integration
+     */
+    void updateBodyYawLag(float deltaTime);
 };

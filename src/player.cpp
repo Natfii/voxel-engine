@@ -26,7 +26,8 @@ Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
       m_velocity(0.0f), m_onGround(false), m_inLiquid(false), m_cameraUnderwater(false),
       m_submergence(0.0f), m_nKeyPressed(false), m_f3KeyPressed(false), NoclipMode(false),
       ThirdPersonMode(false), ThirdPersonDistance(5.5f), m_isSprinting(false),
-      m_sprintKeyPressed(false), m_animator(nullptr), m_useModelPhysics(false)
+      m_sprintKeyPressed(false), m_animator(nullptr), m_useModelPhysics(false),
+      m_bodyYaw(yaw), m_bodyYawVelocity(0.0f)
 {
     updateVectors();
 }
@@ -130,6 +131,9 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
         updateVectors();
     }
 
+    // Update body yaw lag (inflatable costume effect - body lags behind head)
+    updateBodyYawLag(deltaTime);
+
     // Update movement based on mode
     if (NoclipMode) {
         // Noclip mode only works with input
@@ -143,18 +147,26 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
 
     // Update model physics (head tracking, squish deformation)
     if (m_useModelPhysics && m_modelPhysics && m_animator) {
-        // Calculate body forward direction (horizontal only)
-        glm::vec3 bodyForward = glm::normalize(glm::vec3(Front.x, 0.0f, Front.z));
+        // Calculate body forward direction from body yaw (not camera yaw!)
+        // Body lags behind camera for inflatable costume effect
+        float bodyYawRad = glm::radians(m_bodyYaw);
+        glm::vec3 bodyForward = glm::normalize(glm::vec3(
+            std::cos(bodyYawRad),
+            0.0f,
+            std::sin(bodyYawRad)
+        ));
 
         // Update model physics with current state
+        // Pass camera Front for head tracking, but body forward for body orientation
         m_modelPhysics->update(deltaTime, world, Position, m_velocity, Front, bodyForward);
 
         // Update bone transforms from animator
         if (m_animator->hasSkeletonLoaded()) {
             const auto& transforms = m_animator->getAllFinalTransforms();
             glm::mat4 modelTransform = glm::translate(glm::mat4(1.0f), getBodyPosition());
-            // Apply yaw rotation to model
-            modelTransform = glm::rotate(modelTransform, glm::radians(Yaw + 90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            // Apply BODY yaw rotation to model (not camera yaw!)
+            // Body rotates independently with spring physics lag
+            modelTransform = glm::rotate(modelTransform, glm::radians(m_bodyYaw + 90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
             m_modelPhysics->updateBoneTransforms(transforms, modelTransform);
         }
 
@@ -989,6 +1001,50 @@ void Player::updateVectors() {
 
     Right = glm::normalize(glm::cross(Front, WorldUp));
     Up    = glm::normalize(glm::cross(Right, Front));
+}
+
+void Player::updateBodyYawLag(float deltaTime) {
+    // Inflatable T-Rex costume effect: body lags behind camera
+    // Head turns immediately, body follows with spring physics when head exceeds threshold
+
+    // Calculate angle difference between camera (Yaw) and body (m_bodyYaw)
+    float yawDiff = Yaw - m_bodyYaw;
+
+    // Normalize to [-180, 180] range
+    while (yawDiff > 180.0f) yawDiff -= 360.0f;
+    while (yawDiff < -180.0f) yawDiff += 360.0f;
+
+    // Check if head has turned beyond threshold
+    bool shouldRotateBody = std::abs(yawDiff) > BODY_LAG_THRESHOLD;
+
+    if (shouldRotateBody) {
+        // Spring physics: body catches up to camera with bouncy motion
+        // F = k * displacement - c * velocity (underdamped for bounce)
+        float springForce = BODY_LAG_SPRING * yawDiff;
+        float dampingForce = BODY_LAG_DAMPING * m_bodyYawVelocity;
+        float angularAccel = springForce - dampingForce;
+
+        m_bodyYawVelocity += angularAccel * deltaTime;
+
+        // Clamp velocity for stability
+        m_bodyYawVelocity = glm::clamp(m_bodyYawVelocity, -BODY_LAG_MAX_SPEED, BODY_LAG_MAX_SPEED);
+    } else {
+        // Head is within threshold - apply gentle return spring and decay velocity
+        // This creates a "settling" motion when returning to center
+        float returnForce = BODY_LAG_SPRING * 0.3f * yawDiff;
+        float returnDamping = BODY_LAG_DAMPING * 1.5f * m_bodyYawVelocity;
+        m_bodyYawVelocity += (returnForce - returnDamping) * deltaTime;
+
+        // Decay velocity when not actively turning
+        m_bodyYawVelocity *= std::pow(0.92f, deltaTime * 60.0f);
+    }
+
+    // Update body yaw
+    m_bodyYaw += m_bodyYawVelocity * deltaTime;
+
+    // Normalize body yaw to [0, 360)
+    while (m_bodyYaw >= 360.0f) m_bodyYaw -= 360.0f;
+    while (m_bodyYaw < 0.0f) m_bodyYaw += 360.0f;
 }
 
 void Player::resetMouse() {
