@@ -11,6 +11,7 @@
 #include "logger.h"
 #include "terrain_constants.h"
 #include "key_bindings.h"
+#include "animation/skeleton_animator.h"
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -24,10 +25,63 @@ Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
       MovementSpeed(5.0f), MouseSensitivity(0.1f), m_firstMouse(true),
       m_velocity(0.0f), m_onGround(false), m_inLiquid(false), m_cameraUnderwater(false),
       m_submergence(0.0f), m_nKeyPressed(false), m_f3KeyPressed(false), NoclipMode(false),
-      ThirdPersonMode(false), ThirdPersonDistance(5.5f), m_isSprinting(false),
-      m_sprintKeyPressed(false)
+      ThirdPersonMode(false), ThirdPersonDistance(7.5f), m_isSprinting(false),
+      m_sprintKeyPressed(false), m_animator(nullptr), m_useModelPhysics(false),
+      m_bodyYaw(yaw), m_bodyYawVelocity(0.0f), m_jumpPressedLastFrame(false)
 {
     updateVectors();
+
+    // Initialize tongue grapple system
+    m_tongueGrapple = std::make_unique<PlayerPhysics::TongueGrapple>();
+    PlayerPhysics::TongueGrappleConfig tongueConfig;
+    tongueConfig.tongueSpeed = 200.0f;    // Very fast tongue shot
+    tongueConfig.maxRange = 50.0f;        // 50 blocks max range
+    tongueConfig.cooldownTime = 0.0f;     // No cooldown - can instantly re-shoot
+    tongueConfig.ropeSpring = 10.0f;      // Springy rope
+    tongueConfig.ropeDamping = 0.7f;      // Bouncy but controlled
+    tongueConfig.releaseBoost = 5.0f;     // Nice upward boost on release
+    tongueConfig.maxSwingSpeed = 40.0f;   // Fast swinging
+    m_tongueGrapple->initialize(nullptr, tongueConfig);  // No skeleton needed yet
+}
+
+void Player::initializeModelPhysics(SkeletonAnimator* animator) {
+    m_animator = animator;
+
+    if (!animator || !animator->hasSkeletonLoaded()) {
+        Logger::warning() << "Player::initializeModelPhysics: No skeleton loaded";
+        m_useModelPhysics = false;
+        return;
+    }
+
+    // Create and initialize model physics
+    m_modelPhysics = std::make_unique<PlayerPhysics::PlayerModelPhysics>();
+
+    PlayerPhysics::PlayerModelPhysicsConfig config;
+    config.enableBoneCollision = true;
+    config.enableSquish = true;
+    config.enableHeadTracking = true;
+
+    // Tune squish parameters for exaggerated "cartoon squishy" feel
+    config.squishParams.springStiffness = 15.0f;   // Lower = slower recovery (more visible)
+    config.squishParams.dampingRatio = 0.3f;       // Lower = more bouncy
+    config.squishParams.maxCompression = 0.4f;     // More compression allowed (was 0.65)
+    config.squishParams.maxExpansion = 1.8f;       // More expansion for volume preservation
+    config.squishParams.influenceRadius = 1.5f;    // Larger radius for more bones affected
+    config.squishParams.impactMultiplier = 0.5f;   // Higher = more squish per impact
+    config.squishParams.volumePreservation = 0.8f; // Higher = bulge more when compressed
+    config.squishParams.recoverySpeed = 2.0f;      // Slower recovery = more visible
+
+    // Head tracking parameters
+    config.headTrackingParams.maxYawAngle = 70.0f;
+    config.headTrackingParams.maxPitchAngle = 45.0f;
+    config.headTrackingParams.trackingSpeed = 10.0f;
+    config.headTrackingParams.enableNeckBlend = true;
+    config.headTrackingParams.neckBlendRatio = 0.25f;
+
+    m_modelPhysics->initialize(animator->getSkeleton(), config);
+    m_useModelPhysics = true;
+
+    Logger::info() << "Player model physics initialized (bone collision, squish, head tracking)";
 }
 
 void Player::update(GLFWwindow* window, float deltaTime, World* world, bool processInput) {
@@ -39,7 +93,12 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
             NoclipMode = !NoclipMode;
             m_nKeyPressed = true;
             Logger::info() << "Noclip mode: " << (NoclipMode ? "ON" : "OFF");
-            if (!NoclipMode) {
+            if (NoclipMode) {
+                // Reset tongue grapple when entering noclip
+                if (m_tongueGrapple) {
+                    m_tongueGrapple->reset();
+                }
+            } else {
                 // Reset velocity when entering physics mode
                 m_velocity = glm::vec3(0.0f);
             }
@@ -89,6 +148,9 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
         updateVectors();
     }
 
+    // Update body yaw lag (inflatable costume effect - body lags behind head)
+    updateBodyYawLag(deltaTime);
+
     // Update movement based on mode
     if (NoclipMode) {
         // Noclip mode only works with input
@@ -98,6 +160,35 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
     } else {
         // Physics mode: always apply physics, but only process input if allowed
         updatePhysics(window, deltaTime, world, processInput);
+    }
+
+    // Update model physics (head tracking, squish deformation)
+    if (m_useModelPhysics && m_modelPhysics && m_animator) {
+        // Calculate body forward direction from body yaw (not camera yaw!)
+        // Body lags behind camera for inflatable costume effect
+        float bodyYawRad = glm::radians(m_bodyYaw);
+        glm::vec3 bodyForward = glm::normalize(glm::vec3(
+            std::cos(bodyYawRad),
+            0.0f,
+            std::sin(bodyYawRad)
+        ));
+
+        // Update model physics with current state
+        // Pass camera Front for head tracking, but body forward for body orientation
+        m_modelPhysics->update(deltaTime, world, Position, m_velocity, Front, bodyForward);
+
+        // Update bone transforms from animator
+        if (m_animator->hasSkeletonLoaded()) {
+            const auto& transforms = m_animator->getAllFinalTransforms();
+            glm::mat4 modelTransform = glm::translate(glm::mat4(1.0f), getBodyPosition());
+            // Apply BODY yaw rotation to model (not camera yaw!)
+            // Body rotates independently with spring physics lag
+            modelTransform = glm::rotate(modelTransform, glm::radians(m_bodyYaw + 90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            m_modelPhysics->updateBoneTransforms(transforms, modelTransform);
+        }
+
+        // NOTE: applyToAnimator is now called from main.cpp AFTER playerAnimator.update()
+        // to prevent animation from overwriting squish scales
     }
 }
 
@@ -265,7 +356,11 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     glm::vec3 horizontalVel = wishDir * moveSpeed;
 
     // Jumping (only if processing input)
-    if (processInput && glfwGetKey(window, keys.jump) == GLFW_PRESS) {
+    bool jumpPressed = processInput && glfwGetKey(window, keys.jump) == GLFW_PRESS;
+    bool jumpPressEdge = jumpPressed && !m_jumpPressedLastFrame;  // Just pressed this frame
+    m_jumpPressedLastFrame = jumpPressed;
+
+    if (jumpPressed) {
         if (m_inLiquid) {
             // Jump strength scales with submergence
             // Less submerged = stronger jump (can exit water easier)
@@ -275,6 +370,45 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
             // Jump if on ground
             m_velocity.y = JUMP_VELOCITY;
         }
+    }
+
+    // ========== TONGUE GRAPPLE CONTROLS ==========
+    // Hold jump while in air to shoot and maintain tongue grapple
+    // Release jump to detach - can instantly shoot again
+    bool canUseTongue = !m_onGround && !m_inLiquid;
+    if (m_tongueGrapple && canUseTongue) {
+        if (jumpPressed) {
+            // Holding jump in air - shoot tongue if not already active
+            if (!m_tongueGrapple->isAttached() && !m_tongueGrapple->isShooting()) {
+                m_tongueGrapple->shoot(Position, Front, world);
+            }
+        } else {
+            // Released jump - detach tongue if attached
+            if (m_tongueGrapple->isAttached()) {
+                m_tongueGrapple->release(m_velocity);
+            } else if (m_tongueGrapple->isShooting()) {
+                // Cancel shooting tongue if released before it hits
+                m_tongueGrapple->reset();
+            }
+        }
+    } else if (m_tongueGrapple && !canUseTongue) {
+        // On ground or in water - reset tongue state
+        if (m_tongueGrapple->isAttached() || m_tongueGrapple->isShooting()) {
+            m_tongueGrapple->release(m_velocity);
+        }
+    }
+
+    // Reel in with left mouse button while swinging
+    if (m_tongueGrapple && m_tongueGrapple->isAttached()) {
+        if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+            m_tongueGrapple->reelIn(deltaTime, Position);
+        }
+    }
+
+    // Update tongue physics (swing forces, shooting progress, cooldown)
+    if (m_tongueGrapple) {
+        m_tongueGrapple->update(deltaTime, world, Position, m_velocity,
+                                 Front, GRAVITY, m_onGround, m_inLiquid);
     }
 
     // Water physics overrides ground detection
@@ -429,6 +563,31 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
     // AABB collision resolution using axis-by-axis approach
     // Position is at eye level, feet are PLAYER_EYE_HEIGHT below
 
+    // ===== Model Physics: Bone Collision Detection =====
+    // Check for collisions using per-bone capsules (for squish effect)
+    // This runs in parallel with AABB collision - bone collision triggers squish,
+    // while AABB collision handles the actual movement resolution
+    if (m_useModelPhysics && m_modelPhysics) {
+        PlayerPhysics::CollisionResult boneCollision;
+        if (m_modelPhysics->getBoneCollision().checkCollision(world, boneCollision)) {
+            // Bone collision detected - trigger squish deformation
+            float impactForce = glm::length(m_velocity);
+            float velocityDot = -glm::dot(glm::normalize(m_velocity + glm::vec3(0.0001f)),
+                                           boneCollision.contactNormal);
+            impactForce *= glm::max(velocityDot, 0.0f);
+
+            // Lower threshold for more responsive squish (was 0.5f)
+            if (impactForce > 0.1f) {
+                // Amplify impact force for more visible effect
+                m_modelPhysics->getSquishSystem().onCollision(
+                    boneCollision.contactPoint,
+                    boneCollision.contactNormal,
+                    impactForce * 3.0f  // Amplify for visibility
+                );
+            }
+        }
+    }
+
     // Resolve Y axis FIRST (like Minecraft)
     // This prevents edge clipping by settling vertical position before horizontal movement
     // Axis resolution order: Y → X → Z
@@ -512,13 +671,47 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
         }
     }
 
+    // ===== HEAD CEILING CHECK =====
+    // Before allowing horizontal movement, check if head is touching ceiling
+    // This prevents walking under low ceilings and clipping head into blocks
+    bool headTouchingCeiling = false;
+    {
+        glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+        float halfWidth = PLAYER_WIDTH / 2.0f;
+
+        // Check the head level (top of player hitbox)
+        float headY = feetPos.y + PLAYER_HEIGHT;
+        int headBlockY = static_cast<int>(std::floor(headY));
+
+        // Check blocks at head height in all 4 corners + center
+        const glm::vec2 checkPoints[5] = {
+            {0.0f, 0.0f},           // center
+            {-halfWidth, -halfWidth}, // corners
+            { halfWidth, -halfWidth},
+            {-halfWidth,  halfWidth},
+            { halfWidth,  halfWidth}
+        };
+
+        for (const auto& pt : checkPoints) {
+            int blockID = world->getBlockAt(feetPos.x + pt.x, static_cast<float>(headBlockY), feetPos.z + pt.y);
+            if (blockID > 0) {
+                const auto& blockDef = BlockRegistry::instance().get(blockID);
+                if (!blockDef.isLiquid) {
+                    headTouchingCeiling = true;
+                    break;
+                }
+            }
+        }
+    }
+
     // ===== Test X axis (horizontal movement) =====
     // OPTIMIZATION: Skip collision check if movement is negligible (saves ~33% of checks when standing still)
     if (std::abs(movement.x) > 0.001f) {
         testPos = Position + glm::vec3(movement.x, 0.0f, 0.0f);
 
         // Use horizontal collision check (from step height up) to allow ledge walking
-        if (checkHorizontalCollision(testPos, world)) {
+        // Also block movement if head is touching ceiling (prevents clipping under low ceilings)
+        if (checkHorizontalCollision(testPos, world) || headTouchingCeiling) {
             // Collision detected - stop horizontal movement
             movement.x = 0.0f;
             m_velocity.x = 0.0f;
@@ -531,7 +724,8 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
         testPos = Position + glm::vec3(0.0f, 0.0f, movement.z);
 
         // Use horizontal collision check (from step height up) to allow ledge walking
-        if (checkHorizontalCollision(testPos, world)) {
+        // Also block movement if head is touching ceiling (prevents clipping under low ceilings)
+        if (checkHorizontalCollision(testPos, world) || headTouchingCeiling) {
             // Collision detected - stop horizontal movement
             movement.z = 0.0f;
             m_velocity.z = 0.0f;
@@ -902,6 +1096,50 @@ void Player::updateVectors() {
 
     Right = glm::normalize(glm::cross(Front, WorldUp));
     Up    = glm::normalize(glm::cross(Right, Front));
+}
+
+void Player::updateBodyYawLag(float deltaTime) {
+    // Inflatable T-Rex costume effect: body lags behind camera
+    // Head turns immediately, body follows with spring physics when head exceeds threshold
+
+    // Calculate angle difference between camera (Yaw) and body (m_bodyYaw)
+    float yawDiff = Yaw - m_bodyYaw;
+
+    // Normalize to [-180, 180] range
+    while (yawDiff > 180.0f) yawDiff -= 360.0f;
+    while (yawDiff < -180.0f) yawDiff += 360.0f;
+
+    // Check if head has turned beyond threshold
+    bool shouldRotateBody = std::abs(yawDiff) > BODY_LAG_THRESHOLD;
+
+    if (shouldRotateBody) {
+        // Spring physics: body catches up to camera with bouncy motion
+        // F = k * displacement - c * velocity (underdamped for bounce)
+        float springForce = BODY_LAG_SPRING * yawDiff;
+        float dampingForce = BODY_LAG_DAMPING * m_bodyYawVelocity;
+        float angularAccel = springForce - dampingForce;
+
+        m_bodyYawVelocity += angularAccel * deltaTime;
+
+        // Clamp velocity for stability
+        m_bodyYawVelocity = glm::clamp(m_bodyYawVelocity, -BODY_LAG_MAX_SPEED, BODY_LAG_MAX_SPEED);
+    } else {
+        // Head is within threshold - apply gentle return spring and decay velocity
+        // This creates a "settling" motion when returning to center
+        float returnForce = BODY_LAG_SPRING * 0.3f * yawDiff;
+        float returnDamping = BODY_LAG_DAMPING * 1.5f * m_bodyYawVelocity;
+        m_bodyYawVelocity += (returnForce - returnDamping) * deltaTime;
+
+        // Decay velocity when not actively turning
+        m_bodyYawVelocity *= std::pow(0.92f, deltaTime * 60.0f);
+    }
+
+    // Update body yaw
+    m_bodyYaw += m_bodyYawVelocity * deltaTime;
+
+    // Normalize body yaw to [0, 360)
+    while (m_bodyYaw >= 360.0f) m_bodyYaw -= 360.0f;
+    while (m_bodyYaw < 0.0f) m_bodyYaw += 360.0f;
 }
 
 void Player::resetMouse() {

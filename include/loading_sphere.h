@@ -89,6 +89,7 @@ private:
     MapPreview* m_mapPreview = nullptr;
     bool m_initialized = false;
     bool m_hasMapTexture = false;
+    bool m_triedCreatingDescriptor = false;  // Reset when setMapPreview() called
 
     // Mesh data
     std::vector<Vertex> m_vertices;

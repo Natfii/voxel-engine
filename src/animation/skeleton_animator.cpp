@@ -353,18 +353,85 @@ void SkeletonAnimator::computeProceduralPose(float time) {
 void SkeletonAnimator::computeIdlePose(float time) {
     if (!m_skeleton) return;
 
-    // Subtle breathing motion
-    float breathCycle = std::sin(time * 2.0f) * 0.02f;
+    // ========== INFLATABLE T-REX COSTUME WOBBLE ==========
+    // Multiple sine waves at different frequencies for organic, bouncy motion
+    // Like an air-filled costume constantly shifting and wobbling
 
-    for (auto& bone : m_skeleton->bones) {
+    // Primary breathing/sloshing motion (slow, big)
+    float breathMain = std::sin(time * 1.3f) * 0.025f;
+    float breathSecondary = std::sin(time * 2.1f + 0.5f) * 0.012f;
+
+    // Side-to-side sway (makes it look inflated and unstable)
+    float sideSwayBody = std::sin(time * 1.7f) * 0.015f;
+    float sideSwayHead = std::sin(time * 2.3f + 1.0f) * 0.02f;
+
+    // Subtle forward-back wobble
+    float forwardWobble = std::sin(time * 1.9f + 0.3f) * 0.01f;
+
+    // Bouncy scale jiggle (like the costume is full of air)
+    float scaleJiggle = std::sin(time * 2.5f) * 0.015f;
+
+    // Leg bounce (like standing on an air mattress)
+    float legBounce = std::abs(std::sin(time * 1.8f)) * 0.01f;
+
+    for (size_t i = 0; i < m_skeleton->bones.size(); ++i) {
+        auto& bone = m_skeleton->bones[i];
+
+        // Phase offset per bone for asynchronous wobble (more natural)
+        float phase = static_cast<float>(i) * 0.2f;
+
         bone.animPosition = bone.position;
         bone.animRotation = bone.rotation;
         bone.animScale = bone.scale;
 
-        // Apply subtle motion to spine/chest bones
-        if (bone.name.find("spine") != std::string::npos ||
-            bone.name.find("chest") != std::string::npos) {
-            bone.animPosition.y += breathCycle;
+        // Apply wobble based on bone type
+        if (bone.name.find("spine") != std::string::npos) {
+            // Spine gets breathing and sway
+            bone.animPosition.y += breathMain + breathSecondary;
+            bone.animPosition.x += sideSwayBody * std::sin(phase);
+            bone.animPosition.z += forwardWobble;
+
+            // Slight scale pulse (inflating/deflating)
+            bone.animScale += glm::vec3(scaleJiggle * 0.5f);
+
+            // Subtle rotation wobble
+            float rollWobble = std::sin(time * 2.0f + phase) * glm::radians(1.0f);
+            bone.animRotation = bone.rotation * glm::angleAxis(rollWobble, glm::vec3(0, 0, 1));
+        }
+        else if (bone.name == "head") {
+            // Head wobbles independently (like a bobblehead)
+            bone.animPosition.x += sideSwayHead;
+            bone.animPosition.z += forwardWobble * 1.5f;
+
+            // Head tilt wobble
+            float headTilt = std::sin(time * 2.2f) * glm::radians(2.0f);
+            float headNod = std::sin(time * 1.8f + 0.5f) * glm::radians(1.5f);
+            bone.animRotation = bone.rotation *
+                glm::angleAxis(headTilt, glm::vec3(0, 0, 1)) *
+                glm::angleAxis(headNod, glm::vec3(1, 0, 0));
+        }
+        else if (bone.name.find("leg") != std::string::npos) {
+            // Legs bounce and sway
+            bone.animPosition.y += legBounce;
+
+            // Slight leg sway
+            float legSway = std::sin(time * 2.0f + phase) * glm::radians(1.5f);
+            bone.animRotation = bone.rotation * glm::angleAxis(legSway, glm::vec3(0, 0, 1));
+        }
+        else if (bone.name.find("arm") != std::string::npos) {
+            // Arms sway loosely
+            float armSway = std::sin(time * 1.6f + phase) * glm::radians(3.0f);
+            float armBob = std::sin(time * 2.4f + phase) * 0.01f;
+            bone.animPosition.y += armBob;
+            bone.animRotation = bone.rotation * glm::angleAxis(armSway, glm::vec3(0, 0, 1));
+        }
+        else if (bone.name.find("tail") != std::string::npos) {
+            // Tail wags and wobbles (very bouncy!)
+            float tailWag = std::sin(time * 3.0f + phase * 2.0f) * glm::radians(8.0f);
+            float tailBob = std::sin(time * 2.5f) * glm::radians(4.0f);
+            bone.animRotation = bone.rotation *
+                glm::angleAxis(tailWag, glm::vec3(0, 1, 0)) *
+                glm::angleAxis(tailBob, glm::vec3(1, 0, 0));
         }
     }
 }

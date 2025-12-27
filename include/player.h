@@ -10,9 +10,14 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <GLFW/glfw3.h>
 #include <string>
+#include <memory>
 
-// Forward declaration
+#include "player_physics/player_model_physics.h"
+#include "player_physics/tongue_grapple.h"
+
+// Forward declarations
 class World;
+class SkeletonAnimator;
 
 /**
  * @brief First-person player controller with realistic physics simulation
@@ -139,6 +144,58 @@ public:
      */
     bool loadPlayerState(const std::string& worldPath);
 
+    // ========== Player Model Physics ==========
+
+    /**
+     * @brief Initialize the player model physics system
+     * @param animator Skeleton animator for the player model
+     *
+     * Call this after loading the player model and skeleton.
+     * Enables per-bone collision, squish deformation, and head tracking.
+     */
+    void initializeModelPhysics(SkeletonAnimator* animator);
+
+    /**
+     * @brief Get the player model physics system
+     * @return Pointer to physics system, or nullptr if not initialized
+     */
+    PlayerPhysics::PlayerModelPhysics* getModelPhysics() { return m_modelPhysics.get(); }
+    const PlayerPhysics::PlayerModelPhysics* getModelPhysics() const { return m_modelPhysics.get(); }
+
+    /**
+     * @brief Check if model physics is enabled
+     */
+    bool isModelPhysicsEnabled() const { return m_useModelPhysics && m_modelPhysics != nullptr; }
+
+    /**
+     * @brief Enable/disable model physics (per-bone collision vs AABB)
+     */
+    void setModelPhysicsEnabled(bool enabled) { m_useModelPhysics = enabled; }
+
+    /**
+     * @brief Get the skeleton animator
+     */
+    SkeletonAnimator* getAnimator() { return m_animator; }
+    const SkeletonAnimator* getAnimator() const { return m_animator; }
+
+    // ========== Tongue Grapple System ==========
+
+    /**
+     * @brief Get the tongue grapple system
+     */
+    PlayerPhysics::TongueGrapple* getTongueGrapple() { return m_tongueGrapple.get(); }
+    const PlayerPhysics::TongueGrapple* getTongueGrapple() const { return m_tongueGrapple.get(); }
+
+    /**
+     * @brief Check if tongue is currently attached (swinging)
+     */
+    bool isTongueAttached() const { return m_tongueGrapple && m_tongueGrapple->isAttached(); }
+
+    /**
+     * @brief Check if tongue is shooting
+     */
+    bool isTongueShooting() const { return m_tongueGrapple && m_tongueGrapple->isShooting(); }
+
     // ========== Public Camera State ==========
     // Public for easy access from rendering and gameplay code
 
@@ -174,11 +231,31 @@ private:
     bool m_isSprinting;      ///< True if currently sprinting
     bool m_sprintKeyPressed; ///< Tracks sprint key state for toggle mode (reserved)
 
+    // ========== Player Model Physics ==========
+    std::unique_ptr<PlayerPhysics::PlayerModelPhysics> m_modelPhysics; ///< Model physics system
+    SkeletonAnimator* m_animator;  ///< Skeleton animator (not owned)
+    bool m_useModelPhysics;        ///< Whether to use model physics vs AABB
+
+    // ========== Body Rotation Lag (inflatable costume style) ==========
+    float m_bodyYaw;               ///< Model's actual facing direction (lags behind camera)
+    float m_bodyYawVelocity;       ///< Angular velocity for spring physics
+
+    // Body lag parameters - tuned for bouncy inflatable feel
+    static constexpr float BODY_LAG_THRESHOLD = 60.0f;       ///< Head angle before body starts rotating
+    static constexpr float BODY_LAG_SPRING = 4.0f;           ///< Spring stiffness (lower = bouncier)
+    static constexpr float BODY_LAG_DAMPING = 0.4f;          ///< Damping (< 0.5 = underdamped/bouncy)
+    static constexpr float BODY_LAG_MAX_SPEED = 400.0f;      ///< Max rotation speed (degrees/second)
+
+    // ========== Tongue Grapple System ==========
+    std::unique_ptr<PlayerPhysics::TongueGrapple> m_tongueGrapple;  ///< Tongue grappling system
+    bool m_jumpPressedLastFrame;           ///< For detecting jump press edge
+
     // ========== Player Dimensions ==========
     // All dimensions in world units (blocks are 1.0 world units)
-    static constexpr float PLAYER_WIDTH = 0.5f;       ///< Player width (0.5 blocks wide, tighter than Minecraft)
-    static constexpr float PLAYER_HEIGHT = 1.8f;      ///< Player height (1.8 blocks tall, like Minecraft)
-    static constexpr float PLAYER_EYE_HEIGHT = 1.6f;  ///< Eye height from feet (1.6 blocks)
+    // Gecko model is ~1.25 blocks tall with head at 1.0 block
+    static constexpr float PLAYER_WIDTH = 0.5f;       ///< Player width (0.5 blocks wide)
+    static constexpr float PLAYER_HEIGHT = 1.5f;      ///< Player height (1.5 blocks tall, matches gecko + margin)
+    static constexpr float PLAYER_EYE_HEIGHT = 1.2f;  ///< Eye height from feet (1.2 blocks, near gecko head)
 
     // ========== Physics Constants ==========
     static constexpr float GRAVITY = 32.0f;            ///< Gravity acceleration (32 blocks/s²)
@@ -283,4 +360,14 @@ private:
      * @return True if any solid block is detected below feet
      */
     bool checkGroundAtPosition(const glm::vec3& position, World* world);
+
+    /**
+     * @brief Updates body yaw with spring physics for inflatable costume effect
+     *
+     * The body lags behind the camera - head turns first, body follows when
+     * head rotation exceeds threshold. Creates a bouncy, springy feel.
+     *
+     * @param deltaTime Time step for spring physics integration
+     */
+    void updateBodyYawLag(float deltaTime);
 };

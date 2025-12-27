@@ -170,9 +170,14 @@ public:
     bool hasSkeletonLoaded() const { return m_skeleton != nullptr; }
 
     /**
-     * @brief Get loaded skeleton
+     * @brief Get loaded skeleton (const)
      */
     const RuntimeSkeleton* getSkeleton() const { return m_skeleton.get(); }
+
+    /**
+     * @brief Get loaded skeleton (non-const for physics modifications)
+     */
+    RuntimeSkeleton* getSkeleton() { return m_skeleton.get(); }
 
     /**
      * @brief Get bone count
@@ -200,6 +205,14 @@ public:
      * @param direction Normalized direction vector
      */
     void setFacingDirection(const glm::vec3& direction) { m_facingDirection = direction; }
+
+    /**
+     * @brief Recompute bone transforms after external modifications
+     *
+     * Call this after modifying bone animPosition/animRotation/animScale externally
+     * (e.g., from physics system squish deformation) to update the final transforms.
+     */
+    void recomputeBoneTransforms() { updateBoneTransforms(); }
 
 private:
     void updateBoneTransforms();
