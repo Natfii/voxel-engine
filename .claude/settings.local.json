@@ -67,7 +67,11 @@
       "Bash(\"C:\\VulkanSDK\\1.4.328.1\\Bin\\glslc.exe\" mesh.frag -o mesh_frag.spv)",
       "Bash(powershell -Command \"(Get-Item ''src/mesh/mesh_renderer.cpp'').LastWriteTime = Get-Date\")",
       "Bash(powershell -Command:*)",
-      "Bash(gh pr view:*)"
+      "Bash(gh pr view:*)",
+      "Bash(wc:*)",
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__plugin_context7_context7__get-library-docs",
+      "Bash(mkdir:*)"
     ],
     "deny": [],
     "ask": []

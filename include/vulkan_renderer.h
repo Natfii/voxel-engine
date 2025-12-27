@@ -19,6 +19,17 @@
 #include <array>
 #include <deque>
 #include <mutex>
+#include <memory>
+
+// Manager includes (for types they define)
+#include "vulkan/vulkan_context.h"  // For QueueFamilyIndices
+
+// Forward declarations
+class BufferManager;
+class DescriptorManager;
+class SwapchainManager;
+class TextureManager;
+class SkyboxRenderer;
 
 // Forward declare Vertex (defined in chunk.h)
 struct Vertex;
@@ -41,34 +52,7 @@ struct UniformBufferObject {
     alignas(16) glm::vec4 atlasInfo;     ///< Texture atlas info (.x=width in cells, .y=height, .z=cell size, .w=unused)
 };
 
-/**
- * @brief Queue family indices for Vulkan device
- *
- * Identifies which queue families support graphics, presentation, and transfer.
- * PERFORMANCE OPTIMIZATION (2025-11-24): Added dedicated transfer queue for async uploads
- */
-struct QueueFamilyIndices {
-    std::optional<uint32_t> graphicsFamily;  ///< Queue family supporting graphics ops
-    std::optional<uint32_t> presentFamily;   ///< Queue family supporting presentation
-    std::optional<uint32_t> transferFamily;  ///< Queue family for async transfers (optional)
-
-    /**
-     * @brief Checks if all required queue families are available
-     * @return True if both graphics and present queues exist
-     * Note: Transfer queue is optional - will fall back to graphics queue if unavailable
-     */
-    bool isComplete() {
-        return graphicsFamily.has_value() && presentFamily.has_value();
-    }
-
-    /**
-     * @brief Checks if a dedicated transfer queue is available
-     * @return True if transfer queue exists and differs from graphics queue
-     */
-    bool hasDedicatedTransferQueue() {
-        return transferFamily.has_value() && transferFamily.value() != graphicsFamily.value();
-    }
-};
+// QueueFamilyIndices is now defined in vulkan/vulkan_context.h
 
 /**
  * @brief Swapchain capabilities and supported formats
@@ -902,7 +886,9 @@ private:
     void createTransparentPipeline();
     void createWireframePipeline();
     void createLinePipeline();
+    /* OLD: Skybox pipeline now created by SkyboxRenderer
     void createSkyboxPipeline();
+    */
     void createMeshPipeline();
     void createSpherePipeline();
     void createFramebuffers();
@@ -913,16 +899,18 @@ private:
     void createDescriptorSets();
     void createCommandBuffers();
     void createSyncObjects();
+    /* OLD: Skybox resources now created by SkyboxRenderer
     void createSkybox();
     void createProceduralCubeMap();
     void createNightCubeMap();
+    */
 
     // Helper functions
     bool checkValidationLayerSupport();
     std::vector<const char*> getRequiredExtensions();
     void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo);
     bool isDeviceSuitable(VkPhysicalDevice device);
-    QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
+    // findQueueFamilies() now in VulkanContext as static method
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
     SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
@@ -968,8 +956,15 @@ private:
     // Queue family indices (needed for queue ownership transfer barriers)
     uint32_t m_graphicsQueueFamily = 0;
     uint32_t m_transferQueueFamily = 0;
+    uint32_t m_presentQueueFamily = 0;
 
-    // Swapchain
+    // Swapchain manager (encapsulates swapchain creation and management)
+    std::unique_ptr<SwapchainManager> m_swapchainManager;
+
+    // Texture manager (centralized texture operations)
+    std::unique_ptr<TextureManager> m_textureManager;
+
+    // Swapchain (legacy members - kept for compatibility, populated from SwapchainManager)
     VkSwapchainKHR m_swapChain;
     std::vector<VkImage> m_swapChainImages;
     VkFormat m_swapChainImageFormat;
@@ -985,7 +980,9 @@ private:
     VkPipeline m_wireframePipeline;
     VkPipeline m_linePipeline;
     VkPipeline m_transparentPipeline;  // Same as graphics pipeline but with depth writes disabled
+    /* OLD: Skybox pipeline now managed by SkyboxRenderer
     VkPipeline m_skyboxPipeline;
+    */
 
     // Mesh rendering pipeline (separate from voxel pipeline)
     VkDescriptorSetLayout m_meshDescriptorSetLayout;      // Set 1: textures
@@ -1021,6 +1018,11 @@ private:
     VkImageView m_defaultTextureView;
     VkSampler m_defaultTextureSampler;
 
+    // ========== SkyboxRenderer (2025-12-27) ==========
+    // Encapsulates skybox rendering with day/night cycle support
+    std::unique_ptr<SkyboxRenderer> m_skyboxRenderer;
+
+    /* OLD: Skybox resources now managed by SkyboxRenderer
     // Skybox cube map (day)
     VkImage m_skyboxImage;
     VkDeviceMemory m_skyboxMemory;
@@ -1035,6 +1037,7 @@ private:
     // Skybox geometry (cube vertices)
     VkBuffer m_skyboxVertexBuffer;
     VkDeviceMemory m_skyboxVertexBufferMemory;
+    */
 
     // Sky time for day/night cycle
     float m_skyTime = 0.30f;  // 0.30 = morning (after sunrise)
@@ -1116,6 +1119,20 @@ private:
     StagingBufferPool m_stagingBufferPool;
     static constexpr VkDeviceSize STAGING_BUFFER_SIZE = 4 * 1024 * 1024;  // 4MB per staging buffer
     static constexpr size_t STAGING_BUFFER_COUNT = 16;  // Pre-allocate 16 buffers (64MB total)
+
+    // ========== Buffer Manager (2025-12-27) ==========
+    // Centralized buffer creation and memory management
+    std::unique_ptr<BufferManager> m_bufferManager;
+
+    // ========== Descriptor Manager (2025-12-27) ==========
+    // Manages descriptor set layouts, pools, and set allocation/updates
+    std::unique_ptr<DescriptorManager> m_descriptorManager;
+
+    // ========== Vulkan Context (2025-12-27) ==========
+    // Encapsulates instance, device, surface, and queue setup
+    // Extracted to improve modularity - VulkanRenderer now uses VulkanContext
+    // for core Vulkan initialization instead of duplicating that code
+    std::unique_ptr<VulkanContext> m_vulkanContext;
 
     /**
      * @brief Check if we have a dedicated transfer queue (different from graphics)
