@@ -252,9 +252,10 @@ private:
 
     // ========== Player Dimensions ==========
     // All dimensions in world units (blocks are 1.0 world units)
-    static constexpr float PLAYER_WIDTH = 0.5f;       ///< Player width (0.5 blocks wide, tighter than Minecraft)
-    static constexpr float PLAYER_HEIGHT = 1.8f;      ///< Player height (1.8 blocks tall, like Minecraft)
-    static constexpr float PLAYER_EYE_HEIGHT = 1.6f;  ///< Eye height from feet (1.6 blocks)
+    // Gecko model is ~1.25 blocks tall with head at 1.0 block
+    static constexpr float PLAYER_WIDTH = 0.5f;       ///< Player width (0.5 blocks wide)
+    static constexpr float PLAYER_HEIGHT = 1.5f;      ///< Player height (1.5 blocks tall, matches gecko + margin)
+    static constexpr float PLAYER_EYE_HEIGHT = 1.2f;  ///< Eye height from feet (1.2 blocks, near gecko head)
 
     // ========== Physics Constants ==========
     static constexpr float GRAVITY = 32.0f;            ///< Gravity acceleration (32 blocks/s²)

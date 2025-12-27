@@ -133,8 +133,14 @@ public:
     /// Get tongue tip position (for rendering)
     glm::vec3 getTongueTip() const { return m_tongueTip; }
 
+    /// Get tongue origin position (mouth - for rendering)
+    glm::vec3 getTongueOrigin() const { return m_shootOrigin; }
+
     /// Get anchor point where tongue is stuck
     glm::vec3 getAnchor() const { return m_anchorPoint; }
+
+    /// Check if tongue should be rendered (shooting or attached)
+    bool shouldRender() const { return m_state == TongueState::SHOOTING || m_state == TongueState::ATTACHED; }
 
     /// Get current rope length
     float getRopeLength() const { return m_ropeLength; }

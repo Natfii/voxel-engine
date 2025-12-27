@@ -34,9 +34,9 @@ Player::Player(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     // Initialize tongue grapple system
     m_tongueGrapple = std::make_unique<PlayerPhysics::TongueGrapple>();
     PlayerPhysics::TongueGrappleConfig tongueConfig;
-    tongueConfig.tongueSpeed = 120.0f;    // Very fast - reaches 20 blocks in 0.17s
-    tongueConfig.maxRange = 25.0f;        // 25 blocks max
-    tongueConfig.cooldownTime = 0.5f;     // 0.5 second cooldown
+    tongueConfig.tongueSpeed = 200.0f;    // Very fast tongue shot
+    tongueConfig.maxRange = 50.0f;        // 50 blocks max range
+    tongueConfig.cooldownTime = 0.0f;     // No cooldown - can instantly re-shoot
     tongueConfig.ropeSpring = 10.0f;      // Springy rope
     tongueConfig.ropeDamping = 0.7f;      // Bouncy but controlled
     tongueConfig.releaseBoost = 5.0f;     // Nice upward boost on release
@@ -187,8 +187,8 @@ void Player::update(GLFWwindow* window, float deltaTime, World* world, bool proc
             m_modelPhysics->updateBoneTransforms(transforms, modelTransform);
         }
 
-        // Apply squish and head tracking to animator
-        m_modelPhysics->applyToAnimator(*m_animator);
+        // NOTE: applyToAnimator is now called from main.cpp AFTER playerAnimator.update()
+        // to prevent animation from overwriting squish scales
     }
 }
 
@@ -373,16 +373,28 @@ void Player::updatePhysics(GLFWwindow* window, float deltaTime, World* world, bo
     }
 
     // ========== TONGUE GRAPPLE CONTROLS ==========
-    // Press jump while in air (not water) to shoot tongue or release if attached
-    // Less strict check: allow if not on ground OR if moving upward (just jumped)
-    bool canUseTongue = !m_onGround || m_velocity.y > 2.0f;  // 2.0 threshold for "just jumped"
-    if (m_tongueGrapple && jumpPressEdge && canUseTongue && !m_inLiquid) {
-        if (m_tongueGrapple->isAttached()) {
-            // Already swinging - release and keep momentum
+    // Hold jump while in air to shoot and maintain tongue grapple
+    // Release jump to detach - can instantly shoot again
+    bool canUseTongue = !m_onGround && !m_inLiquid;
+    if (m_tongueGrapple && canUseTongue) {
+        if (jumpPressed) {
+            // Holding jump in air - shoot tongue if not already active
+            if (!m_tongueGrapple->isAttached() && !m_tongueGrapple->isShooting()) {
+                m_tongueGrapple->shoot(Position, Front, world);
+            }
+        } else {
+            // Released jump - detach tongue if attached
+            if (m_tongueGrapple->isAttached()) {
+                m_tongueGrapple->release(m_velocity);
+            } else if (m_tongueGrapple->isShooting()) {
+                // Cancel shooting tongue if released before it hits
+                m_tongueGrapple->reset();
+            }
+        }
+    } else if (m_tongueGrapple && !canUseTongue) {
+        // On ground or in water - reset tongue state
+        if (m_tongueGrapple->isAttached() || m_tongueGrapple->isShooting()) {
             m_tongueGrapple->release(m_velocity);
-        } else if (m_tongueGrapple->canShoot()) {
-            // Shoot tongue toward camera direction
-            m_tongueGrapple->shoot(Position, Front, world);
         }
     }
 
@@ -659,13 +671,47 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
         }
     }
 
+    // ===== HEAD CEILING CHECK =====
+    // Before allowing horizontal movement, check if head is touching ceiling
+    // This prevents walking under low ceilings and clipping head into blocks
+    bool headTouchingCeiling = false;
+    {
+        glm::vec3 feetPos = Position - glm::vec3(0.0f, PLAYER_EYE_HEIGHT, 0.0f);
+        float halfWidth = PLAYER_WIDTH / 2.0f;
+
+        // Check the head level (top of player hitbox)
+        float headY = feetPos.y + PLAYER_HEIGHT;
+        int headBlockY = static_cast<int>(std::floor(headY));
+
+        // Check blocks at head height in all 4 corners + center
+        const glm::vec2 checkPoints[5] = {
+            {0.0f, 0.0f},           // center
+            {-halfWidth, -halfWidth}, // corners
+            { halfWidth, -halfWidth},
+            {-halfWidth,  halfWidth},
+            { halfWidth,  halfWidth}
+        };
+
+        for (const auto& pt : checkPoints) {
+            int blockID = world->getBlockAt(feetPos.x + pt.x, static_cast<float>(headBlockY), feetPos.z + pt.y);
+            if (blockID > 0) {
+                const auto& blockDef = BlockRegistry::instance().get(blockID);
+                if (!blockDef.isLiquid) {
+                    headTouchingCeiling = true;
+                    break;
+                }
+            }
+        }
+    }
+
     // ===== Test X axis (horizontal movement) =====
     // OPTIMIZATION: Skip collision check if movement is negligible (saves ~33% of checks when standing still)
     if (std::abs(movement.x) > 0.001f) {
         testPos = Position + glm::vec3(movement.x, 0.0f, 0.0f);
 
         // Use horizontal collision check (from step height up) to allow ledge walking
-        if (checkHorizontalCollision(testPos, world)) {
+        // Also block movement if head is touching ceiling (prevents clipping under low ceilings)
+        if (checkHorizontalCollision(testPos, world) || headTouchingCeiling) {
             // Collision detected - stop horizontal movement
             movement.x = 0.0f;
             m_velocity.x = 0.0f;
@@ -678,7 +724,8 @@ void Player::resolveCollisions(glm::vec3& movement, World* world) {
         testPos = Position + glm::vec3(0.0f, 0.0f, movement.z);
 
         // Use horizontal collision check (from step height up) to allow ledge walking
-        if (checkHorizontalCollision(testPos, world)) {
+        // Also block movement if head is touching ceiling (prevents clipping under low ceilings)
+        if (checkHorizontalCollision(testPos, world) || headTouchingCeiling) {
             // Collision detected - stop horizontal movement
             movement.z = 0.0f;
             m_velocity.z = 0.0f;

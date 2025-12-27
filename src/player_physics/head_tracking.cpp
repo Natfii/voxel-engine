@@ -107,10 +107,12 @@ void HeadTracking::calculateTargetAngles() {
     // Calculate yaw angle (horizontal rotation)
     float dotForward = glm::dot(lookHorizontal, m_bodyForward);
     float dotRight = glm::dot(lookHorizontal, bodyRight);
-    m_targetYaw = glm::degrees(std::atan2(dotRight, dotForward));
+    // Negate yaw to match model coordinate system (model faces opposite direction)
+    m_targetYaw = -glm::degrees(std::atan2(dotRight, dotForward));
 
     // Calculate pitch angle (vertical rotation)
-    m_targetPitch = glm::degrees(std::asin(glm::clamp(m_lookDirection.y, -1.0f, 1.0f)));
+    // Negate pitch to match model coordinate system
+    m_targetPitch = -glm::degrees(std::asin(glm::clamp(m_lookDirection.y, -1.0f, 1.0f)));
 
     // Clamp to limits
     m_targetYaw = glm::clamp(m_targetYaw, -m_params.maxYawAngle, m_params.maxYawAngle);

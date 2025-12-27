@@ -977,6 +977,78 @@ int main(int argc, char* argv[]) {
         TargetingSystem targetingSystem;
         targetingSystem.init(&renderer);
 
+        // ========== TONGUE GRAPPLE RENDERING ==========
+        // Create device-local vertex buffer for tongue line (2 vertices * 6 floats = 12 floats)
+        VkBuffer tongueVertexBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory tongueVertexBufferMemory = VK_NULL_HANDLE;
+        uint32_t tongueVertexCount = 0;
+        const VkDeviceSize tongueBufferSize = sizeof(float) * 12;  // 2 vertices * 6 floats (xyz rgb)
+
+        // Create initial tongue buffer with dummy data
+        {
+            std::vector<float> dummyVerts = {
+                0.0f, 0.0f, 0.0f, 1.0f, 0.5f, 0.7f,  // Start (pink)
+                0.0f, 0.0f, 0.0f, 1.0f, 0.5f, 0.7f   // End (pink)
+            };
+
+            // Create staging buffer
+            VkBuffer stagingBuffer;
+            VkDeviceMemory stagingMemory;
+            renderer.createBuffer(tongueBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                 stagingBuffer, stagingMemory);
+
+            // Copy dummy data to staging
+            void* data;
+            vkMapMemory(renderer.getDevice(), stagingMemory, 0, tongueBufferSize, 0, &data);
+            memcpy(data, dummyVerts.data(), tongueBufferSize);
+            vkUnmapMemory(renderer.getDevice(), stagingMemory);
+
+            // Create device-local vertex buffer
+            renderer.createBuffer(tongueBufferSize,
+                                 VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                 tongueVertexBuffer, tongueVertexBufferMemory);
+
+            // Copy from staging to device
+            renderer.copyBuffer(stagingBuffer, tongueVertexBuffer, tongueBufferSize);
+
+            // Cleanup staging buffer
+            vkDestroyBuffer(renderer.getDevice(), stagingBuffer, nullptr);
+            vkFreeMemory(renderer.getDevice(), stagingMemory, nullptr);
+
+            tongueVertexCount = 2;  // Line with 2 vertices
+        }
+
+        // Lambda to update tongue buffer each frame using staging buffer approach
+        auto updateTongueBuffer = [&](const glm::vec3& start, const glm::vec3& end) {
+            // Pink color for tongue (RGB: 1.0, 0.4, 0.6)
+            std::vector<float> verts = {
+                start.x, start.y, start.z, 1.0f, 0.4f, 0.6f,  // Start (pink)
+                end.x,   end.y,   end.z,   1.0f, 0.2f, 0.4f   // End (darker pink)
+            };
+
+            // Create temporary staging buffer
+            VkBuffer stagingBuffer;
+            VkDeviceMemory stagingMemory;
+            renderer.createBuffer(tongueBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                 stagingBuffer, stagingMemory);
+
+            // Copy data to staging
+            void* data;
+            vkMapMemory(renderer.getDevice(), stagingMemory, 0, tongueBufferSize, 0, &data);
+            memcpy(data, verts.data(), tongueBufferSize);
+            vkUnmapMemory(renderer.getDevice(), stagingMemory);
+
+            // Copy from staging to device
+            renderer.copyBuffer(stagingBuffer, tongueVertexBuffer, tongueBufferSize);
+
+            // Cleanup staging buffer
+            vkDestroyBuffer(renderer.getDevice(), stagingBuffer, nullptr);
+            vkFreeMemory(renderer.getDevice(), stagingMemory, nullptr);
+        };
+
         // Create console and register commands
         Console console(window);
         ConsoleCommands::registerAll(&console, &player, &world, &renderer);
@@ -1410,6 +1482,14 @@ int main(int argc, char* argv[]) {
                 playerAnimator.setFacingDirection(player.Front);
                 playerAnimator.update(clampedDeltaTime);
 
+                // Apply physics deformation (squish, head tracking) AFTER animation update
+                // This ensures animation doesn't overwrite physics-based bone modifications
+                if (player.isModelPhysicsEnabled() && player.getModelPhysics()) {
+                    player.getModelPhysics()->applyToAnimator(playerAnimator);
+                    // Recompute bone transforms with the modified scales
+                    playerAnimator.recomputeBoneTransforms();
+                }
+
                 // Update mesh renderer bone matrices for skeletal animation
                 const auto& boneTransforms = playerAnimator.getAllFinalTransforms();
                 if (!boneTransforms.empty()) {
@@ -1441,6 +1521,21 @@ int main(int argc, char* argv[]) {
                     playerTransform = glm::translate(playerTransform, playerModelOffset);  // Center model at origin
 
                     meshRenderer.updateInstanceTransform(playerInstanceId, playerTransform);
+                }
+            }
+
+            // Update tongue grapple rendering buffer
+            bool shouldRenderTongue = false;
+            if (auto* tongueGrapple = player.getTongueGrapple()) {
+                if (tongueGrapple->shouldRender()) {
+                    shouldRenderTongue = true;
+                    // Get tongue start from player mouth area and end at target
+                    glm::vec3 tongueStart = player.Position - glm::vec3(0.0f, 0.2f, 0.0f);  // Slightly below eye level
+                    tongueStart += player.Front * 0.3f;  // Slightly in front of player
+                    glm::vec3 tongueEnd = tongueGrapple->isShooting()
+                        ? tongueGrapple->getTongueTip()
+                        : tongueGrapple->getAnchor();
+                    updateTongueBuffer(tongueStart, tongueEnd);
                 }
             }
 
@@ -1636,6 +1731,8 @@ int main(int argc, char* argv[]) {
             const TargetInfo& target = targetingSystem.getTarget();
             if (g_debugLevel != 2) {
                 targetingSystem.setEnabled(InputManager::instance().isGameplayEnabled());
+                // Always raycast from player eye position in player's look direction
+                // This gives consistent targeting regardless of camera view mode
                 targetingSystem.update(&world, player.Position, player.Front);
 
                 // Update block outline buffer if target changed
@@ -1755,6 +1852,17 @@ int main(int argc, char* argv[]) {
                     vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
                                            renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
                     targetingSystem.renderBlockOutline(renderer.getCurrentCommandBuffer());
+                }
+
+                // Render tongue grapple line
+                if (shouldRenderTongue && tongueVertexBuffer != VK_NULL_HANDLE) {
+                    renderer.bindPipelineCached(renderer.getCurrentCommandBuffer(), renderer.getLinePipeline());
+                    vkCmdBindDescriptorSets(renderer.getCurrentCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                           renderer.getPipelineLayout(), 0, 1, &currentDescriptorSet, 0, nullptr);
+                    VkBuffer vertexBuffers[] = {tongueVertexBuffer};
+                    VkDeviceSize offsets[] = {0};
+                    vkCmdBindVertexBuffers(renderer.getCurrentCommandBuffer(), 0, 1, vertexBuffers, offsets);
+                    vkCmdDraw(renderer.getCurrentCommandBuffer(), tongueVertexCount, 1, 0, 0);
                 }
             }
 
@@ -1975,6 +2083,16 @@ int main(int argc, char* argv[]) {
                     // Cleanup world chunk buffers
                     std::cout << "  Cleaning up world resources..." << '\n';
                     world.cleanup(&renderer);
+
+                    // Cleanup tongue buffer
+                    if (tongueVertexBuffer != VK_NULL_HANDLE) {
+                        vkDestroyBuffer(renderer.getDevice(), tongueVertexBuffer, nullptr);
+                        tongueVertexBuffer = VK_NULL_HANDLE;
+                    }
+                    if (tongueVertexBufferMemory != VK_NULL_HANDLE) {
+                        vkFreeMemory(renderer.getDevice(), tongueVertexBufferMemory, nullptr);
+                        tongueVertexBufferMemory = VK_NULL_HANDLE;
+                    }
 
                     // Note: Save was already done when EXIT_TO_MENU was pressed
                     std::cout << "Ready to show main menu" << '\n';

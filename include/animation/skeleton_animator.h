@@ -206,6 +206,14 @@ public:
      */
     void setFacingDirection(const glm::vec3& direction) { m_facingDirection = direction; }
 
+    /**
+     * @brief Recompute bone transforms after external modifications
+     *
+     * Call this after modifying bone animPosition/animRotation/animScale externally
+     * (e.g., from physics system squish deformation) to update the final transforms.
+     */
+    void recomputeBoneTransforms() { updateBoneTransforms(); }
+
 private:
     void updateBoneTransforms();
     void computeProceduralPose(float time);
